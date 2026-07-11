@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { Barra } from "./barra";
 import {
   ATRIBUCIONES,
   METODOS,
@@ -341,19 +342,7 @@ export default function EntradaRapida() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-zinc-950 px-4 pb-32 pt-4">
-      {/* Cabecera */}
-      <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-lg font-black tracking-tight text-white">ETHOS</h1>
-        <button
-          onClick={async () => {
-            await supabase.auth.signOut();
-            router.replace("/login");
-          }}
-          className="text-xs text-zinc-500 underline"
-        >
-          salir
-        </button>
-      </header>
+      <Barra />
 
       {/* Pestañas */}
       <div className="mb-5 grid grid-cols-3 rounded-xl bg-zinc-900 p-1">
