@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Barra } from "../barra";
+import { NavInferior } from "../nav";
 import type { Atribucion } from "@/lib/tipos";
 
 interface Kpis {
@@ -162,7 +163,7 @@ export default function Panel() {
   const runwayEnAlarma = kpis?.runway_meses !== null && kpis !== null && Number(kpis.runway_meses) < alarmaRunway;
 
   return (
-    <main className="mx-auto min-h-dvh max-w-md bg-zinc-950 px-4 pb-16 pt-4">
+    <main className="mx-auto min-h-dvh max-w-md bg-zinc-950 px-4 pb-24 pt-4">
       <Barra />
 
       {error && (
@@ -333,6 +334,8 @@ export default function Panel() {
           </Seccion>
         </>
       )}
+
+      <NavInferior />
     </main>
   );
 }

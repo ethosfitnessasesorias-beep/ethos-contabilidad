@@ -24,6 +24,11 @@ export interface Cliente {
   id: number;
   nombre: string;
   entrenador: Atribucion;
+  telefono?: string | null;
+  email?: string | null;
+  notas?: string | null;
+  fecha_alta?: string;
+  fecha_baja?: string | null;
 }
 
 export const ATRIBUCIONES: { valor: Atribucion; etiqueta: string }[] = [

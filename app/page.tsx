@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Barra } from "./barra";
+import { NavInferior } from "./nav";
 import {
   ATRIBUCIONES,
   METODOS,
@@ -143,6 +144,7 @@ export default function EntradaRapida() {
   const [tieneFactura, setTieneFactura] = useState(true);
   const [deducible, setDeducible] = useState(true);
   const [imputadoA, setImputadoA] = useState<Atribucion>("ethos");
+  const [esDevolucion, setEsDevolucion] = useState(false);
 
   // Traspaso
   const [origenCodigo, setOrigenCodigo] = useState("caja");
@@ -284,7 +286,9 @@ export default function EntradaRapida() {
     if (!categoriaGastoId) return avisar("error", "Elige una categoría.");
     if (!concepto.trim()) return avisar("error", "Escribe el concepto.");
 
-    const base = Math.round((imp / (1 + ivaPctGasto)) * 100) / 100;
+    // Una devolución de compra es el mismo gasto pero en negativo
+    const signo = esDevolucion ? -1 : 1;
+    const base = (signo * Math.round((imp / (1 + ivaPctGasto)) * 100)) / 100;
     const esDeducible = deducible && tieneFactura;
 
     setGuardando(true);
@@ -303,7 +307,8 @@ export default function EntradaRapida() {
     });
     setGuardando(false);
     if (error) return avisar("error", `No se guardó: ${error.message}`);
-    avisar("ok", `Gasto de ${imp} € guardado ✓`);
+    avisar("ok", esDevolucion ? `Devolución de ${imp} € guardada ✓` : `Gasto de ${imp} € guardado ✓`);
+    setEsDevolucion(false);
     limpiarTrasGuardar();
   }
 
@@ -341,7 +346,7 @@ export default function EntradaRapida() {
   const opcCuentas = cuentas.map((c) => ({ valor: c.codigo, etiqueta: c.nombre.split(" (")[0] }));
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-zinc-950 px-4 pb-32 pt-4">
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-zinc-950 px-4 pb-48 pt-4">
       <Barra />
 
       {/* Pestañas */}
@@ -533,6 +538,17 @@ export default function EntradaRapida() {
                 deshabilitado={!tieneFactura}
               />
             </div>
+            <Toggle
+              etiqueta="Es una devolución (te devuelven dinero)"
+              activo={esDevolucion}
+              onCambio={setEsDevolucion}
+            />
+            {esDevolucion && (
+              <p className="rounded-lg bg-sky-950 px-3 py-2 text-xs text-sky-300">
+                Se apuntará en negativo en la categoría elegida: resta del gasto y el dinero
+                vuelve a la cuenta. Usa la misma categoría que el gasto original.
+              </p>
+            )}
 
             <Campo etiqueta="¿De dónde ha salido?">
               <Chips opciones={opcCuentas} valor={cuentaCodigo} onCambio={elegirCuenta} />
@@ -579,8 +595,8 @@ export default function EntradaRapida() {
         </Campo>
       </div>
 
-      {/* Botón fijo de guardar */}
-      <div className="fixed inset-x-0 bottom-0 mx-auto max-w-md bg-gradient-to-t from-zinc-950 via-zinc-950 to-transparent px-4 pb-6 pt-8">
+      {/* Botón fijo de guardar (encima de la barra de navegación) */}
+      <div className="fixed inset-x-0 bottom-16 mx-auto max-w-md bg-gradient-to-t from-zinc-950 via-zinc-950 to-transparent px-4 pb-3 pt-8">
         <button
           onClick={guardar}
           disabled={guardando}
@@ -600,6 +616,8 @@ export default function EntradaRapida() {
           {toast.texto}
         </div>
       )}
+
+      <NavInferior />
     </main>
   );
 }
