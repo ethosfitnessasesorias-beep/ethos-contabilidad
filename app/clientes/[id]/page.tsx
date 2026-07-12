@@ -4,8 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useSesion } from "@/lib/useSesion";
-import { Barra } from "../../barra";
-import { NavInferior } from "../../nav";
+import { Shell } from "../../shell";
 import {
   ATRIBUCIONES,
   METODO_POR_CUENTA,
@@ -185,10 +184,9 @@ export default function FichaCliente() {
   );
 
   return (
-    <main className="mx-auto min-h-dvh max-w-md bg-zinc-950 px-4 pb-24 pt-4">
-      <Barra titulo="· Cliente" />
-
-      <button onClick={() => router.push("/clientes")} className="mb-3 text-sm text-zinc-500">
+    <Shell titulo="Cliente">
+      <main className="mx-auto max-w-md px-4 pb-24 pt-6">
+      <button onClick={() => router.push("/contabilidad/clientes")} className="mb-3 text-sm text-zinc-500">
         ← Volver a clientes
       </button>
 
@@ -388,7 +386,7 @@ export default function FichaCliente() {
         </div>
       )}
 
-      <NavInferior />
-    </main>
+      </main>
+    </Shell>
   );
 }

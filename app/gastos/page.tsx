@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useSesion } from "@/lib/useSesion";
-import { Barra } from "../barra";
-import { NavInferior } from "../nav";
+import { Shell } from "../shell";
 import type { Categoria } from "@/lib/tipos";
 
 interface Gasto {
@@ -138,8 +137,8 @@ export default function Gastos() {
   const gruposGasto = [...new Set(categorias.filter((c) => c.tipo === "gasto").map((c) => c.grupo))];
 
   return (
-    <main className="mx-auto min-h-dvh max-w-md bg-zinc-950 px-4 pb-24 pt-4">
-      <Barra titulo="· Gastos" />
+    <Shell titulo="Gastos">
+      <main className="mx-auto max-w-md px-4 pb-24 pt-6">
 
       {/* Facturas por pedir */}
       <section>
@@ -296,7 +295,7 @@ export default function Gastos() {
         </div>
       )}
 
-      <NavInferior />
-    </main>
+      </main>
+    </Shell>
   );
 }

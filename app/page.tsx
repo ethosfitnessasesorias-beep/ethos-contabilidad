@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { Barra } from "./barra";
-import { NavInferior } from "./nav";
+import { Shell } from "./shell";
 import {
   ATRIBUCIONES,
   METODOS,
@@ -349,8 +348,8 @@ export default function EntradaRapida() {
   const opcCuentas = cuentas.map((c) => ({ valor: c.codigo, etiqueta: c.nombre.split(" (")[0] }));
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-zinc-950 px-4 pb-48 pt-4">
-      <Barra />
+    <Shell titulo="Apuntar">
+      <main className="mx-auto flex max-w-md flex-col px-4 pb-48 pt-6">
 
       {/* Pestañas */}
       <div className="mb-5 grid grid-cols-3 rounded-xl bg-zinc-900 p-1">
@@ -611,15 +610,17 @@ export default function EntradaRapida() {
         </Campo>
       </div>
 
-      {/* Botón fijo de guardar (encima de la barra de navegación) */}
-      <div className="fixed inset-x-0 bottom-16 mx-auto max-w-md bg-gradient-to-t from-zinc-950 via-zinc-950 to-transparent px-4 pb-3 pt-8">
-        <button
-          onClick={guardar}
-          disabled={guardando}
-          className="w-full rounded-2xl bg-emerald-600 py-4 text-lg font-black text-white active:bg-emerald-700 disabled:opacity-50"
-        >
-          {guardando ? "Guardando…" : "GUARDAR"}
-        </button>
+      {/* Botón fijo de guardar */}
+      <div className="fixed inset-x-0 bottom-0 bg-gradient-to-t from-zinc-950 via-zinc-950 to-transparent px-4 pb-5 pt-8 md:left-60">
+        <div className="mx-auto max-w-md">
+          <button
+            onClick={guardar}
+            disabled={guardando}
+            className="w-full rounded-2xl bg-red-600 py-4 text-lg font-black text-white active:bg-red-700 disabled:opacity-50"
+          >
+            {guardando ? "Guardando…" : "GUARDAR"}
+          </button>
+        </div>
       </div>
 
       {/* Toast */}
@@ -633,7 +634,7 @@ export default function EntradaRapida() {
         </div>
       )}
 
-      <NavInferior />
-    </main>
+      </main>
+    </Shell>
   );
 }
