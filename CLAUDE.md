@@ -50,9 +50,11 @@ Son **dos tablas separadas**. Un cobro SIEMPRE apunta a una factura (N:1).
 - El tipo por defecto de cada servicio vive en la tabla `servicios`.
 
 ### 2.4 Reparto de beneficios
-- **80% entrenador / 20% hucha de empresa**, sobre el balance individual.
+- **Socios (Luis y David): 80% entrenador / 20% hucha de empresa**, sobre el balance individual.
+- **Colaboradores (Alex Esteban y Alex Guerrero): 70% colaborador / 30% Ethos**,
+  sobre el **bruto cobrado SIN IVA**. A los colaboradores NO se les restan gastos imputados.
 - Los porcentajes viven en la tabla `config`. **NUNCA hardcodeados en el código.**
-- Balance individual = Cash Collected propio − gastos imputados (sin inversión).
+- Balance individual (socios) = Cash Collected propio − gastos imputados (sin inversión).
 - Las **inversiones salen de la hucha**, no del beneficio repartible.
 - La hucha se reparte 50/50 entre socios cada trimestre (o se reinvierte, decisión manual).
 

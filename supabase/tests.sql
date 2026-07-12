@@ -90,6 +90,31 @@ BEGIN
     RAISE EXCEPTION 'TEST CAJA LIBRE FALLA: delta=% (esperado 11)', v_caja_despues - v_caja_antes;
   END IF;
 
+  -- ------------------------------------------------------------------
+  -- TEST 4: reparto de colaboradores (70/30 sobre bruto SIN IVA)
+  -- Factura de Alex Esteban: base 100 + IVA 21 = 121. Cobro parcial
+  -- de 60,50 € → bruto sin IVA cobrado = 50 → colaborador 35, Ethos 15.
+  -- Sus gastos imputados NO restan.
+  -- ------------------------------------------------------------------
+  INSERT INTO facturas (categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct)
+    VALUES (v_cat_ingreso, 'alex_esteban', DATE '2099-02-15', '_TEST colaborador', 100, 0.21, 0)
+    RETURNING id INTO v_factura;
+  INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo)
+    VALUES (v_factura, DATE '2099-02-16', 60.50, v_banco, 'transferencia');
+  INSERT INTO gastos (fecha, concepto, categoria_id, cuenta_id, imputado_a, base, iva_pct, iva_soportado, deducible, tiene_factura)
+    VALUES (DATE '2099-02-17', '_TEST gasto alex', v_cat_gasto, v_banco, 'alex_esteban', 5, 0, 0, FALSE, FALSE);
+
+  SELECT a_entrenador, a_hucha INTO v_entrenador, v_hucha
+    FROM v_reparto_mensual
+   WHERE mes = DATE '2099-02-01' AND atribucion = 'alex_esteban';
+
+  IF v_entrenador IS DISTINCT FROM 35.00 THEN
+    RAISE EXCEPTION 'TEST COLABORADOR FALLA: a_colaborador=% (esperado 35.00)', v_entrenador;
+  END IF;
+  IF v_hucha IS DISTINCT FROM 15.00 THEN
+    RAISE EXCEPTION 'TEST COLABORADOR FALLA: parte de Ethos=% (esperado 15.00)', v_hucha;
+  END IF;
+
 END $$;
 
 ROLLBACK;  -- deshace TODOS los datos de prueba

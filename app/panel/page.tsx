@@ -237,28 +237,38 @@ export default function Panel() {
               </p>
             ) : (
               <div className="flex flex-col gap-2">
-                {reparto.map((r) => (
-                  <div key={r.atribucion} className="rounded-2xl bg-zinc-900 p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-white">{NOMBRES[r.atribucion]}</span>
-                      <span className="text-sm text-zinc-400">balance {eur(r.balance)}</span>
-                    </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                      <div className="rounded-lg bg-zinc-800 px-3 py-2">
-                        <p className="text-xs text-zinc-500">Cobrado − gastos</p>
-                        <p className="text-zinc-300">
-                          {eur(r.cobrado)} − {eur(r.gasto)}
-                        </p>
+                {reparto.map((r) => {
+                  const colaborador =
+                    r.atribucion === "alex_esteban" || r.atribucion === "alex_guerrero";
+                  return (
+                    <div key={r.atribucion} className="rounded-2xl bg-zinc-900 p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-white">{NOMBRES[r.atribucion]}</span>
+                        <span className="text-sm text-zinc-400">
+                          {colaborador ? "bruto sin IVA" : "balance"} {eur(r.balance)}
+                        </span>
                       </div>
-                      <div className="rounded-lg bg-emerald-950 px-3 py-2">
-                        <p className="text-xs text-emerald-500">Entrenador / Hucha</p>
-                        <p className="text-emerald-300">
-                          {eur(r.a_entrenador)} / {eur(r.a_hucha)}
-                        </p>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                        <div className="rounded-lg bg-zinc-800 px-3 py-2">
+                          <p className="text-xs text-zinc-500">
+                            {colaborador ? "Cobrado (sus gastos no restan)" : "Cobrado − gastos"}
+                          </p>
+                          <p className="text-zinc-300">
+                            {colaborador ? eur(r.cobrado) : `${eur(r.cobrado)} − ${eur(r.gasto)}`}
+                          </p>
+                        </div>
+                        <div className="rounded-lg bg-emerald-950 px-3 py-2">
+                          <p className="text-xs text-emerald-500">
+                            {colaborador ? "Colaborador / Ethos" : "Entrenador / Hucha"}
+                          </p>
+                          <p className="text-emerald-300">
+                            {eur(r.a_entrenador)} / {eur(r.a_hucha)}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Seccion>
