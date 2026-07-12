@@ -42,9 +42,7 @@ const GRUPOS: { titulo: string; items: ItemNav[] }[] = [
     titulo: "Contabilidad",
     items: [
       { href: "/", etiqueta: "Apuntar", icono: ic("M12 20h9|M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z") },
-      { href: "/panel", etiqueta: "Métricas", icono: ic("M3 3v18h18|M18 9l-5 5-3-3-4 4") },
-      { href: "/gastos", etiqueta: "Gastos", icono: ic("M4 4h16v16H4z|M8 8h8|M8 12h8|M8 16h5") },
-      { href: "/clientes", etiqueta: "Clientes", icono: ic("M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2|M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8") },
+      { href: "/contabilidad", etiqueta: "Contabilidad", icono: ic("M4 4h16v16H4z|M8 8h8|M8 12h8|M8 16h5") },
     ],
   },
   {
