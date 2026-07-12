@@ -56,6 +56,8 @@ export default function FichaCliente() {
   const [telefono, setTelefono] = useState("");
   const [email, setEmail] = useState("");
   const [notas, setNotas] = useState("");
+  const [nif, setNif] = useState("");
+  const [direccion, setDireccion] = useState("");
 
   // Mini-formulario cobrar/devolver sobre una factura
   const [accion, setAccion] = useState<{ facturaId: number; modo: "cobrar" | "devolver" } | null>(null);
@@ -85,6 +87,8 @@ export default function FichaCliente() {
       setTelefono(c.telefono ?? "");
       setEmail(c.email ?? "");
       setNotas(c.notas ?? "");
+      setNif(c.nif ?? "");
+      setDireccion(c.direccion ?? "");
     }
     setFacturas((fac.data as FacturaSaldo[]) ?? []);
     setCuentas((cue.data as Cuenta[]) ?? []);
@@ -103,6 +107,8 @@ export default function FichaCliente() {
         telefono: telefono.trim() || null,
         email: email.trim() || null,
         notas: notas.trim() || null,
+        nif: nif.trim() || null,
+        direccion: direccion.trim() || null,
       })
       .eq("id", clienteId);
     if (error) return avisar("error", error.message);
@@ -191,6 +197,8 @@ export default function FichaCliente() {
             <input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre" className={inputCls} />
             <input value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Teléfono" inputMode="tel" className={inputCls} />
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" inputMode="email" className={inputCls} />
+            <input value={nif} onChange={(e) => setNif(e.target.value)} placeholder="NIF (para factura completa)" className={inputCls} />
+            <input value={direccion} onChange={(e) => setDireccion(e.target.value)} placeholder="Dirección (para factura completa)" className={inputCls} />
             <textarea value={notas} onChange={(e) => setNotas(e.target.value)} placeholder="Notas" rows={2} className={inputCls} />
             <div className="flex flex-wrap gap-2">
               {ATRIBUCIONES.map((a) => (
@@ -273,6 +281,12 @@ export default function FichaCliente() {
                     className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-300"
                   >
                     Devolver
+                  </button>
+                  <button
+                    onClick={() => router.push(`/facturas/${f.id}`)}
+                    className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-sky-300"
+                  >
+                    Factura
                   </button>
                 </div>
               </div>

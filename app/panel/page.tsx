@@ -238,6 +238,20 @@ export default function Panel() {
               </p>
             ) : (
               <div className="flex flex-col gap-2">
+                {/* Resumen: lo que cobrará cada uno si el mes acabara hoy */}
+                <div className="rounded-2xl bg-emerald-950/60 p-4 ring-1 ring-emerald-900">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-500">
+                    A pagar a final de mes (si acabara hoy)
+                  </p>
+                  {reparto
+                    .filter((r) => r.atribucion !== "ethos")
+                    .map((r) => (
+                      <div key={r.atribucion} className="flex justify-between py-0.5 text-sm">
+                        <span className="text-zinc-300">{NOMBRES[r.atribucion]}</span>
+                        <span className="font-bold text-emerald-300">{eur(r.a_entrenador)}</span>
+                      </div>
+                    ))}
+                </div>
                 {reparto.map((r) => {
                   const colaborador =
                     r.atribucion === "alex_esteban" || r.atribucion === "alex_guerrero";

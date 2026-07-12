@@ -27,6 +27,8 @@ export interface Cliente {
   telefono?: string | null;
   email?: string | null;
   notas?: string | null;
+  nif?: string | null;
+  direccion?: string | null;
   fecha_alta?: string;
   fecha_baja?: string | null;
 }
