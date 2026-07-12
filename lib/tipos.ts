@@ -11,6 +11,7 @@ export interface Categoria {
   nombre: string;
   es_inversion: boolean;
   es_fijo: boolean;
+  es_online?: boolean;
 }
 
 export interface Cuenta {
@@ -57,3 +58,29 @@ export const METODO_POR_CUENTA: Record<string, MetodoPago> = {
   tpv: "tpv",
   stripe: "stripe",
 };
+
+export type Canal = "online" | "presencial";
+
+export type EtapaDeal = "lead" | "contactado" | "agendado" | "ganado" | "perdido";
+
+export const ETAPAS: { valor: EtapaDeal; etiqueta: string }[] = [
+  { valor: "lead", etiqueta: "Lead" },
+  { valor: "contactado", etiqueta: "Contactado" },
+  { valor: "agendado", etiqueta: "Agendado" },
+  { valor: "ganado", etiqueta: "Ganado" },
+  { valor: "perdido", etiqueta: "Perdido" },
+];
+
+export interface Deal {
+  id: number;
+  cliente_id: number | null;
+  titulo: string;
+  canal: Canal;
+  importe_estimado: number;
+  etapa: EtapaDeal;
+  responsable: Atribucion;
+  origen: string | null;
+  notas: string | null;
+  fecha_alta: string;
+  fecha_cierre: string | null;
+}

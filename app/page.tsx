@@ -10,6 +10,7 @@ import {
   METODOS,
   METODO_POR_CUENTA,
   type Atribucion,
+  type Canal,
   type Categoria,
   type Cliente,
   type Cuenta,
@@ -129,6 +130,7 @@ export default function EntradaRapida() {
   // Ingreso
   const [atribucion, setAtribucion] = useState<Atribucion>("ethos");
   const [categoriaIngresoId, setCategoriaIngresoId] = useState<number | null>(null);
+  const [canal, setCanal] = useState<Canal>("presencial");
   const [clienteNombre, setClienteNombre] = useState("");
   const [concepto, setConcepto] = useState("");
   const [conIva, setConIva] = useState(true);
@@ -253,6 +255,7 @@ export default function EntradaRapida() {
         iva_pct: ivaPct,
         irpf_pct: 0,
         es_recurrente: recurrente,
+        canal,
       })
       .select("id")
       .single();
@@ -395,8 +398,21 @@ export default function EntradaRapida() {
                 valor={categoriaIngresoId}
                 onCambio={(v) => {
                   setCategoriaIngresoId(v);
+                  const cat = catIngreso.find((c) => c.id === v);
+                  if (cat) setCanal(cat.es_online ? "online" : "presencial");
                   guardarPrefs({ categoriaIngresoId: v });
                 }}
+              />
+            </Campo>
+
+            <Campo etiqueta="Negocio">
+              <Chips
+                opciones={[
+                  { valor: "presencial" as Canal, etiqueta: "Presencial" },
+                  { valor: "online" as Canal, etiqueta: "Online" },
+                ]}
+                valor={canal}
+                onCambio={setCanal}
               />
             </Campo>
 
