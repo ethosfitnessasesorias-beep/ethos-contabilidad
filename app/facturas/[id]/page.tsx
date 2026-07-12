@@ -8,6 +8,7 @@ import { useSesion } from "@/lib/useSesion";
 interface FacturaCompleta {
   id: number;
   numero: string | null;
+  cliente_id: number | null;
   fecha_emision: string;
   concepto: string;
   base: number;
@@ -45,11 +46,20 @@ export default function PaginaFactura() {
   const [error, setError] = useState<string | null>(null);
   const [emitiendo, setEmitiendo] = useState(false);
 
+  // Edición del borrador (solo antes de emitir)
+  const [editando, setEditando] = useState(false);
+  const [eConcepto, setEConcepto] = useState("");
+  const [eBase, setEBase] = useState("");
+  const [eIva, setEIva] = useState(0.21);
+  const [eCliNombre, setECliNombre] = useState("");
+  const [eCliNif, setECliNif] = useState("");
+  const [eCliDireccion, setECliDireccion] = useState("");
+
   const cargar = useCallback(async () => {
     const [f, c] = await Promise.all([
       supabase
         .from("facturas")
-        .select("id, numero, fecha_emision, concepto, base, iva_pct, irpf_pct, iva_importe, irpf_importe, total, clientes(nombre, nif, direccion)")
+        .select("id, numero, cliente_id, fecha_emision, concepto, base, iva_pct, irpf_pct, iva_importe, irpf_importe, total, clientes(nombre, nif, direccion)")
         .eq("id", facturaId)
         .single(),
       supabase.from("facturacion_config").select("*").eq("id", 1).single(),
@@ -67,11 +77,47 @@ export default function PaginaFactura() {
     if (sesionOk) cargar();
   }, [sesionOk, cargar]);
 
+  function abrirEdicion() {
+    if (!factura) return;
+    setEConcepto(factura.concepto);
+    setEBase(String(factura.base));
+    setEIva(Number(factura.iva_pct));
+    setECliNombre(factura.clientes?.nombre ?? "");
+    setECliNif(factura.clientes?.nif ?? "");
+    setECliDireccion(factura.clientes?.direccion ?? "");
+    setEditando(true);
+  }
+
+  async function guardarEdicion() {
+    if (!factura) return;
+    const base = Number(eBase.replace(",", "."));
+    if (!Number.isFinite(base)) return setError("Base no válida.");
+    const f = await supabase
+      .from("facturas")
+      .update({ concepto: eConcepto.trim() || factura.concepto, base: Math.round(base * 100) / 100, iva_pct: eIva })
+      .eq("id", facturaId);
+    if (f.error) return setError(f.error.message);
+    if (factura.cliente_id) {
+      const c = await supabase
+        .from("clientes")
+        .update({
+          nombre: eCliNombre.trim() || (factura.clientes?.nombre ?? ""),
+          nif: eCliNif.trim() || null,
+          direccion: eCliDireccion.trim() || null,
+        })
+        .eq("id", factura.cliente_id);
+      if (c.error) return setError(c.error.message);
+    }
+    setError(null);
+    setEditando(false);
+    cargar();
+  }
+
   // Asigna el siguiente número de la serie (una sola vez por factura)
   async function emitir() {
     if (!config || !factura) return;
     setEmitiendo(true);
-    const numero = `${config.serie}${String(config.proximo_numero).padStart(6, "0")}`;
+    const numero = `${config.serie}${String(config.proximo_numero).padStart(4, "0")}`;
 
     // Consumir el número de forma segura: solo si nadie lo usó entre medias
     const consumo = await supabase
@@ -115,27 +161,39 @@ export default function PaginaFactura() {
         <button onClick={() => router.back()} className="text-sm text-zinc-500">
           ← Volver
         </button>
-        {factura?.numero ? (
-          <button
-            onClick={() => window.print()}
-            className="rounded-xl bg-emerald-600 px-5 py-2.5 font-bold text-white"
-          >
-            Imprimir / Guardar PDF
-          </button>
-        ) : (
-          config &&
-          factura && (
+        <div className="flex gap-2">
+          {factura?.numero ? (
             <button
-              onClick={emitir}
-              disabled={emitiendo}
-              className="rounded-xl bg-emerald-600 px-5 py-2.5 font-bold text-white disabled:opacity-50"
+              onClick={() => window.print()}
+              className="rounded-xl bg-emerald-600 px-5 py-2.5 font-bold text-white"
             >
-              {emitiendo
-                ? "Emitiendo…"
-                : `Emitir como ${config.serie}${String(config.proximo_numero).padStart(6, "0")}`}
+              Imprimir / Guardar PDF
             </button>
-          )
-        )}
+          ) : (
+            config &&
+            factura && (
+              <>
+                <button
+                  onClick={editando ? guardarEdicion : abrirEdicion}
+                  className="rounded-xl bg-zinc-800 px-4 py-2.5 font-bold text-zinc-200"
+                >
+                  {editando ? "Guardar cambios" : "Editar"}
+                </button>
+                {!editando && (
+                  <button
+                    onClick={emitir}
+                    disabled={emitiendo}
+                    className="rounded-xl bg-emerald-600 px-5 py-2.5 font-bold text-white disabled:opacity-50"
+                  >
+                    {emitiendo
+                      ? "Emitiendo…"
+                      : `Emitir como ${config.serie}${String(config.proximo_numero).padStart(4, "0")}`}
+                  </button>
+                )}
+              </>
+            )
+          )}
+        </div>
       </div>
 
       {error && (
@@ -146,9 +204,73 @@ export default function PaginaFactura() {
 
       {factura && !factura.numero && (
         <p className="mb-4 rounded-xl bg-amber-950 px-4 py-3 text-xs text-amber-300 print:hidden">
-          Esta factura aún no tiene número legal. Al pulsar &quot;Emitir&quot; se le asigna el
-          siguiente de la serie y ya no se puede cambiar (la numeración debe ser correlativa).
+          Esta factura aún no tiene número legal. Puedes editarla antes de emitirla. Al pulsar
+          &quot;Emitir&quot; se le asigna el siguiente de la serie y ya no se puede cambiar
+          (la numeración debe ser correlativa).
         </p>
+      )}
+
+      {/* Edición del borrador */}
+      {editando && factura && (
+        <div className="mb-4 flex flex-col gap-2 rounded-2xl bg-zinc-900 p-4 print:hidden">
+          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Editar borrador
+          </p>
+          <input
+            value={eConcepto}
+            onChange={(e) => setEConcepto(e.target.value)}
+            placeholder="Concepto que verá el cliente"
+            className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+          />
+          <div className="flex gap-2">
+            <input
+              value={eBase}
+              onChange={(e) => setEBase(e.target.value)}
+              inputMode="decimal"
+              placeholder="Base sin IVA"
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+            />
+            <select
+              value={eIva}
+              onChange={(e) => setEIva(Number(e.target.value))}
+              className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-white outline-none"
+            >
+              <option value={0.21}>IVA 21%</option>
+              <option value={0.1}>IVA 10%</option>
+              <option value={0.04}>IVA 4%</option>
+              <option value={0}>Sin IVA</option>
+            </select>
+          </div>
+          {factura.cliente_id ? (
+            <>
+              <input
+                value={eCliNombre}
+                onChange={(e) => setECliNombre(e.target.value)}
+                placeholder="Nombre del cliente"
+                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+              />
+              <input
+                value={eCliNif}
+                onChange={(e) => setECliNif(e.target.value)}
+                placeholder="NIF del cliente"
+                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+              />
+              <input
+                value={eCliDireccion}
+                onChange={(e) => setECliDireccion(e.target.value)}
+                placeholder="Dirección del cliente"
+                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+              />
+              <p className="text-xs text-zinc-500">
+                Los datos del cliente se guardan en su ficha (valen para futuras facturas).
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-zinc-500">
+              Esta factura no tiene cliente asociado: saldrá como venta a particular.
+            </p>
+          )}
+        </div>
       )}
 
       {/* La factura en sí */}

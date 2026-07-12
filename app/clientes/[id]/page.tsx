@@ -47,6 +47,8 @@ export default function FichaCliente() {
   const [cliente, setCliente] = useState<Cliente | null>(null);
   const [facturas, setFacturas] = useState<FacturaSaldo[]>([]);
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
+  const [otrosClientes, setOtrosClientes] = useState<Cliente[]>([]);
+  const [fusionId, setFusionId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
   // Edición de datos
@@ -70,7 +72,7 @@ export default function FichaCliente() {
   }
 
   const cargar = useCallback(async () => {
-    const [cli, fac, cue] = await Promise.all([
+    const [cli, fac, cue, otros] = await Promise.all([
       supabase.from("clientes").select("*").eq("id", clienteId).single(),
       supabase
         .from("v_facturas_saldo")
@@ -78,6 +80,7 @@ export default function FichaCliente() {
         .eq("cliente_id", clienteId)
         .order("fecha_emision", { ascending: false }),
       supabase.from("cuentas").select("*").eq("activa", true).order("id"),
+      supabase.from("clientes").select("id, nombre, entrenador").neq("id", clienteId).order("nombre"),
     ]);
     if (cli.data) {
       const c = cli.data as Cliente;
@@ -92,6 +95,7 @@ export default function FichaCliente() {
     }
     setFacturas((fac.data as FacturaSaldo[]) ?? []);
     setCuentas((cue.data as Cuenta[]) ?? []);
+    setOtrosClientes((otros.data as Cliente[]) ?? []);
   }, [clienteId]);
 
   useEffect(() => {
@@ -126,6 +130,24 @@ export default function FichaCliente() {
     if (error) return avisar("error", error.message);
     avisar("ok", cliente.fecha_baja ? "Cliente reactivado ✓" : "Cliente dado de baja ✓");
     cargar();
+  }
+
+  // Fusiona ESTE cliente dentro de otro: sus facturas se mueven y este se borra
+  async function fusionar() {
+    if (!fusionId || !cliente) return;
+    const destino = otrosClientes.find((c) => c.id === fusionId);
+    if (!destino) return;
+    if (
+      !window.confirm(
+        `"${cliente.nombre}" desaparecerá y todas sus facturas pasarán a "${destino.nombre}". ¿Seguro?`
+      )
+    )
+      return;
+    const mov = await supabase.from("facturas").update({ cliente_id: fusionId }).eq("cliente_id", clienteId);
+    if (mov.error) return avisar("error", mov.error.message);
+    const del = await supabase.from("clientes").delete().eq("id", clienteId);
+    if (del.error) return avisar("error", del.error.message);
+    router.push(`/clientes/${fusionId}`);
   }
 
   async function ejecutarAccion() {
@@ -219,6 +241,33 @@ export default function FichaCliente() {
             <button onClick={cambiarBaja} className="rounded-xl bg-zinc-800 py-2.5 text-sm font-bold text-zinc-300">
               {cliente.fecha_baja ? "Reactivar cliente" : "Dar de baja"}
             </button>
+
+            {/* Fusión de duplicados */}
+            <div className="mt-2 rounded-xl bg-zinc-950 p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                ¿Es un duplicado? Fusionar con…
+              </p>
+              <select
+                value={fusionId ?? ""}
+                onChange={(e) => setFusionId(Number(e.target.value) || null)}
+                className={`${inputCls} w-full appearance-none`}
+              >
+                <option value="">Elegir el cliente bueno…</option>
+                {otrosClientes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                  </option>
+                ))}
+              </select>
+              {fusionId && (
+                <button
+                  onClick={fusionar}
+                  className="mt-2 w-full rounded-xl bg-red-900 py-2.5 text-sm font-bold text-red-200"
+                >
+                  Fusionar (este cliente desaparece)
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

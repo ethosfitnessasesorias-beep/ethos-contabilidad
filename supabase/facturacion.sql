@@ -26,10 +26,14 @@ VALUES (
   'Luis Silva Marzal',
   '45128243N',
   'Carrer Catalunya 16, Local — Viladecans (Barcelona)',
-  'S',
-  257  -- la última emitida por la app del gym fue la S000256
+  'O-',
+  1  -- serie propia de esta app; la app del gym sigue con su serie S
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- Por si la configuración ya existía con la serie antigua
+UPDATE facturacion_config SET serie = 'O-', proximo_numero = 1
+WHERE id = 1 AND serie = 'S';
 
 -- Misma seguridad que el resto: solo usuarios con login
 ALTER TABLE facturacion_config ENABLE ROW LEVEL SECURITY;
