@@ -28,6 +28,13 @@ interface PipelineFila {
   importe: number;
 }
 
+interface Saldo {
+  codigo: string;
+  nombre: string;
+  es_transito: boolean;
+  saldo: number;
+}
+
 const eur = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 
@@ -78,12 +85,13 @@ export default function Dashboard() {
   const [negocio, setNegocio] = useState<NegocioFila[]>([]);
   const [actividades, setActividades] = useState<Actividad[]>([]);
   const [pipeline, setPipeline] = useState<PipelineFila[]>([]);
+  const [saldos, setSaldos] = useState<Saldo[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sesionOk) return;
     (async () => {
-      const [n, a, p] = await Promise.all([
+      const [n, a, p, s] = await Promise.all([
         supabase.from("v_dashboard_negocio").select("*"),
         supabase
           .from("actividades")
@@ -93,6 +101,7 @@ export default function Dashboard() {
           .order("cuando")
           .limit(6),
         supabase.from("v_pipeline_conteo").select("*"),
+        supabase.from("v_saldo_cuentas").select("codigo, nombre, es_transito, saldo").order("id"),
       ]);
       if (n.error) {
         setError(
@@ -105,6 +114,7 @@ export default function Dashboard() {
       setNegocio((n.data as NegocioFila[]) ?? []);
       setActividades((a.data as Actividad[]) ?? []);
       setPipeline((p.data as PipelineFila[]) ?? []);
+      setSaldos((s.data as Saldo[]) ?? []);
     })();
   }, [sesionOk]);
 
@@ -116,6 +126,10 @@ export default function Dashboard() {
 
   const online = negocio.find((x) => x.canal === "online");
   const presencial = negocio.find((x) => x.canal === "presencial");
+  const saldoDe = (codigo: string) => Number(saldos.find((s) => s.codigo === codigo)?.saldo ?? 0);
+  const saldoBanco = saldoDe("banco");
+  const saldoCaja = saldoDe("caja");
+  const saldoTransito = saldos.filter((s) => s.es_transito).reduce((t, s) => t + Number(s.saldo), 0);
   const mesTexto = new Date().toLocaleDateString("es-ES", { month: "long", year: "numeric" });
   const conteoEtapa = (etapa: string) =>
     pipeline.filter((p) => p.etapa === etapa).reduce((s, p) => s + Number(p.n), 0);
@@ -133,6 +147,33 @@ export default function Dashboard() {
         {error && (
           <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>
         )}
+
+        {/* Saldos de control: banco y caja por separado */}
+        <div className="mb-4 grid gap-4 sm:grid-cols-3">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+              Cuenta banco Ethos
+            </p>
+            <p className={`mt-1.5 text-2xl font-black ${saldoBanco < 0 ? "text-red-400" : "text-white"}`}>
+              {eur(saldoBanco)}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+              Caja efectivo
+            </p>
+            <p className={`mt-1.5 text-2xl font-black ${saldoCaja < 0 ? "text-red-400" : "text-white"}`}>
+              {eur(saldoCaja)}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+              En tránsito (TPV + Stripe)
+            </p>
+            <p className="mt-1.5 text-2xl font-black text-zinc-300">{eur(saldoTransito)}</p>
+            <p className="mt-0.5 text-xs text-zinc-600">pendiente de liquidar al banco</p>
+          </div>
+        </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">

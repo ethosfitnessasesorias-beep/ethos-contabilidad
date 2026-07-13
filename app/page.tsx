@@ -142,6 +142,8 @@ export default function EntradaRapida() {
   const [categoriaGastoId, setCategoriaGastoId] = useState<number | null>(null);
   const [proveedor, setProveedor] = useState("");
   const [ivaPctGasto, setIvaPctGasto] = useState<number>(0.21);
+  const [irpfPctGasto, setIrpfPctGasto] = useState<number>(0);
+  const [canalGasto, setCanalGasto] = useState<Canal>("presencial");
   const [tieneFactura, setTieneFactura] = useState(true);
   const [deducible, setDeducible] = useState(true);
   const [imputadoA, setImputadoA] = useState<Atribucion>("ethos");
@@ -321,6 +323,8 @@ export default function EntradaRapida() {
       base,
       iva_pct: ivaPctGasto,
       iva_soportado: esDeducible ? Math.round(base * ivaPctGasto * 100) / 100 : 0,
+      irpf_pct: irpfPctGasto,
+      canal: canalGasto,
       deducible: esDeducible,
       tiene_factura: tieneFactura,
     });
@@ -551,6 +555,36 @@ export default function EntradaRapida() {
                 ]}
                 valor={ivaPctGasto}
                 onCambio={setIvaPctGasto}
+              />
+            </Campo>
+
+            <Campo etiqueta="IRPF retenido (alquiler, nóminas, profesionales)">
+              <Chips
+                opciones={[
+                  { valor: 0, etiqueta: "Sin IRPF" },
+                  { valor: 0.07, etiqueta: "7%" },
+                  { valor: 0.15, etiqueta: "15%" },
+                  { valor: 0.19, etiqueta: "19%" },
+                ]}
+                valor={irpfPctGasto}
+                onCambio={setIrpfPctGasto}
+              />
+            </Campo>
+            {irpfPctGasto > 0 && (
+              <p className="rounded-lg bg-amber-950 px-3 py-2 text-xs text-amber-300">
+                Retienes este IRPF y se lo debes a Hacienda (modelo 111/115). Sale de tu cuenta
+                el importe menos la retención; el resto queda apartado como impuesto pendiente.
+              </p>
+            )}
+
+            <Campo etiqueta="Negocio">
+              <Chips
+                opciones={[
+                  { valor: "presencial" as Canal, etiqueta: "Presencial" },
+                  { valor: "online" as Canal, etiqueta: "Online" },
+                ]}
+                valor={canalGasto}
+                onCambio={setCanalGasto}
               />
             </Campo>
 
