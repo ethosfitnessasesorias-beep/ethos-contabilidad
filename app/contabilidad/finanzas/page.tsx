@@ -98,13 +98,13 @@ export default function FinanzasPage() {
           <Tarjeta
             titulo="Caja libre"
             valor={eur(kpis.caja_libre)}
-            detalle={`Caja ${eur(kpis.caja_total)} − impuestos − hucha`}
+            detalle="Dinero realmente tuyo y usable (ya restados impuestos y hucha)"
           />
         </div>
         <Tarjeta
-          titulo="Runway"
+          titulo="Meses de autonomía (runway)"
           valor={kpis.runway_meses === null ? "—" : `${kpis.runway_meses} meses`}
-          detalle={`Fijo ${eur(kpis.gasto_fijo_mensual)}/mes`}
+          detalle={`Lo que aguantarías sin ingresar nada, pagando ${eur(kpis.gasto_fijo_mensual)}/mes de fijos`}
           alarma={runwayAlarma}
         />
         <Tarjeta

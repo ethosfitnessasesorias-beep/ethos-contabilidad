@@ -40,6 +40,10 @@ interface Saldo {
 const eur = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 
+// Saldos de cuenta: con céntimos, para cuadrar al detalle
+const eurC = (n: number) =>
+  new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
+
 function Metrica({ etiqueta, valor, sub }: { etiqueta: string; valor: string; sub?: string }) {
   return (
     <div className="rounded-xl bg-zinc-900/60 p-4">
@@ -163,22 +167,22 @@ export default function Dashboard() {
               Cuenta banco Ethos
             </p>
             <p className={`mt-1.5 text-2xl font-black ${saldoBanco < 0 ? "text-red-400" : "text-white"}`}>
-              {eur(saldoBanco)}
+              {eurC(saldoBanco)}
             </p>
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
             <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-              Caja efectivo
+              Efectivo
             </p>
             <p className={`mt-1.5 text-2xl font-black ${saldoCaja < 0 ? "text-red-400" : "text-white"}`}>
-              {eur(saldoCaja)}
+              {eurC(saldoCaja)}
             </p>
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
             <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
               En tránsito (TPV + Stripe)
             </p>
-            <p className="mt-1.5 text-2xl font-black text-zinc-300">{eur(saldoTransito)}</p>
+            <p className="mt-1.5 text-2xl font-black text-zinc-300">{eurC(saldoTransito)}</p>
             <p className="mt-0.5 text-xs text-zinc-600">pendiente de liquidar al banco</p>
           </div>
         </div>

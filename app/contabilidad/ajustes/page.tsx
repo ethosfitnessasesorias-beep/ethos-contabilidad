@@ -28,6 +28,15 @@ interface Metodo {
   activo: boolean;
   orden: number;
 }
+interface Impuesto {
+  id: number;
+  nombre: string;
+  clase: "iva" | "irpf";
+  pct: number;
+  aplica_ingreso: boolean;
+  aplica_gasto: boolean;
+  activo: boolean;
+}
 
 const inputCls =
   "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
@@ -43,23 +52,26 @@ const slug = (s: string) =>
   s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 
 export default function Ajustes() {
-  const [seccion, setSeccion] = useState<"personas" | "categorias" | "metodos">("personas");
+  const [seccion, setSeccion] = useState<"personas" | "categorias" | "metodos" | "impuestos">("personas");
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [metodos, setMetodos] = useState<Metodo[]>([]);
+  const [impuestos, setImpuestos] = useState<Impuesto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
-    const [p, c, m] = await Promise.all([
+    const [p, c, m, i] = await Promise.all([
       supabase.from("personas").select("*").order("orden"),
       supabase.from("categorias").select("*").order("tipo").order("grupo").order("nombre"),
       supabase.from("metodos_pago").select("*").order("orden"),
+      supabase.from("impuestos").select("*").order("orden"),
     ]);
     if (p.error) return setError(p.error.message);
     setPersonas((p.data as Persona[]) ?? []);
     setCategorias((c.data as Categoria[]) ?? []);
     setMetodos((m.data as Metodo[]) ?? []);
+    setImpuestos((i.data as Impuesto[]) ?? []);
   }, []);
 
   useEffect(() => {
@@ -149,6 +161,28 @@ export default function Ajustes() {
     cargar();
   }
 
+  // ---------- Impuestos ----------
+  const [iNombre, setINombre] = useState("");
+  const [iClase, setIClase] = useState<"iva" | "irpf">("iva");
+  const [iPct, setIPct] = useState("21");
+  async function crearImpuesto() {
+    if (!iNombre.trim()) return setError("Pon un nombre.");
+    const { error } = await supabase.from("impuestos").insert({
+      nombre: iNombre.trim(),
+      clase: iClase,
+      pct: Number(iPct.replace(",", ".")) / 100,
+      orden: impuestos.length + 1,
+    });
+    if (error) return setError(error.message);
+    setINombre("");
+    avisar("Impuesto creado ✓");
+    cargar();
+  }
+  async function actualizarImpuesto(id: number, campos: Partial<Impuesto>) {
+    await supabase.from("impuestos").update(campos).eq("id", id);
+    cargar();
+  }
+
   const gruposGasto = [...new Set(categorias.filter((c) => c.tipo === "gasto").map((c) => c.grupo))];
 
   return (
@@ -159,6 +193,7 @@ export default function Ajustes() {
             ["personas", "Personas y reparto"],
             ["categorias", "Categorías"],
             ["metodos", "Métodos de pago"],
+            ["impuestos", "Impuestos"],
           ] as const
         ).map(([id, et]) => (
           <button
@@ -333,6 +368,50 @@ export default function Ajustes() {
                 >
                   {m.activo ? "Activo" : "Oculto"}
                 </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ---------- IMPUESTOS ---------- */}
+      {seccion === "impuestos" && (
+        <div className="flex flex-col gap-3">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Nuevo impuesto</p>
+            <div className="flex flex-wrap gap-2">
+              <input placeholder="Nombre (ej: IVA 10%)" value={iNombre} onChange={(e) => setINombre(e.target.value)} className={inputCls} />
+              <select value={iClase} onChange={(e) => setIClase(e.target.value as "iva" | "irpf")} className={inputCls}>
+                <option value="iva">IVA (se suma)</option>
+                <option value="irpf">IRPF (se retiene)</option>
+              </select>
+              <div className="flex items-center gap-1">
+                <input inputMode="decimal" value={iPct} onChange={(e) => setIPct(e.target.value)} className={`${inputCls} w-16`} />
+                <span className="text-sm text-zinc-500">%</span>
+              </div>
+              <button onClick={crearImpuesto} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white">Añadir</button>
+            </div>
+            <p className="mt-2 text-xs text-zinc-600">
+              El IVA se suma al importe; el IRPF se retiene (lo debes a Hacienda). Elige en qué se
+              puede usar cada uno con las etiquetas Ingreso/Gasto.
+            </p>
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
+            {impuestos.map((i) => (
+              <div key={i.id} className="flex flex-wrap items-center gap-3 border-b border-zinc-800 px-4 py-2.5 last:border-0">
+                <span className="min-w-32 text-sm font-semibold text-white">{i.nombre}</span>
+                <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-bold uppercase text-zinc-400">{i.clase}</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    defaultValue={Math.round(Number(i.pct) * 10000) / 100}
+                    onBlur={(e) => actualizarImpuesto(i.id, { pct: Number(e.target.value) / 100 })}
+                    className={`${inputCls} w-16`}
+                  />
+                  <span className="text-xs text-zinc-500">%</span>
+                </div>
+                <button onClick={() => actualizarImpuesto(i.id, { aplica_ingreso: !i.aplica_ingreso })} className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${i.aplica_ingreso ? "bg-emerald-950 text-emerald-400" : "bg-zinc-800 text-zinc-600"}`}>Ingreso</button>
+                <button onClick={() => actualizarImpuesto(i.id, { aplica_gasto: !i.aplica_gasto })} className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${i.aplica_gasto ? "bg-emerald-950 text-emerald-400" : "bg-zinc-800 text-zinc-600"}`}>Gasto</button>
+                <button onClick={() => actualizarImpuesto(i.id, { activo: !i.activo })} className={`ml-auto rounded-full px-3 py-1 text-xs font-bold ${i.activo ? "bg-emerald-950 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}>{i.activo ? "Activo" : "Oculto"}</button>
               </div>
             ))}
           </div>

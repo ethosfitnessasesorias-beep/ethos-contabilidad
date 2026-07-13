@@ -21,6 +21,15 @@ interface Metodo {
   codigo: string;
   nombre: string;
 }
+interface Impuesto {
+  id: number;
+  nombre: string;
+  clase: "iva" | "irpf";
+  pct: number;
+  aplica_ingreso: boolean;
+  aplica_gasto: boolean;
+}
+type Unidad = "dia" | "semana" | "mes";
 
 type Pestana = "ingreso" | "gasto" | "traspaso";
 
@@ -111,6 +120,35 @@ function Toggle(props: {
 const inputCls =
   "rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-base text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
+// Selector de recurrencia: cada N días / semanas / meses
+function RecurrenciaCampo(props: {
+  cada: string;
+  setCada: (v: string) => void;
+  unidad: Unidad;
+  setUnidad: (v: Unidad) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl bg-zinc-900 px-4 py-3">
+      <span className="text-sm text-zinc-400">Cada</span>
+      <input
+        inputMode="numeric"
+        value={props.cada}
+        onChange={(e) => props.setCada(e.target.value)}
+        className="w-14 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-center text-white outline-none focus:border-red-500"
+      />
+      <select
+        value={props.unidad}
+        onChange={(e) => props.setUnidad(e.target.value as Unidad)}
+        className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-white outline-none"
+      >
+        <option value="dia">día(s)</option>
+        <option value="semana">semana(s)</option>
+        <option value="mes">mes(es)</option>
+      </select>
+    </div>
+  );
+}
+
 // ---------- Página ----------
 
 export default function EntradaRapida() {
@@ -123,6 +161,7 @@ export default function EntradaRapida() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [metodosPago, setMetodosPago] = useState<Metodo[]>([]);
+  const [impuestos, setImpuestos] = useState<Impuesto[]>([]);
   const [ivaGeneral, setIvaGeneral] = useState(0.21);
 
   const [pestana, setPestana] = useState<Pestana>("ingreso");
@@ -140,9 +179,12 @@ export default function EntradaRapida() {
   const [canal, setCanal] = useState<Canal>("presencial");
   const [clienteNombre, setClienteNombre] = useState("");
   const [concepto, setConcepto] = useState("");
-  const [conIva, setConIva] = useState(true);
+  const [ivaPctIngreso, setIvaPctIngreso] = useState<number>(0.21);
+  const [irpfPctIngreso, setIrpfPctIngreso] = useState<number>(0);
   const [cobrado, setCobrado] = useState(true);
   const [recurrente, setRecurrente] = useState(false);
+  const [recurCada, setRecurCada] = useState("1");
+  const [recurUnidad, setRecurUnidad] = useState<Unidad>("mes");
   const [cuentaCodigo, setCuentaCodigo] = useState("banco");
   const [metodo, setMetodo] = useState<MetodoPago>("transferencia");
 
@@ -152,10 +194,15 @@ export default function EntradaRapida() {
   const [ivaPctGasto, setIvaPctGasto] = useState<number>(0.21);
   const [irpfPctGasto, setIrpfPctGasto] = useState<number>(0);
   const [canalGasto, setCanalGasto] = useState<Canal>("presencial");
+  const [gastoFijo, setGastoFijo] = useState(false);
   const [tieneFactura, setTieneFactura] = useState(true);
   const [deducible, setDeducible] = useState(true);
   const [imputadoA, setImputadoA] = useState<string>("ethos");
   const [esDevolucion, setEsDevolucion] = useState(false);
+
+  // Alta rápida de categoría de ingreso desde el propio formulario
+  const [creandoCat, setCreandoCat] = useState(false);
+  const [nuevaCatNombre, setNuevaCatNombre] = useState("");
 
   // Traspaso
   const [origenCodigo, setOrigenCodigo] = useState("caja");
@@ -176,19 +223,21 @@ export default function EntradaRapida() {
   useEffect(() => {
     if (!sesionOk) return;
     (async () => {
-      const [cat, cue, cli, cfg, per, met] = await Promise.all([
+      const [cat, cue, cli, cfg, per, met, imp] = await Promise.all([
         supabase.from("categorias").select("*").eq("activa", true).order("grupo").order("nombre"),
         supabase.from("cuentas").select("*").eq("activa", true).order("id"),
         supabase.from("clientes").select("id, nombre, entrenador").is("fecha_baja", null).order("nombre"),
         supabase.from("config").select("clave, valor").eq("clave", "iva_general").single(),
         supabase.from("personas").select("codigo, nombre").eq("activa", true).order("orden"),
         supabase.from("metodos_pago").select("codigo, nombre").eq("activo", true).order("orden"),
+        supabase.from("impuestos").select("*").eq("activo", true).order("orden"),
       ]);
       setCategorias((cat.data as Categoria[]) ?? []);
       setCuentas((cue.data as Cuenta[]) ?? []);
       setClientes((cli.data as Cliente[]) ?? []);
       setPersonas((per.data as Persona[]) ?? []);
       setMetodosPago((met.data as Metodo[]) ?? []);
+      setImpuestos((imp.data as Impuesto[]) ?? []);
       if (cfg.data) setIvaGeneral(Number(cfg.data.valor));
 
       // Preferencias recordadas
@@ -235,7 +284,26 @@ export default function EntradaRapida() {
     for (const c of catGasto) g.set(c.grupo, [...(g.get(c.grupo) ?? []), c]);
     return [...g.entries()];
   }, [catGasto]);
+  const ivaIngreso = impuestos.filter((i) => i.clase === "iva" && i.aplica_ingreso);
+  const irpfIngreso = impuestos.filter((i) => i.clase === "irpf" && i.aplica_ingreso);
+  const ivaGasto = impuestos.filter((i) => i.clase === "iva" && i.aplica_gasto);
+  const irpfGasto = impuestos.filter((i) => i.clase === "irpf" && i.aplica_gasto);
   const cuentaId = (codigo: string) => cuentas.find((c) => c.codigo === codigo)?.id;
+
+  async function crearCategoriaRapida() {
+    const nombre = nuevaCatNombre.trim();
+    if (!nombre) return;
+    const { data, error } = await supabase
+      .from("categorias")
+      .insert({ tipo: "ingreso", grupo: "Ingreso", nombre })
+      .select("*")
+      .single();
+    if (error || !data) return avisar("error", error?.message ?? "No se pudo crear");
+    setCategorias((prev) => [...prev, data as Categoria]);
+    setCategoriaIngresoId((data as Categoria).id);
+    setNuevaCatNombre("");
+    setCreandoCat(false);
+  }
 
   function elegirCuenta(codigo: string) {
     setCuentaCodigo(codigo);
@@ -265,12 +333,14 @@ export default function EntradaRapida() {
     if (!imp) return avisar("error", "Pon un importe válido.");
     if (!categoriaIngresoId) return avisar("error", "Elige una categoría.");
 
-    const ivaPct = conIva ? ivaGeneral : 0;
-    const base = Math.round((imp / (1 + ivaPct)) * 100) / 100;
+    const ivaPct = ivaPctIngreso;
+    const irpfPct = irpfPctIngreso;
+    const base = Math.round((imp / (1 + ivaPct - irpfPct)) * 100) / 100;
     const cliente = clientes.find(
       (c) => c.nombre.toLowerCase() === clienteNombre.trim().toLowerCase()
     );
     const nombreCat = catIngreso.find((c) => c.id === categoriaIngresoId)?.nombre ?? "Ingreso";
+    const conceptoFinal = concepto.trim() || (cliente ? `${nombreCat} — ${cliente.nombre}` : nombreCat);
 
     setGuardando(true);
     const { data: factura, error: e1 } = await supabase
@@ -280,10 +350,10 @@ export default function EntradaRapida() {
         categoria_id: categoriaIngresoId,
         atribucion,
         fecha_emision: fecha,
-        concepto: concepto.trim() || (cliente ? `${nombreCat} — ${cliente.nombre}` : nombreCat),
+        concepto: conceptoFinal,
         base,
         iva_pct: ivaPct,
-        irpf_pct: 0,
+        irpf_pct: irpfPct,
         es_recurrente: recurrente,
         canal,
       })
@@ -308,9 +378,30 @@ export default function EntradaRapida() {
         return avisar("error", `Factura creada, pero el cobro falló: ${e2.message}`);
       }
     }
+    if (recurrente) await registrarRecurrente("ingreso", conceptoFinal, imp);
     setGuardando(false);
     avisar("ok", cobrado ? `Ingreso de ${imp} € guardado ✓` : "Factura pendiente creada ✓");
     limpiarTrasGuardar();
+  }
+
+  // Crea/actualiza una línea de tesorería para lo recurrente (sin duplicar)
+  async function registrarRecurrente(tipo: "ingreso" | "gasto", conceptoR: string, importeR: number) {
+    const { data } = await supabase
+      .from("tesoreria_recurrentes")
+      .select("id")
+      .eq("concepto", conceptoR)
+      .eq("tipo", tipo)
+      .limit(1);
+    const fila = {
+      concepto: conceptoR,
+      tipo,
+      importe: importeR,
+      cada: Math.max(1, Number(recurCada) || 1),
+      unidad: recurUnidad,
+      cada_meses: recurUnidad === "mes" ? Math.max(1, Number(recurCada) || 1) : 1,
+    };
+    if (data && data.length) await supabase.from("tesoreria_recurrentes").update(fila).eq("id", data[0].id);
+    else await supabase.from("tesoreria_recurrentes").insert(fila);
   }
 
   async function guardarGasto() {
@@ -337,11 +428,16 @@ export default function EntradaRapida() {
       iva_soportado: esDeducible ? Math.round(base * ivaPctGasto * 100) / 100 : 0,
       irpf_pct: irpfPctGasto,
       canal: canalGasto,
+      es_fijo: gastoFijo,
       deducible: esDeducible,
       tiene_factura: tieneFactura,
     });
+    if (error) {
+      setGuardando(false);
+      return avisar("error", `No se guardó: ${error.message}`);
+    }
+    if (recurrente && !esDevolucion) await registrarRecurrente("gasto", concepto.trim(), imp);
     setGuardando(false);
-    if (error) return avisar("error", `No se guardó: ${error.message}`);
     avisar("ok", esDevolucion ? `Devolución de ${imp} € guardada ✓` : `Gasto de ${imp} € guardado ✓`);
     setEsDevolucion(false);
     limpiarTrasGuardar();
@@ -425,16 +521,46 @@ export default function EntradaRapida() {
         {pestana === "ingreso" && (
           <>
             <Campo etiqueta="¿Qué es?">
-              <Chips
-                opciones={catIngreso.map((c) => ({ valor: c.id, etiqueta: c.nombre }))}
-                valor={categoriaIngresoId}
-                onCambio={(v) => {
-                  setCategoriaIngresoId(v);
-                  const cat = catIngreso.find((c) => c.id === v);
-                  if (cat) setCanal(cat.es_online ? "online" : "presencial");
-                  guardarPrefs({ categoriaIngresoId: v });
-                }}
-              />
+              <div className="flex gap-2">
+                <select
+                  value={categoriaIngresoId ?? ""}
+                  onChange={(e) => {
+                    const v = Number(e.target.value) || null;
+                    setCategoriaIngresoId(v);
+                    const cat = catIngreso.find((c) => c.id === v);
+                    if (cat) setCanal(cat.es_online ? "online" : "presencial");
+                    guardarPrefs({ categoriaIngresoId: v });
+                  }}
+                  className={`${inputCls} flex-1 appearance-none`}
+                >
+                  <option value="">Elegir…</option>
+                  {catIngreso.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nombre}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setCreandoCat(!creandoCat)}
+                  className="shrink-0 rounded-xl bg-zinc-800 px-4 text-lg font-black text-zinc-300"
+                >
+                  {creandoCat ? "×" : "+"}
+                </button>
+              </div>
+              {creandoCat && (
+                <div className="mt-2 flex gap-2">
+                  <input
+                    autoFocus
+                    placeholder="Nombre de la categoría nueva"
+                    value={nuevaCatNombre}
+                    onChange={(e) => setNuevaCatNombre(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && crearCategoriaRapida()}
+                    className={inputCls}
+                  />
+                  <button type="button" onClick={crearCategoriaRapida} className="shrink-0 rounded-xl bg-red-600 px-4 text-sm font-bold text-white">
+                    Crear
+                  </button>
+                </div>
+              )}
             </Campo>
 
             <Campo etiqueta="Negocio">
@@ -449,15 +575,36 @@ export default function EntradaRapida() {
             </Campo>
 
             <Campo etiqueta="¿De quién?">
-              <Chips
-                opciones={personas.map((p) => ({ valor: p.codigo, etiqueta: p.nombre }))}
-                valor={atribucion}
-                onCambio={(v) => {
-                  setAtribucion(v);
-                  guardarPrefs({ atribucion: v });
+              <select
+                value={atribucion}
+                onChange={(e) => {
+                  setAtribucion(e.target.value);
+                  guardarPrefs({ atribucion: e.target.value });
                 }}
-              />
+                className={`${inputCls} appearance-none`}
+              >
+                {personas.map((p) => (
+                  <option key={p.codigo} value={p.codigo}>{p.nombre}</option>
+                ))}
+              </select>
             </Campo>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Campo etiqueta="IVA">
+                <select value={ivaPctIngreso} onChange={(e) => setIvaPctIngreso(Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                  {ivaIngreso.map((i) => (
+                    <option key={i.id} value={i.pct}>{i.nombre} ({Math.round(i.pct * 100)}%)</option>
+                  ))}
+                </select>
+              </Campo>
+              <Campo etiqueta="IRPF">
+                <select value={irpfPctIngreso} onChange={(e) => setIrpfPctIngreso(Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                  {irpfIngreso.map((i) => (
+                    <option key={i.id} value={i.pct}>{i.nombre}</option>
+                  ))}
+                </select>
+              </Campo>
+            </div>
 
             <Campo etiqueta="Cliente (opcional)">
               <input
@@ -483,19 +630,9 @@ export default function EntradaRapida() {
               />
             </Campo>
 
-            <div className="grid grid-cols-2 gap-2">
-              <Toggle
-                etiqueta={`IVA ${Math.round(ivaGeneral * 100)}%`}
-                activo={conIva}
-                onCambio={setConIva}
-              />
-              <Toggle etiqueta="Cobrado ya" activo={cobrado} onCambio={setCobrado} />
-            </div>
-            <Toggle
-              etiqueta="Recurrente (cuota mensual)"
-              activo={recurrente}
-              onCambio={setRecurrente}
-            />
+            <Toggle etiqueta="Cobrado ya" activo={cobrado} onCambio={setCobrado} />
+            <Toggle etiqueta="Recurrente (se suma a la tesorería)" activo={recurrente} onCambio={setRecurrente} />
+            {recurrente && <RecurrenciaCampo cada={recurCada} setCada={setRecurCada} unidad={recurUnidad} setUnidad={setRecurUnidad} />}
 
             {cobrado && (
               <>
@@ -503,14 +640,18 @@ export default function EntradaRapida() {
                   <Chips opciones={opcCuentas} valor={cuentaCodigo} onCambio={elegirCuenta} />
                 </Campo>
                 <Campo etiqueta="Método">
-                  <Chips
-                    opciones={metodosPago.map((m) => ({ valor: m.codigo, etiqueta: m.nombre }))}
-                    valor={metodo}
-                    onCambio={(v) => {
-                      setMetodo(v as MetodoPago);
-                      if (v === "domiciliado") setRecurrente(true);
+                  <select
+                    value={metodo}
+                    onChange={(e) => {
+                      setMetodo(e.target.value as MetodoPago);
+                      if (e.target.value === "domiciliado") setRecurrente(true);
                     }}
-                  />
+                    className={`${inputCls} appearance-none`}
+                  >
+                    {metodosPago.map((m) => (
+                      <option key={m.codigo} value={m.codigo}>{m.nombre}</option>
+                    ))}
+                  </select>
                 </Campo>
               </>
             )}
@@ -523,7 +664,12 @@ export default function EntradaRapida() {
             <Campo etiqueta="Categoría">
               <select
                 value={categoriaGastoId ?? ""}
-                onChange={(e) => setCategoriaGastoId(Number(e.target.value) || null)}
+                onChange={(e) => {
+                  const v = Number(e.target.value) || null;
+                  setCategoriaGastoId(v);
+                  const cat = catGasto.find((c) => c.id === v);
+                  if (cat) setGastoFijo(cat.es_fijo);
+                }}
                 className={`${inputCls} appearance-none`}
               >
                 <option value="">Elegir categoría…</option>
@@ -557,31 +703,22 @@ export default function EntradaRapida() {
               />
             </Campo>
 
-            <Campo etiqueta="IVA incluido en el importe">
-              <Chips
-                opciones={[
-                  { valor: 0.21, etiqueta: "21%" },
-                  { valor: 0.1, etiqueta: "10%" },
-                  { valor: 0.04, etiqueta: "4%" },
-                  { valor: 0, etiqueta: "Sin IVA" },
-                ]}
-                valor={ivaPctGasto}
-                onCambio={setIvaPctGasto}
-              />
-            </Campo>
-
-            <Campo etiqueta="IRPF retenido (alquiler, nóminas, profesionales)">
-              <Chips
-                opciones={[
-                  { valor: 0, etiqueta: "Sin IRPF" },
-                  { valor: 0.07, etiqueta: "7%" },
-                  { valor: 0.15, etiqueta: "15%" },
-                  { valor: 0.19, etiqueta: "19%" },
-                ]}
-                valor={irpfPctGasto}
-                onCambio={setIrpfPctGasto}
-              />
-            </Campo>
+            <div className="grid grid-cols-2 gap-2">
+              <Campo etiqueta="IVA incluido">
+                <select value={ivaPctGasto} onChange={(e) => setIvaPctGasto(Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                  {ivaGasto.map((i) => (
+                    <option key={i.id} value={i.pct}>{i.nombre} ({Math.round(i.pct * 100)}%)</option>
+                  ))}
+                </select>
+              </Campo>
+              <Campo etiqueta="IRPF retenido">
+                <select value={irpfPctGasto} onChange={(e) => setIrpfPctGasto(Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                  {irpfGasto.map((i) => (
+                    <option key={i.id} value={i.pct}>{i.nombre}</option>
+                  ))}
+                </select>
+              </Campo>
+            </div>
             {irpfPctGasto > 0 && (
               <p className="rounded-lg bg-amber-950 px-3 py-2 text-xs text-amber-300">
                 Retienes este IRPF y se lo debes a Hacienda (modelo 111/115). Sale de tu cuenta
@@ -616,6 +753,18 @@ export default function EntradaRapida() {
                 deshabilitado={!tieneFactura}
               />
             </div>
+            <Campo etiqueta="Tipo de gasto">
+              <Chips
+                opciones={[
+                  { valor: "variable", etiqueta: "Variable" },
+                  { valor: "fijo", etiqueta: "Fijo (recurrente e ineludible)" },
+                ]}
+                valor={gastoFijo ? "fijo" : "variable"}
+                onCambio={(v) => setGastoFijo(v === "fijo")}
+              />
+            </Campo>
+            <Toggle etiqueta="Recurrente (se suma a la tesorería)" activo={recurrente} onCambio={setRecurrente} />
+            {recurrente && <RecurrenciaCampo cada={recurCada} setCada={setRecurCada} unidad={recurUnidad} setUnidad={setRecurUnidad} />}
             <Toggle
               etiqueta="Es una devolución (te devuelven dinero)"
               activo={esDevolucion}

@@ -10,6 +10,8 @@ interface Recurrente {
   importe: number;
   dia_mes: number;
   cada_meses: number;
+  cada: number;
+  unidad: "dia" | "semana" | "mes";
   desde: string;
   hasta: string | null;
   activo: boolean;
@@ -23,17 +25,26 @@ const mesNombre = (d: Date) => d.toLocaleDateString("es-ES", { month: "short", y
 const inputCls =
   "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
-// ¿Aplica un recurrente en el mes (primer día del mes) dado?
-function aplicaEnMes(r: Recurrente, primerDiaMes: Date): boolean {
+// Cuántas veces cae un recurrente dentro de un mes concreto
+function vecesEnMes(r: Recurrente, primerDiaMes: Date): number {
   const desde = new Date(r.desde + "T00:00:00");
-  if (primerDiaMes < new Date(desde.getFullYear(), desde.getMonth(), 1)) return false;
-  if (r.hasta) {
-    const hasta = new Date(r.hasta + "T00:00:00");
-    if (primerDiaMes > new Date(hasta.getFullYear(), hasta.getMonth(), 1)) return false;
+  const finMes = new Date(primerDiaMes.getFullYear(), primerDiaMes.getMonth() + 1, 0);
+  const hasta = r.hasta ? new Date(r.hasta + "T00:00:00") : null;
+  const cada = Math.max(1, r.cada || r.cada_meses || 1);
+
+  if (r.unidad === "mes") {
+    if (primerDiaMes < new Date(desde.getFullYear(), desde.getMonth(), 1)) return 0;
+    if (hasta && primerDiaMes > new Date(hasta.getFullYear(), hasta.getMonth(), 1)) return 0;
+    const meses = (primerDiaMes.getFullYear() - desde.getFullYear()) * 12 + (primerDiaMes.getMonth() - desde.getMonth());
+    return meses >= 0 && meses % cada === 0 ? 1 : 0;
   }
-  const meses =
-    (primerDiaMes.getFullYear() - desde.getFullYear()) * 12 + (primerDiaMes.getMonth() - desde.getMonth());
-  return meses >= 0 && meses % Math.max(1, r.cada_meses) === 0;
+  // Días o semanas: contamos las fechas que caen en el mes
+  const paso = r.unidad === "semana" ? cada * 7 : cada;
+  let veces = 0;
+  for (let d = new Date(desde); d <= finMes; d.setDate(d.getDate() + paso)) {
+    if (d >= primerDiaMes && d <= finMes && (!hasta || d <= hasta)) veces++;
+  }
+  return veces;
 }
 
 export default function Tesoreria() {
@@ -112,14 +123,14 @@ export default function Tesoreria() {
     }
     for (const [nombre, total] of porCat) {
       if (recurrentes.some((r) => r.concepto === nombre)) continue;
-      nuevos.push({ concepto: nombre, tipo: "gasto", importe: Math.round(total / 3), dia_mes: 1, cada_meses: 1, desde: new Date().toISOString().slice(0, 10), hasta: null, activo: true });
+      nuevos.push({ concepto: nombre, tipo: "gasto", importe: Math.round(total / 3), dia_mes: 1, cada_meses: 1, cada: 1, unidad: "mes", desde: new Date().toISOString().slice(0, 10), hasta: null, activo: true });
     }
     // Ingreso recurrente: MRR medio de domiciliaciones
     const mrrTotal = ((domic.data ?? []) as unknown as { importe: number; facturas: { es_recurrente: boolean } }[])
       .filter((c) => c.facturas?.es_recurrente)
       .reduce((s, c) => s + Number(c.importe), 0);
     if (mrrTotal > 0 && !recurrentes.some((r) => r.concepto === "Domiciliaciones (MRR)")) {
-      nuevos.push({ concepto: "Domiciliaciones (MRR)", tipo: "ingreso", importe: Math.round(mrrTotal / 3), dia_mes: 1, cada_meses: 1, desde: new Date().toISOString().slice(0, 10), hasta: null, activo: true });
+      nuevos.push({ concepto: "Domiciliaciones (MRR)", tipo: "ingreso", importe: Math.round(mrrTotal / 3), dia_mes: 1, cada_meses: 1, cada: 1, unidad: "mes", desde: new Date().toISOString().slice(0, 10), hasta: null, activo: true });
     }
     if (nuevos.length === 0) return setError("No hay nada nuevo que sugerir (o ya está todo).");
     const { error } = await supabase.from("tesoreria_recurrentes").insert(nuevos);
@@ -139,9 +150,11 @@ export default function Tesoreria() {
       let ingresos = 0;
       let gastos = 0;
       for (const r of activos) {
-        if (!aplicaEnMes(r, primerDia)) continue;
-        if (r.tipo === "ingreso") ingresos += Number(r.importe);
-        else gastos += Number(r.importe);
+        const veces = vecesEnMes(r, primerDia);
+        if (veces === 0) continue;
+        const monto = Number(r.importe) * veces;
+        if (r.tipo === "ingreso") ingresos += monto;
+        else gastos += monto;
       }
       saldo += ingresos - gastos;
       filas.push({ mes: mesNombre(primerDia), ingresos, gastos, saldoFinal: saldo });
@@ -250,7 +263,7 @@ export default function Tesoreria() {
               <span className="text-xs text-zinc-500">€</span>
             </div>
             <span className="text-xs text-zinc-500">
-              día {r.dia_mes} · cada {r.cada_meses}m
+              cada {r.cada || r.cada_meses} {r.unidad === "dia" ? "día(s)" : r.unidad === "semana" ? "semana(s)" : "mes(es)"}
             </span>
             <button
               onClick={() => actualizar(r.id, { activo: !r.activo })}
