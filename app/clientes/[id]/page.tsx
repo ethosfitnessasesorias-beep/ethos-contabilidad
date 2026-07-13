@@ -21,6 +21,7 @@ interface FacturaSaldo {
   total: number;
   cobrado: number;
   pendiente: number;
+  condonado: number;
 }
 
 const eur = (n: number) =>
@@ -61,7 +62,10 @@ export default function FichaCliente() {
   const [direccion, setDireccion] = useState("");
 
   // Mini-formulario cobrar/devolver sobre una factura
-  const [accion, setAccion] = useState<{ facturaId: number; modo: "cobrar" | "devolver" } | null>(null);
+  const [accion, setAccion] = useState<{
+    facturaId: number;
+    modo: "cobrar" | "devolver" | "perdonar";
+  } | null>(null);
   const [accionImporte, setAccionImporte] = useState("");
   const [accionCuenta, setAccionCuenta] = useState("banco");
 
@@ -75,7 +79,7 @@ export default function FichaCliente() {
       supabase.from("clientes").select("*").eq("id", clienteId).single(),
       supabase
         .from("v_facturas_saldo")
-        .select("id, fecha_emision, concepto, total, cobrado, pendiente")
+        .select("id, fecha_emision, concepto, total, cobrado, pendiente, condonado")
         .eq("cliente_id", clienteId)
         .order("fecha_emision", { ascending: false }),
       supabase.from("cuentas").select("*").eq("activa", true).order("id"),
@@ -153,6 +157,26 @@ export default function FichaCliente() {
     if (!accion) return;
     const n = Number(accionImporte.replace(",", "."));
     if (!Number.isFinite(n) || n <= 0) return avisar("error", "Importe no válido.");
+
+    if (accion.modo === "perdonar") {
+      // Perdonar deuda: no entra dinero en ninguna cuenta, solo se apaga
+      // el pendiente (facturas.condonado). La caja no se toca.
+      const f = facturas.find((x) => x.id === accion.facturaId);
+      if (!f) return;
+      if (n > Number(f.pendiente) + 0.005)
+        return avisar("error", `Solo quedan ${eur(Number(f.pendiente))} pendientes.`);
+      const { error } = await supabase
+        .from("facturas")
+        .update({ condonado: Math.round((Number(f.condonado) + n) * 100) / 100 })
+        .eq("id", accion.facturaId);
+      if (error) return avisar("error", error.message);
+      avisar("ok", `Deuda de ${n} € perdonada ✓`);
+      setAccion(null);
+      setAccionImporte("");
+      cargar();
+      return;
+    }
+
     const importe = accion.modo === "devolver" ? -n : n;
     const cuenta = cuentas.find((c) => c.codigo === accionCuenta);
     const { error } = await supabase.from("cobros").insert({
@@ -310,15 +334,26 @@ export default function FichaCliente() {
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {pendiente > 0.01 && (
-                    <button
-                      onClick={() => {
-                        setAccion({ facturaId: f.id, modo: "cobrar" });
-                        setAccionImporte(String(pendiente));
-                      }}
-                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"
-                    >
-                      Cobrar
-                    </button>
+                    <>
+                      <button
+                        onClick={() => {
+                          setAccion({ facturaId: f.id, modo: "cobrar" });
+                          setAccionImporte(String(pendiente));
+                        }}
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"
+                      >
+                        Cobrar
+                      </button>
+                      <button
+                        onClick={() => {
+                          setAccion({ facturaId: f.id, modo: "perdonar" });
+                          setAccionImporte(String(pendiente));
+                        }}
+                        className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-amber-300"
+                      >
+                        Perdonar
+                      </button>
+                    </>
                   )}
                   <button
                     onClick={() => {
@@ -340,11 +375,18 @@ export default function FichaCliente() {
               {pendiente > 0.01 && (
                 <p className="mt-1 text-xs font-bold text-amber-400">pendiente {eur(pendiente)}</p>
               )}
+              {Number(f.condonado) > 0 && (
+                <p className="mt-1 text-xs text-zinc-500">perdonado {eur(Number(f.condonado))}</p>
+              )}
 
               {accion?.facturaId === f.id && (
                 <div className="mt-3 flex flex-col gap-2 rounded-xl bg-zinc-950 p-3">
                   <p className="text-xs font-semibold uppercase text-zinc-500">
-                    {accion.modo === "cobrar" ? "Apuntar cobro" : "Apuntar devolución al cliente"}
+                    {accion.modo === "cobrar"
+                      ? "Apuntar cobro"
+                      : accion.modo === "devolver"
+                        ? "Apuntar devolución al cliente"
+                        : "Perdonar deuda (no entra dinero en caja)"}
                   </p>
                   <input
                     inputMode="decimal"
@@ -353,19 +395,21 @@ export default function FichaCliente() {
                     onChange={(e) => setAccionImporte(e.target.value)}
                     className={inputCls}
                   />
-                  <div className="flex flex-wrap gap-2">
-                    {cuentas.map((c) => (
-                      <button
-                        key={c.codigo}
-                        onClick={() => setAccionCuenta(c.codigo)}
-                        className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
-                          accionCuenta === c.codigo ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-300"
-                        }`}
-                      >
-                        {c.nombre.split(" (")[0]}
-                      </button>
-                    ))}
-                  </div>
+                  {accion.modo !== "perdonar" && (
+                    <div className="flex flex-wrap gap-2">
+                      {cuentas.map((c) => (
+                        <button
+                          key={c.codigo}
+                          onClick={() => setAccionCuenta(c.codigo)}
+                          className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                            accionCuenta === c.codigo ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-300"
+                          }`}
+                        >
+                          {c.nombre.split(" (")[0]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <button onClick={ejecutarAccion} className="rounded-xl bg-emerald-600 py-2 text-sm font-bold text-white">
                     Confirmar
                   </button>
