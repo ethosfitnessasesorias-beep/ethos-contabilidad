@@ -8,6 +8,8 @@ const TABS = [
   { href: "/contabilidad/facturas", etiqueta: "Facturas" },
   { href: "/contabilidad/clientes", etiqueta: "Clientes" },
   { href: "/contabilidad/finanzas", etiqueta: "Finanzas" },
+  { href: "/contabilidad/tesoreria", etiqueta: "Tesorería" },
+  { href: "/contabilidad/ajustes", etiqueta: "Ajustes" },
 ];
 
 export function ContaTabs() {

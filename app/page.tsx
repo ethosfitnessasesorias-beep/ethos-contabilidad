@@ -5,10 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Shell } from "./shell";
 import {
-  ATRIBUCIONES,
-  METODOS,
   METODO_POR_CUENTA,
-  type Atribucion,
   type Canal,
   type Categoria,
   type Cliente,
@@ -16,11 +13,20 @@ import {
   type MetodoPago,
 } from "@/lib/tipos";
 
+interface Persona {
+  codigo: string;
+  nombre: string;
+}
+interface Metodo {
+  codigo: string;
+  nombre: string;
+}
+
 type Pestana = "ingreso" | "gasto" | "traspaso";
 
 // Preferencias que se recuerdan entre usos (por dispositivo)
 interface Prefs {
-  atribucion: Atribucion;
+  atribucion: string;
   categoriaIngresoId: number | null;
   cuentaCodigo: string;
 }
@@ -115,6 +121,8 @@ export default function EntradaRapida() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [metodosPago, setMetodosPago] = useState<Metodo[]>([]);
   const [ivaGeneral, setIvaGeneral] = useState(0.21);
 
   const [pestana, setPestana] = useState<Pestana>("ingreso");
@@ -127,7 +135,7 @@ export default function EntradaRapida() {
   const importeRef = useRef<HTMLInputElement>(null);
 
   // Ingreso
-  const [atribucion, setAtribucion] = useState<Atribucion>("ethos");
+  const [atribucion, setAtribucion] = useState<string>("ethos");
   const [categoriaIngresoId, setCategoriaIngresoId] = useState<number | null>(null);
   const [canal, setCanal] = useState<Canal>("presencial");
   const [clienteNombre, setClienteNombre] = useState("");
@@ -146,7 +154,7 @@ export default function EntradaRapida() {
   const [canalGasto, setCanalGasto] = useState<Canal>("presencial");
   const [tieneFactura, setTieneFactura] = useState(true);
   const [deducible, setDeducible] = useState(true);
-  const [imputadoA, setImputadoA] = useState<Atribucion>("ethos");
+  const [imputadoA, setImputadoA] = useState<string>("ethos");
   const [esDevolucion, setEsDevolucion] = useState(false);
 
   // Traspaso
@@ -168,15 +176,19 @@ export default function EntradaRapida() {
   useEffect(() => {
     if (!sesionOk) return;
     (async () => {
-      const [cat, cue, cli, cfg] = await Promise.all([
+      const [cat, cue, cli, cfg, per, met] = await Promise.all([
         supabase.from("categorias").select("*").eq("activa", true).order("grupo").order("nombre"),
         supabase.from("cuentas").select("*").eq("activa", true).order("id"),
         supabase.from("clientes").select("id, nombre, entrenador").is("fecha_baja", null).order("nombre"),
         supabase.from("config").select("clave, valor").eq("clave", "iva_general").single(),
+        supabase.from("personas").select("codigo, nombre").eq("activa", true).order("orden"),
+        supabase.from("metodos_pago").select("codigo, nombre").eq("activo", true).order("orden"),
       ]);
       setCategorias((cat.data as Categoria[]) ?? []);
       setCuentas((cue.data as Cuenta[]) ?? []);
       setClientes((cli.data as Cliente[]) ?? []);
+      setPersonas((per.data as Persona[]) ?? []);
+      setMetodosPago((met.data as Metodo[]) ?? []);
       if (cfg.data) setIvaGeneral(Number(cfg.data.valor));
 
       // Preferencias recordadas
@@ -438,7 +450,7 @@ export default function EntradaRapida() {
 
             <Campo etiqueta="¿De quién?">
               <Chips
-                opciones={ATRIBUCIONES.map((a) => ({ valor: a.valor, etiqueta: a.etiqueta }))}
+                opciones={personas.map((p) => ({ valor: p.codigo, etiqueta: p.nombre }))}
                 valor={atribucion}
                 onCambio={(v) => {
                   setAtribucion(v);
@@ -492,10 +504,10 @@ export default function EntradaRapida() {
                 </Campo>
                 <Campo etiqueta="Método">
                   <Chips
-                    opciones={METODOS.map((m) => ({ valor: m.valor, etiqueta: m.etiqueta }))}
+                    opciones={metodosPago.map((m) => ({ valor: m.codigo, etiqueta: m.nombre }))}
                     valor={metodo}
                     onCambio={(v) => {
-                      setMetodo(v);
+                      setMetodo(v as MetodoPago);
                       if (v === "domiciliado") setRecurrente(true);
                     }}
                   />
@@ -622,7 +634,7 @@ export default function EntradaRapida() {
 
             <Campo etiqueta="Imputado a">
               <Chips
-                opciones={ATRIBUCIONES.map((a) => ({ valor: a.valor, etiqueta: a.etiqueta }))}
+                opciones={personas.map((p) => ({ valor: p.codigo, etiqueta: p.nombre }))}
                 valor={imputadoA}
                 onCambio={setImputadoA}
               />
