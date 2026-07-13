@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useSesion } from "@/lib/useSesion";
 import { Shell } from "../shell";
-import { ETAPAS, type Canal, type EtapaDeal } from "@/lib/tipos";
+import { type Canal } from "@/lib/tipos";
 
 interface NegocioFila {
   canal: Canal;
@@ -22,8 +22,10 @@ interface Actividad {
 }
 
 interface PipelineFila {
-  etapa: EtapaDeal;
-  canal: Canal;
+  columna_id: number;
+  titulo: string;
+  orden: number;
+  canal: Canal | null;
   n: number;
   importe: number;
 }
@@ -37,8 +39,6 @@ interface Saldo {
 
 const eur = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
-
-const ETAPAS_ABIERTAS = ETAPAS.filter((e) => ["lead", "contactado", "agendado"].includes(e.valor));
 
 function Metrica({ etiqueta, valor, sub }: { etiqueta: string; valor: string; sub?: string }) {
   return (
@@ -131,8 +131,16 @@ export default function Dashboard() {
   const saldoCaja = saldoDe("caja");
   const saldoTransito = saldos.filter((s) => s.es_transito).reduce((t, s) => t + Number(s.saldo), 0);
   const mesTexto = new Date().toLocaleDateString("es-ES", { month: "long", year: "numeric" });
-  const conteoEtapa = (etapa: string) =>
-    pipeline.filter((p) => p.etapa === etapa).reduce((s, p) => s + Number(p.n), 0);
+  // Suma por columna del pipeline (una fila por columna×canal en la vista)
+  const fasesPipeline = (() => {
+    const m = new Map<number, { titulo: string; orden: number; n: number }>();
+    for (const p of pipeline) {
+      const acc = m.get(p.columna_id) ?? { titulo: p.titulo, orden: p.orden, n: 0 };
+      acc.n += Number(p.n);
+      m.set(p.columna_id, acc);
+    }
+    return [...m.values()].sort((a, b) => a.orden - b.orden);
+  })();
 
   return (
     <Shell titulo="Dashboard">
@@ -211,24 +219,24 @@ export default function Dashboard() {
         {/* Pipeline por fases */}
         <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
           <h2 className="mb-4 text-lg font-black text-white">Pipeline por fases</h2>
-          <div className="grid grid-cols-3 gap-3">
-            {ETAPAS_ABIERTAS.map((e) => {
-              const n = conteoEtapa(e.valor);
-              return (
-                <div key={e.valor} className="rounded-xl bg-zinc-900/60 p-4">
-                  <p className="text-2xl font-black text-white">{n}</p>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
-                    <div
-                      className="h-full rounded-full bg-red-600"
-                      style={{ width: `${Math.min(100, n * 20)}%` }}
-                    />
-                  </div>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                    {e.etiqueta}
-                  </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {fasesPipeline.map((f) => (
+              <div key={f.titulo} className="rounded-xl bg-zinc-900/60 p-4">
+                <p className="text-2xl font-black text-white">{f.n}</p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-red-600"
+                    style={{ width: `${Math.min(100, f.n * 20)}%` }}
+                  />
                 </div>
-              );
-            })}
+                <p className="mt-2 truncate text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  {f.titulo}
+                </p>
+              </div>
+            ))}
+            {fasesPipeline.length === 0 && (
+              <p className="text-sm text-zinc-600">Sin deals en el pipeline.</p>
+            )}
           </div>
         </div>
       </div>
