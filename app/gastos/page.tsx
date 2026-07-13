@@ -23,7 +23,7 @@ const eur = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
 
 const inputCls =
-  "rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-base text-white placeholder-zinc-600 outline-none focus:border-emerald-500";
+  "rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-base text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
 const mesActualISO = () => new Date().toISOString().slice(0, 7);
 
@@ -165,7 +165,7 @@ export default function Gastos() {
                 </div>
                 <button
                   onClick={() => marcarFactura(g)}
-                  className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"
+                  className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white"
                 >
                   Ya la tengo
                 </button>
@@ -219,7 +219,7 @@ export default function Gastos() {
           <h2 className="text-sm font-black uppercase tracking-wide text-zinc-400">Categorías</h2>
           <button
             onClick={() => setCreandoCat(!creandoCat)}
-            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"
+            className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white"
           >
             {creandoCat ? "Cancelar" : "+ Nueva"}
           </button>
@@ -258,7 +258,7 @@ export default function Gastos() {
                 type="checkbox"
                 checked={catFijo}
                 onChange={(e) => setCatFijo(e.target.checked)}
-                className="accent-emerald-600"
+                className="accent-red-600"
               />
               Gasto fijo (recurrente e ineludible: cuenta para el runway)
             </label>
@@ -267,7 +267,7 @@ export default function Gastos() {
                 type="checkbox"
                 checked={catInversion}
                 onChange={(e) => setCatInversion(e.target.checked)}
-                className="accent-emerald-600"
+                className="accent-red-600"
               />
               Inversión
             </label>
@@ -278,7 +278,7 @@ export default function Gastos() {
                 Marcarlo mal contamina el reparto — pasó con el Excel.
               </p>
             )}
-            <button onClick={crearCategoria} className="rounded-xl bg-emerald-600 py-2.5 font-bold text-white">
+            <button onClick={crearCategoria} className="rounded-xl bg-red-600 py-2.5 font-bold text-white">
               Crear categoría
             </button>
           </div>

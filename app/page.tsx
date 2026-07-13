@@ -49,7 +49,7 @@ function Chips<T extends string | number>(props: {
           onClick={() => props.onCambio(o.valor)}
           className={`rounded-full px-4 py-2.5 text-sm font-semibold transition-colors ${
             props.valor === o.valor
-              ? "bg-emerald-600 text-white"
+              ? "bg-red-600 text-white"
               : "bg-zinc-800 text-zinc-300 active:bg-zinc-700"
           }`}
         >
@@ -83,13 +83,13 @@ function Toggle(props: {
       disabled={props.deshabilitado}
       onClick={() => props.onCambio(!props.activo)}
       className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-semibold ${
-        props.activo ? "bg-emerald-950 text-emerald-300" : "bg-zinc-900 text-zinc-400"
+        props.activo ? "bg-red-950 text-red-300" : "bg-zinc-900 text-zinc-400"
       } ${props.deshabilitado ? "opacity-40" : ""}`}
     >
       {props.etiqueta}
       <span
         className={`ml-3 inline-block h-6 w-11 shrink-0 rounded-full p-0.5 transition-colors ${
-          props.activo ? "bg-emerald-600" : "bg-zinc-700"
+          props.activo ? "bg-red-600" : "bg-zinc-700"
         }`}
       >
         <span
@@ -103,7 +103,7 @@ function Toggle(props: {
 }
 
 const inputCls =
-  "rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-base text-white placeholder-zinc-600 outline-none focus:border-emerald-500";
+  "rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-base text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
 // ---------- Página ----------
 
@@ -185,6 +185,23 @@ export default function EntradaRapida() {
         if (p.cuentaCodigo) {
           setCuentaCodigo(p.cuentaCodigo);
           setMetodo(METODO_POR_CUENTA[p.cuentaCodigo] ?? "transferencia");
+        }
+      } catch {}
+
+      // Deal ganado en el Pipeline: llega con la primera factura pre-rellenada
+      try {
+        const crudo = sessionStorage.getItem("prefill_ingreso");
+        if (crudo) {
+          sessionStorage.removeItem("prefill_ingreso");
+          const pre = JSON.parse(crudo);
+          setPestana("ingreso");
+          if (pre.importe) setImporte(String(pre.importe));
+          if (pre.clienteNombre) setClienteNombre(pre.clienteNombre);
+          if (pre.concepto) setConcepto(pre.concepto);
+          if (pre.canal) setCanal(pre.canal);
+          if (pre.atribucion) setAtribucion(pre.atribucion);
+          setToast({ tipo: "ok", texto: "Deal ganado 🎉 Revisa y guarda su primera factura" });
+          setTimeout(() => setToast(null), 4000);
         }
       } catch {}
     })();
@@ -364,7 +381,7 @@ export default function EntradaRapida() {
             key={id}
             onClick={() => setPestana(id)}
             className={`rounded-lg py-2.5 text-sm font-bold ${
-              pestana === id ? "bg-emerald-600 text-white" : "text-zinc-400"
+              pestana === id ? "bg-red-600 text-white" : "text-zinc-400"
             }`}
           >
             {etiqueta}

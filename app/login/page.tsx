@@ -44,7 +44,7 @@ export default function LoginPage() {
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3.5 text-base text-white placeholder-zinc-500 outline-none focus:border-emerald-500"
+            className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3.5 text-base text-white placeholder-zinc-500 outline-none focus:border-red-500"
           />
           <input
             type="password"
@@ -53,7 +53,7 @@ export default function LoginPage() {
             placeholder="Contraseña"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3.5 text-base text-white placeholder-zinc-500 outline-none focus:border-emerald-500"
+            className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3.5 text-base text-white placeholder-zinc-500 outline-none focus:border-red-500"
           />
           {error && (
             <p className="rounded-lg bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>
@@ -61,7 +61,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={cargando}
-            className="mt-2 rounded-xl bg-emerald-600 py-3.5 text-base font-bold text-white active:bg-emerald-700 disabled:opacity-50"
+            className="mt-2 rounded-xl bg-red-600 py-3.5 text-base font-bold text-white active:bg-red-700 disabled:opacity-50"
           >
             {cargando ? "Entrando…" : "Entrar"}
           </button>

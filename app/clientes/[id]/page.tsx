@@ -28,7 +28,7 @@ const eur = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
 
 const inputCls =
-  "rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-base text-white placeholder-zinc-600 outline-none focus:border-emerald-500";
+  "rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-base text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
 // Convierte un teléfono español a formato wa.me (solo dígitos, con 34 delante)
 function telefonoWa(tel: string): string | null {
@@ -250,14 +250,14 @@ export default function FichaCliente() {
                   key={a.valor}
                   onClick={() => setEntrenador(a.valor)}
                   className={`rounded-full px-3 py-1.5 text-sm font-semibold ${
-                    entrenador === a.valor ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-300"
+                    entrenador === a.valor ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-300"
                   }`}
                 >
                   {a.etiqueta}
                 </button>
               ))}
             </div>
-            <button onClick={guardarDatos} className="rounded-xl bg-emerald-600 py-2.5 font-bold text-white">
+            <button onClick={guardarDatos} className="rounded-xl bg-red-600 py-2.5 font-bold text-white">
               Guardar datos
             </button>
             <button onClick={cambiarBaja} className="rounded-xl bg-zinc-800 py-2.5 text-sm font-bold text-zinc-300">
@@ -402,7 +402,7 @@ export default function FichaCliente() {
                           key={c.codigo}
                           onClick={() => setAccionCuenta(c.codigo)}
                           className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
-                            accionCuenta === c.codigo ? "bg-emerald-600 text-white" : "bg-zinc-800 text-zinc-300"
+                            accionCuenta === c.codigo ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-300"
                           }`}
                         >
                           {c.nombre.split(" (")[0]}
@@ -410,7 +410,7 @@ export default function FichaCliente() {
                       ))}
                     </div>
                   )}
-                  <button onClick={ejecutarAccion} className="rounded-xl bg-emerald-600 py-2 text-sm font-bold text-white">
+                  <button onClick={ejecutarAccion} className="rounded-xl bg-red-600 py-2 text-sm font-bold text-white">
                     Confirmar
                   </button>
                 </div>

@@ -165,7 +165,7 @@ export default function PaginaFactura() {
           {factura?.numero ? (
             <button
               onClick={() => window.print()}
-              className="rounded-xl bg-emerald-600 px-5 py-2.5 font-bold text-white"
+              className="rounded-xl bg-red-600 px-5 py-2.5 font-bold text-white"
             >
               Imprimir / Guardar PDF
             </button>
@@ -183,7 +183,7 @@ export default function PaginaFactura() {
                   <button
                     onClick={emitir}
                     disabled={emitiendo}
-                    className="rounded-xl bg-emerald-600 px-5 py-2.5 font-bold text-white disabled:opacity-50"
+                    className="rounded-xl bg-red-600 px-5 py-2.5 font-bold text-white disabled:opacity-50"
                   >
                     {emitiendo
                       ? "Emitiendo…"
@@ -220,7 +220,7 @@ export default function PaginaFactura() {
             value={eConcepto}
             onChange={(e) => setEConcepto(e.target.value)}
             placeholder="Concepto que verá el cliente"
-            className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+            className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-red-500"
           />
           <div className="flex gap-2">
             <input
@@ -228,7 +228,7 @@ export default function PaginaFactura() {
               onChange={(e) => setEBase(e.target.value)}
               inputMode="decimal"
               placeholder="Base sin IVA"
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-red-500"
             />
             <select
               value={eIva}
@@ -247,19 +247,19 @@ export default function PaginaFactura() {
                 value={eCliNombre}
                 onChange={(e) => setECliNombre(e.target.value)}
                 placeholder="Nombre del cliente"
-                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-red-500"
               />
               <input
                 value={eCliNif}
                 onChange={(e) => setECliNif(e.target.value)}
                 placeholder="NIF del cliente"
-                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-red-500"
               />
               <input
                 value={eCliDireccion}
                 onChange={(e) => setECliDireccion(e.target.value)}
                 placeholder="Dirección del cliente"
-                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+                className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-white outline-none focus:border-red-500"
               />
               <p className="text-xs text-zinc-500">
                 Los datos del cliente se guardan en su ficha (valen para futuras facturas).
