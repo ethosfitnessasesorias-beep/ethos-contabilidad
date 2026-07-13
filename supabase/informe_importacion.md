@@ -1,17 +1,17 @@
 ﻿# Informe de importación — Contabilidad 2.0.xlsx
 
-Generado el 2026-07-11 por `scripts/importar-excel.mjs`.
+Generado el 2026-07-13 por `scripts/importar-excel.mjs`.
 Las filas citadas son las de la hoja **"Libro diario - IG"** del Excel original.
 
 ## Resumen de lo importado
 
 | Tabla | Filas | Importe |
 |---|---|---|
-| clientes | 112 | — |
-| facturas | 155 | 54671.02 € facturados |
-| cobros | 155 | 52540.00 € cobrados |
-| gastos | 391 | 52707.98 € (con IVA) |
-| traspasos | 18 | — |
+| clientes | 115 | — |
+| facturas | 172 | 58255.89 € facturados |
+| cobros | 172 | 57002.33 € cobrados |
+| gastos | 413 | 56039.58 € (con IVA) |
+| traspasos | 19 | — |
 
 ## ⚠ Filas NO importadas (requieren decisión manual)
 
@@ -34,7 +34,7 @@ o crear un gasto rectificativo. **Dinero afectado: entra en cuenta.**
 - Fila 59: 2026-02-14 "BIZUM LUIS" +17 € en Cuenta Ethos
 - Fila 224: 2026-06-13 "null" +5.04 € en Cuenta Ethos
 
-### Traspasos sin pareja (21)
+### Traspasos sin pareja (22)
 Cada traspaso del Excel debía aparecer como salida en un bloque y entrada en el
 otro. Estos aparecen solo en un lado; hay que decidir si eran nóminas (gasto),
 aportaciones personales o errores de apunte.
@@ -44,7 +44,8 @@ aportaciones personales o errores de apunte.
 - Fila 398 (salida): 2026-06-02 "TRANSFERENCIA" 65 € desde Cuenta Ethos — sin entrada pareja
 - Fila 426 (salida): 2026-06-20 "TRANSFERENCIA" 25.2 € desde Cuenta Efectivo Ethos — sin entrada pareja
 - Fila 427 (salida): 2026-06-20 "TRANSFERENCIA" 5 € desde Cuenta Efectivo Ethos — sin entrada pareja
-- Fila 457 (salida): 2026-06-30 "TRANSFERENCIA" 675 € desde Cuenta Efectivo Ethos — sin entrada pareja
+- Fila 455 (salida): 2026-07-01 "TRANSFERENCIA" 675 € desde Cuenta Efectivo Ethos — sin entrada pareja
+- Fila 477 (salida): 2026-07-07 "DEVOLUCION NATALIA" 0 € desde Cuenta Ethos — sin entrada pareja
 - Fila 4 (entrada): 2026-01-02 "Aportación de la nómina de Luis" 65 € hacia Cuenta Efectivo Ethos — sin salida pareja
 - Fila 7 (entrada): 2026-01-05 "Aportación David" 35.44 € hacia Cuenta David — sin salida pareja
 - Fila 8 (entrada): 2026-01-07 "Aportación de Luis" 300 € hacia Cuenta Ethos — sin salida pareja
@@ -109,7 +110,7 @@ haría nada).
 ### Cuentas personales remapeadas
 El modelo nuevo no tiene cuentas personales. Los movimientos históricos que las
 usaban se han volcado así: Cuenta Luis/David → **banco**, Efectivo Luis/David → **caja**.
-- Cobros afectados: 63
+- Cobros afectados: 68
 - Gastos afectados: 25
 - Traspasos afectados: 11
 
@@ -117,7 +118,7 @@ usaban se han volcado así: Cuenta Luis/David → **banco**, Efectivo Luis/David
 con la realidad si quedó dinero sin aportar en cuentas personales. Comparad el
 saldo real y, si hay diferencia, apuntadla con un traspaso o gasto de ajuste.
 
-### Facturas cobradas parcialmente (7)
+### Facturas cobradas parcialmente (6)
 Aparecerán en morosos con el resto pendiente — eso es correcto, revisadlo.
 - Fila 63: "Ventas efectivo del 23 al 28 de feb" — facturado 304.5 €, cobrado 242.5 € (queda pendiente en morosos)
 - Fila 72: "Ventas EFECTIVO del 02 al 8 de marzo" — facturado 357.5 €, cobrado 419.5 € (queda pendiente en morosos)
@@ -125,7 +126,6 @@ Aparecerán en morosos con el resto pendiente — eso es correcto, revisadlo.
 - Fila 217: "EPs Mayo y Abril + Trim online" — facturado 590 €, cobrado 550 € (queda pendiente en morosos)
 - Fila 235: "Anual entreno" — facturado 825 €, cobrado 425 € (queda pendiente en morosos)
 - Fila 237: "Anual entreno" — facturado 1235 €, cobrado 494 € (queda pendiente en morosos)
-- Fila 272: "Pago 1/4" — facturado 1169.9 €, cobrado 292.45 € (queda pendiente en morosos)
 
 ### Nóminas apuntadas como traspaso (29)
 En el Excel las nóminas de los socios estaban en el bloque de traspasos, pero es
@@ -154,13 +154,13 @@ entrenador).
 - Fila 389: 2026-06-02 "NOMINA LUIS" 56.96 € desde Cuenta Ethos -> gasto Personal/Nóminas
 - Fila 391: 2026-06-02 "NOMINA DAVID" 91.76 € desde Cuenta Ethos -> gasto Personal/Nóminas
 - Fila 392: 2026-06-02 "NOMINA DAVID" 180 € desde Cuenta David -> gasto Personal/Nóminas
-- Fila 452: 2026-06-30 "NOMINA LUIS" 1425 € desde Efectivo Luis -> gasto Personal/Nóminas
-- Fila 453: 2026-06-30 "NOMINA LUIS" 1740.87 € desde Cuenta Ethos -> gasto Personal/Nóminas
-- Fila 454: 2026-06-30 "NOMINA LUIS" 86.5 € desde Cuenta Luis -> gasto Personal/Nóminas
-- Fila 455: 2026-06-30 "NOMINA DAVID" 1030 € desde Efectivo David -> gasto Personal/Nóminas
-- Fila 456: 2026-06-30 "NOMINA DAVID" 970 € desde Cuenta Ethos -> gasto Personal/Nóminas
-- Fila 458: 2026-06-30 "NOMINA ALEX" 133.5 € desde Cuenta Efectivo Ethos -> gasto Personal/Nóminas
-- Fila 459: 2026-06-30 "NOMINA ALEX" 66.5 € desde Cuenta Efectivo Ethos -> gasto Personal/Nóminas
+- Fila 450: 2026-07-01 "NOMINA LUIS" 1425 € desde Efectivo Luis -> gasto Personal/Nóminas
+- Fila 451: 2026-07-01 "NOMINA LUIS" 1740.87 € desde Cuenta Ethos -> gasto Personal/Nóminas
+- Fila 452: 2026-07-01 "NOMINA LUIS" 86.5 € desde Cuenta Luis -> gasto Personal/Nóminas
+- Fila 453: 2026-07-01 "NOMINA DAVID" 1030 € desde Efectivo David -> gasto Personal/Nóminas
+- Fila 454: 2026-07-01 "NOMINA DAVID" 970 € desde Cuenta Ethos -> gasto Personal/Nóminas
+- Fila 456: 2026-07-01 "NOMINA ALEX" 133.5 € desde Cuenta Efectivo Ethos -> gasto Personal/Nóminas
+- Fila 457: 2026-07-01 "NOMINA ALEX" 66.5 € desde Cuenta Efectivo Ethos -> gasto Personal/Nóminas
 
 ### Cobros asumidos por el total de la factura (0)
 La celda de "Cash collected" era una fórmula sin valor guardado, pero el estado
@@ -171,15 +171,33 @@ _(ninguna)_
 Filas sin base en el Excel; se calculó desde el total/cobrado quitando IVA.
 - Fila 23: "GARANTIA JUVENIL" — base derivada de 9967.78 € -> 9967.78 €
 
-### Deducible sin factura (5)
+### Deducible sin factura (23)
 El esquema exige factura para deducir. Importados como NO deducibles.
 - Fila 33: 2026-01-09 "Césped 2n pago" 133.85 € — marcado deducible pero sin factura; importado como NO deducible
 - Fila 146: 2026-02-08 "Césped 3/3" 133.85 € — marcado deducible pero sin factura; importado como NO deducible
 - Fila 407: 2026-06-05 "Claude" 0 € — marcado deducible pero sin factura; importado como NO deducible
-- Fila 450: 2026-07-31 "Comisiones CAIXA TPV JULIO" 0 € — marcado deducible pero sin factura; importado como NO deducible
-- Fila 451: 2026-07-31 "Comisiones Merchan JULIO" 0 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 458: 2026-07-31 "Comisiones CAIXA TPV JULIO" 64.58 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 459: 2026-07-31 "Comisiones Merchan JULIO" 0 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 461: 2026-07-10 "PAPEL" 4.5 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 463: 2026-07-31 "Comisiones STRIPE BEMADBOX JULIO" 2.72 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 464: 2026-07-01 "Préstamo" 483.15 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 465: 2026-07-01 "Meta ads" 30 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 466: 2026-07-01 "Seguros" 120.02 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 467: 2026-07-02 "Harbiz" 83.49 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 468: 2026-07-01 "Electricidad" 108.83 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 469: 2026-07-01 "Licencia ACTIVIDAD" 250 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 470: 2026-07-03 "Seguro David bimestral" 71.17 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 471: 2026-07-03 "Inversión FONDO INDEXADO" 200 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 472: 2026-07-03 "Meta ads" 30.44 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 475: 2026-07-04 "NI IDEA" 3.9 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 476: 2026-07-05 "Meta ads" 12.99 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 478: 2026-07-07 "Meta ads" 30.85 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 479: 2026-07-08 "Alquiler JULIO" 1222.32 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 480: 2026-07-09 "NI IDEA" 3.79 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 481: 2026-07-10 "Meta ads" 30.84 € — marcado deducible pero sin factura; importado como NO deducible
+- Fila 483: 2026-07-12 "Canva" 11.99 € — marcado deducible pero sin factura; importado como NO deducible
 
-### Ingresos con categoría "Otros" (19)
+### Ingresos con categoría "Otros" (23)
 No se pudo deducir el servicio; revisad y recategorizad desde la app.
 - Fila 23: "GARANTIA JUVENIL" (cliente: —)
 - Fila 35: "null" (cliente: Antonio Lozano)
@@ -200,6 +218,10 @@ No se pudo deducir el servicio; revisad y recategorizad desde la app.
 - Fila 231: "BIZUM O TPV" (cliente: AGUAS JUNIO)
 - Fila 232: "EFECTIVO" (cliente: AGUAS JUNIO)
 - Fila 233: "13 PERSONAS FEB-MARZ" (cliente: ADISGA JUNIO)
+- Fila 269: "EFECTIVO" (cliente: AGUAS JULIO)
+- Fila 272: "null" (cliente: Antonio)
+- Fila 273: "null" (cliente: Julia)
+- Fila 277: "null" (cliente: Cristian)
 
 ### Otros avisos (4)
 - Fila 286 (gasto): sin importe. NO importado.
@@ -207,7 +229,7 @@ No se pudo deducir el servicio; revisad y recategorizad desde la app.
 - Fila 348 (gasto): sin cuenta; asignado a banco.
 - Fila 387 (gasto): sin importe. NO importado.
 
-### Filas plantilla a cero omitidas: 61
+### Filas plantilla a cero omitidas: 53
 Filas semanales agregadas sin importe (semanas sin ventas de ese tipo). No se importan.
 
 ## Datos que faltan en el Excel
