@@ -57,6 +57,7 @@ interface Tarjeta {
   etiquetas: number[];
   archivada_en: string | null;
   orden: number;
+  hecha: boolean;
 }
 
 const TIPOS = ["tarea", "llamada", "visita", "email", "whatsapp", "nota"];
@@ -141,12 +142,14 @@ function SortableCard({
   nombres,
   onAbrir,
   onArchivar,
+  onHecho,
 }: {
   t: Tarjeta;
   etiquetas: Etiqueta[];
   nombres: Record<string, string>;
   onAbrir: () => void;
   onArchivar: () => void;
+  onHecho: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: cardDnd(t.id),
@@ -163,10 +166,18 @@ function SortableCard({
       }`}
     >
       <CuerpoTarjeta t={t} etiquetas={etiquetas} nombres={nombres} />
-      <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>
+      <div className="mt-2 flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={onHecho}
+          title="Marcar como realizada (sale del Inbox)"
+          aria-label="Marcar realizada"
+          className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-emerald-500 opacity-0 transition group-hover:opacity-100"
+        >
+          ✓ Hecho
+        </button>
         <button
           onClick={onArchivar}
-          title="Archivar"
+          title="Archivar (tarea futura)"
           aria-label="Archivar tarjeta"
           className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs text-zinc-600 opacity-0 transition group-hover:opacity-100"
         >
@@ -246,7 +257,7 @@ export default function Actividades() {
       supabase
         .from("actividades")
         .select(
-          "id, titulo, tipo, columna_id, prioridad, responsable, cuando, notas, cliente_id, etiquetas, archivada_en, orden"
+          "id, titulo, tipo, columna_id, prioridad, responsable, cuando, notas, cliente_id, etiquetas, archivada_en, orden, hecha"
         )
         .order("orden")
         .order("cuando"),
@@ -454,7 +465,17 @@ export default function Actividades() {
   }
 
   async function restaurarTarjeta(t: Tarjeta) {
-    const { error } = await supabase.from("actividades").update({ archivada_en: null }).eq("id", t.id);
+    const { error } = await supabase.from("actividades").update({ archivada_en: null, hecha: false }).eq("id", t.id);
+    if (error) return setError(error.message);
+    cargar();
+  }
+
+  // Realizada: marca hecha=true y la archiva (sale del tablero y del Inbox)
+  async function marcarHecha(t: Tarjeta) {
+    const { error } = await supabase
+      .from("actividades")
+      .update({ hecha: true, archivada_en: new Date().toISOString() })
+      .eq("id", t.id);
     if (error) return setError(error.message);
     cargar();
   }
@@ -739,7 +760,13 @@ export default function Actividades() {
       {archivadas.map((t) => (
         <div key={t.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-zinc-300">{t.titulo}</p>
+            <p className="truncate text-sm font-semibold text-zinc-300">
+              {t.hecha && <span className="mr-1.5 text-emerald-500">✓</span>}
+              {t.titulo}
+              <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${t.hecha ? "bg-emerald-950 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}>
+                {t.hecha ? "realizada" : "futura"}
+              </span>
+            </p>
             <p className="text-xs text-zinc-600">
               {t.tipo} · {nombres[t.responsable] ?? t.responsable} · archivada el{" "}
               {new Date(t.archivada_en!).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}
@@ -848,6 +875,7 @@ export default function Actividades() {
                               nombres={nombres}
                               onAbrir={() => abrirEditar(t)}
                               onArchivar={() => archivarTarjeta(t)}
+                              onHecho={() => marcarHecha(t)}
                             />
                           );
                         })}

@@ -75,6 +75,7 @@ export default function Reportes() {
   const [gastos, setGastos] = useState<GastoDetalle[]>([]);
   const [factCanal, setFactCanal] = useState<FacturaCanal[]>([]);
   const [canalGasto, setCanalGasto] = useState<"todos" | "presencial" | "online">("todos");
+  const [mesFiltro, setMesFiltro] = useState(""); // "" = todo el año; si no, "YYYY-MM"
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -104,11 +105,17 @@ export default function Reportes() {
   // Barras: escala común para el flujo
   const maxFlujo = Math.max(1, ...flujo.map((f) => Math.max(Number(f.entradas), Number(f.salidas))));
 
-  // Reparto: acumulado del año en curso por persona
+  // Periodo: todo el año en curso, o el mes seleccionado (aplica a todo)
   const anyo = new Date().getFullYear();
+  const enRango = (iso: string) =>
+    mesFiltro ? iso.slice(0, 7) === mesFiltro : new Date(iso).getFullYear() === anyo;
+  const periodoLabel = mesFiltro
+    ? new Date(mesFiltro + "-01T00:00:00").toLocaleDateString("es-ES", { month: "long", year: "numeric" })
+    : String(anyo);
+
   const repartoAnyo = new Map<string, { cobrado: number; aPersona: number }>();
   for (const r of reparto) {
-    if (new Date(r.mes).getFullYear() !== anyo) continue;
+    if (!enRango(r.mes)) continue;
     const acc = repartoAnyo.get(r.atribucion) ?? { cobrado: 0, aPersona: 0 };
     acc.cobrado += Number(r.cobrado);
     acc.aPersona += Number(r.a_entrenador);
@@ -118,14 +125,14 @@ export default function Reportes() {
   // Facturación del año por atribución
   const factAnyo = new Map<string, number>();
   for (const f of factMensual) {
-    if (new Date(f.mes).getFullYear() !== anyo) continue;
+    if (!enRango(f.mes)) continue;
     factAnyo.set(f.atribucion, (factAnyo.get(f.atribucion) ?? 0) + Number(f.total));
   }
   const totalFactAnyo = [...factAnyo.values()].reduce((s, n) => s + n, 0);
 
   // Gasto del año agrupado por categoría → subcategoría, filtrado por canal
   const gastosAnyo = gastos.filter(
-    (g) => new Date(g.mes).getFullYear() === anyo && (canalGasto === "todos" || g.canal === canalGasto)
+    (g) => enRango(g.mes) && (canalGasto === "todos" || g.canal === canalGasto)
   );
   const porCategoria = new Map<
     string,
@@ -146,19 +153,39 @@ export default function Reportes() {
   // Resultado del año por negocio (online vs presencial)
   const porCanal = { online: { ingresos: 0, gastos: 0 }, presencial: { ingresos: 0, gastos: 0 } };
   for (const f of factCanal) {
-    if (new Date(f.fecha_emision).getFullYear() !== anyo) continue;
+    if (!enRango(f.fecha_emision)) continue;
     porCanal[f.canal === "online" ? "online" : "presencial"].ingresos += Number(f.total);
   }
   for (const g of gastos) {
-    if (new Date(g.mes).getFullYear() !== anyo) continue;
+    if (!enRango(g.mes)) continue;
     porCanal[g.canal === "online" ? "online" : "presencial"].gastos += Number(g.total);
   }
 
   return (
     <Shell titulo="Reportes">
       <div className="px-5 py-6 md:px-8">
-        <h1 className="text-3xl font-black tracking-tight text-white">Reportes</h1>
-        <p className="mt-1 text-sm text-zinc-500">Todo calculado en vivo desde facturas, cobros y gastos.</p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-black tracking-tight text-white">Reportes</h1>
+            <p className="mt-1 text-sm text-zinc-500">
+              Todo calculado en vivo · <span className="capitalize">{periodoLabel}</span>
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMesFiltro("")}
+              className={`rounded-lg px-3 py-2 text-xs font-bold ${mesFiltro === "" ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}
+            >
+              Todo el año
+            </button>
+            <input
+              type="month"
+              value={mesFiltro}
+              onChange={(e) => setMesFiltro(e.target.value)}
+              className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-red-500"
+            />
+          </div>
+        </div>
 
         {error && <p className="mt-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
 
@@ -199,7 +226,7 @@ export default function Reportes() {
         </Seccion>
 
         {/* Facturación del año por persona */}
-        <Seccion titulo={`Facturación ${anyo} por persona`}>
+        <Seccion titulo={`Facturación · ${periodoLabel} · por persona`}>
           <div className="flex flex-col gap-2.5">
             {[...factAnyo.entries()]
               .sort((a, b) => b[1] - a[1])
@@ -224,7 +251,7 @@ export default function Reportes() {
         </Seccion>
 
         {/* Resultado por negocio: online vs presencial */}
-        <Seccion titulo={`Resultado ${anyo} por negocio`}>
+        <Seccion titulo={`Resultado · ${periodoLabel} · por negocio`}>
           <div className="grid gap-3 sm:grid-cols-2">
             {(
               [
@@ -262,7 +289,7 @@ export default function Reportes() {
         </Seccion>
 
         {/* Gasto desglosado por categoría y subcategoría */}
-        <Seccion titulo={`Gasto ${anyo} por categoría`}>
+        <Seccion titulo={`Gasto · ${periodoLabel} · por categoría`}>
           <div className="mb-4 flex flex-wrap gap-2">
             {(
               [
@@ -328,7 +355,7 @@ export default function Reportes() {
         </Seccion>
 
         {/* Reparto acumulado del año */}
-        <Seccion titulo={`Reparto acumulado ${anyo} (lo cobrado por cada uno)`}>
+        <Seccion titulo={`Reparto · ${periodoLabel} · (lo cobrado por cada uno)`}>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>

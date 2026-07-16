@@ -37,7 +37,13 @@ export default function Inbox() {
       const [morosos, sinFactura, vencidas, estancados] = await Promise.all([
         supabase.from("v_morosos").select("id, cliente_id, cliente, concepto, pendiente, fecha_emision").limit(50),
         supabase.from("gastos").select("id, concepto, total, fecha").eq("tiene_factura", false).gt("base", 0).limit(50),
-        supabase.from("actividades").select("id, titulo, cuando").eq("hecha", false).lt("cuando", ahora).limit(50),
+        supabase
+          .from("actividades")
+          .select("id, titulo, cuando")
+          .eq("hecha", false)
+          .is("archivada_en", null)
+          .lt("cuando", ahora)
+          .limit(50),
         supabase
           .from("deals")
           .select("id, titulo, fecha_alta, clientes(nombre)")
