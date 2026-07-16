@@ -68,11 +68,12 @@ export default function RepartoPage() {
     cargar();
   }, [cargar]);
 
-  const nomina = (b: number) => b * 0.8;
-  const aHucha = (b: number) => b * 0.2;
+  // Si no hay beneficio, no hay nómina ni hucha: nunca en negativo.
+  const nomina = (b: number) => Math.max(0, b * 0.8);
+  const aHucha = (b: number) => Math.max(0, b * 0.2);
 
   // Hucha (histórico completo): 20% acumulado − inversiones
-  const aporte20Total = filas.reduce((s, f) => s + Number(f.beneficio) * 0.2, 0);
+  const aporte20Total = filas.reduce((s, f) => s + Math.max(0, Number(f.beneficio)) * 0.2, 0);
   const inversionTotal = inversiones.reduce((s, i) => s + Number(i.inversion), 0);
   const huchaSaldo = aporte20Total - inversionTotal;
 
@@ -246,12 +247,12 @@ export default function RepartoPage() {
                         <div className="grid grid-cols-2 gap-2">
                           <div className="rounded-lg bg-emerald-950/40 px-3 py-2">
                             <p className="text-[10px] font-bold uppercase text-emerald-500/80">Nómina (80%)</p>
-                            <p className={`text-lg font-black ${nom < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(Math.max(0, nom))}</p>
-                            {nom < 0 && <p className="text-[10px] text-red-400">mes en pérdidas</p>}
+                            <p className="text-lg font-black text-emerald-400">{eur(nom)}</p>
+                            {ben <= 0 && <p className="text-[10px] text-zinc-500">sin beneficio este mes</p>}
                           </div>
                           <div className="rounded-lg bg-sky-950/40 px-3 py-2">
                             <p className="text-[10px] font-bold uppercase text-sky-500/80">A hucha (20%)</p>
-                            <p className={`text-lg font-black ${huc < 0 ? "text-red-400" : "text-sky-400"}`}>{eur(huc)}</p>
+                            <p className="text-lg font-black text-sky-400">{eur(huc)}</p>
                           </div>
                         </div>
                         {abierto === clave && (
@@ -265,7 +266,9 @@ export default function RepartoPage() {
                             <dt className="text-zinc-500">− Gasto (sin inversión ni nóminas)</dt>
                             <dd className="text-right text-zinc-400">{eur(Number(f.gasto_propio) + Number(f.gasto_ethos))}</dd>
                             <dt className="border-t border-zinc-800 pt-1 font-bold text-zinc-300">= Beneficio</dt>
-                            <dd className={`border-t border-zinc-800 pt-1 text-right font-bold ${ben < 0 ? "text-red-400" : "text-white"}`}>{eur(ben)}</dd>
+                            <dd className="border-t border-zinc-800 pt-1 text-right font-bold text-white">
+                              {ben > 0 ? eur(ben) : eur(0)}
+                            </dd>
                           </dl>
                         )}
                       </div>

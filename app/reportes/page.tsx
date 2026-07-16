@@ -131,8 +131,10 @@ export default function Reportes() {
   const totalFactAnyo = [...factAnyo.values()].reduce((s, n) => s + n, 0);
 
   // Gasto del año agrupado por categoría → subcategoría, filtrado por canal
+  // Las nóminas son reparto de beneficio, no un gasto: fuera de las gráficas
+  const esNomina = (subcat: string) => /mina/i.test(subcat);
   const gastosAnyo = gastos.filter(
-    (g) => enRango(g.mes) && (canalGasto === "todos" || g.canal === canalGasto)
+    (g) => enRango(g.mes) && !esNomina(g.subcategoria) && (canalGasto === "todos" || g.canal === canalGasto)
   );
   const porCategoria = new Map<
     string,
@@ -157,7 +159,7 @@ export default function Reportes() {
     porCanal[f.canal === "online" ? "online" : "presencial"].ingresos += Number(f.total);
   }
   for (const g of gastos) {
-    if (!enRango(g.mes)) continue;
+    if (!enRango(g.mes) || esNomina(g.subcategoria)) continue;
     porCanal[g.canal === "online" ? "online" : "presencial"].gastos += Number(g.total);
   }
 

@@ -52,6 +52,7 @@ export default function LibroPage() {
   const [movs, setMovs] = useState<Movimiento[]>([]);
   const [porPedir, setPorPedir] = useState(0);
   const [inversionMes, setInversionMes] = useState(0);
+  const [nominaIds, setNominaIds] = useState<Set<number>>(new Set());
   const [cargando, setCargando] = useState(true);
 
   // Filtros
@@ -70,7 +71,10 @@ export default function LibroPage() {
     ]);
     setCuentas((cu.data as Cuenta[]) ?? []);
     setSaldos((sa.data as Saldo[]) ?? []);
-    setCategorias((cat.data as Categoria[]) ?? []);
+    const cats = (cat.data as Categoria[]) ?? [];
+    setCategorias(cats);
+    // Las nóminas son reparto de beneficio, no un gasto: se separan del total
+    setNominaIds(new Set(cats.filter((c) => /mina/i.test(c.nombre)).map((c) => c.id)));
   }, []);
 
   const cargar = useCallback(async () => {
@@ -198,13 +202,17 @@ export default function LibroPage() {
   // ingreso ni gasto (antes inflaban ambos lados); un cobro negativo
   // (devolución) minora "Entra" y un gasto negativo minora "Sale".
   const totales = useMemo(() => {
-    let ing = 0, gas = 0;
+    let ing = 0, gas = 0, reparto = 0;
     for (const m of filtrados) {
       if (m.tipo === "ingreso") ing += m.importe;
-      else if (m.tipo === "gasto") gas += -m.importe;
+      else if (m.tipo === "gasto") {
+        // Las nóminas cuentan como reparto, no como gasto del negocio
+        if (m.categoriaId && nominaIds.has(m.categoriaId)) reparto += -m.importe;
+        else gas += -m.importe;
+      }
     }
-    return { ing, gas, neto: ing - gas };
-  }, [filtrados]);
+    return { ing, gas, reparto, neto: ing - gas };
+  }, [filtrados, nominaIds]);
 
   const hayFiltros =
     fTexto.trim() !== "" || fTipo !== "todos" || fCanal !== "todos" || fCategoria !== "todas" || fMin !== "" || fMax !== "";
@@ -273,6 +281,9 @@ export default function LibroPage() {
             )}
           </span>
           <span className="rounded-lg bg-zinc-900 px-3 py-1.5 font-bold text-white">Neto {eur(totales.neto)}</span>
+          {totales.reparto > 0 && (
+            <span className="rounded-lg bg-zinc-900 px-3 py-1.5 text-violet-400">Reparto (nóminas) {eur(totales.reparto)}</span>
+          )}
           {cuentaSel !== "todas" && (
             <span className="self-center text-xs text-zinc-500">— filtrando {cuentaSel}, toca la tarjeta para quitar</span>
           )}

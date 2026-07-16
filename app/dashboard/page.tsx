@@ -99,7 +99,7 @@ export default function Dashboard() {
           .gte("cuando", new Date().toISOString())
           .order("cuando")
           .limit(6),
-        supabase.from("gastos").select("canal, total").gte("fecha", desdeISO).lt("fecha", hastaISO),
+        supabase.from("gastos").select("canal, total, categorias!inner(nombre)").gte("fecha", desdeISO).lt("fecha", hastaISO),
         supabase.from("v_saldo_cuentas").select("codigo, nombre, es_transito, saldo").order("id"),
       ]);
       if (n.error) {
@@ -113,7 +113,8 @@ export default function Dashboard() {
       setNegocio((n.data as NegocioFila[]) ?? []);
       setActividades((a.data as Actividad[]) ?? []);
       const gc = { online: 0, presencial: 0 };
-      for (const row of (g.data as { canal: string | null; total: number }[]) ?? []) {
+      for (const row of (g.data as unknown as { canal: string | null; total: number; categorias: { nombre: string } | null }[]) ?? []) {
+        if (/mina/i.test(row.categorias?.nombre ?? "")) continue; // nóminas fuera (reparto, no gasto)
         gc[row.canal === "online" ? "online" : "presencial"] += Number(row.total);
       }
       setGastosCanal(gc);

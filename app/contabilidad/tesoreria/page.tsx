@@ -50,6 +50,8 @@ function vecesEnMes(r: Recurrente, primerDiaMes: Date): number {
 export default function Tesoreria() {
   const [recurrentes, setRecurrentes] = useState<Recurrente[]>([]);
   const [saldoActual, setSaldoActual] = useState(0);
+  const [nominaMedia, setNominaMedia] = useState(0);
+  const [inversionMedia, setInversionMedia] = useState(0);
   const [meses, setMeses] = useState(6);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,13 +63,28 @@ export default function Tesoreria() {
   const [nCada, setNCada] = useState("1");
 
   const cargar = useCallback(async () => {
-    const [r, s] = await Promise.all([
+    // Media de los 3 últimos meses de nómina (reparto) e inversión
+    const desde3 = new Date();
+    desde3.setMonth(desde3.getMonth() - 3, 1);
+    const desde3ISO = desde3.toISOString().slice(0, 10);
+    const [r, s, rep, inv] = await Promise.all([
       supabase.from("tesoreria_recurrentes").select("*").order("tipo").order("dia_mes"),
       supabase.from("v_saldo_cuentas").select("saldo"),
+      supabase.from("v_reparto_beneficios").select("mes, beneficio").gte("mes", desde3ISO),
+      supabase.from("v_inversion_mensual").select("mes, inversion").gte("mes", desde3ISO),
     ]);
     if (r.error) return setError(r.error.message);
     setRecurrentes((r.data as Recurrente[]) ?? []);
     setSaldoActual((s.data ?? []).reduce((t: number, x: { saldo: number }) => t + Number(x.saldo), 0));
+
+    // Nómina mensual = suma de las nóminas (80% del beneficio, nunca negativa) por mes
+    const porMes = new Map<string, number>();
+    for (const f of (rep.data as { mes: string; beneficio: number }[]) ?? [])
+      porMes.set(f.mes, (porMes.get(f.mes) ?? 0) + Math.max(0, Number(f.beneficio) * 0.8));
+    const nominas = [...porMes.values()];
+    setNominaMedia(nominas.length ? nominas.reduce((a, b) => a + b, 0) / nominas.length : 0);
+    const invs = ((inv.data as { inversion: number }[]) ?? []).map((x) => Number(x.inversion));
+    setInversionMedia(invs.length ? invs.reduce((a, b) => a + b, 0) / invs.length : 0);
   }, []);
 
   useEffect(() => {
@@ -208,6 +225,26 @@ export default function Tesoreria() {
             ⚠ La previsión se queda en negativo algún mes. Revisa gastos o adelanta cobros.
           </p>
         )}
+      </div>
+
+      {/* Nómina e inversión: variables, no entran como gasto fijo */}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Nómina media (últ. 3 meses)</p>
+          <p className="mt-1 text-2xl font-black text-emerald-400">{eur(nominaMedia)}</p>
+          <p className="mt-1 text-xs text-zinc-600">
+            Es el 80% del beneficio, variable. No se incluye en la previsión de arriba: solo se
+            retira lo que hay, así el saldo nunca se fuerza a negativo.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Inversión media (últ. 3 meses)</p>
+          <p className="mt-1 text-2xl font-black text-amber-400">{eur(inversionMedia)}</p>
+          <p className="mt-1 text-xs text-zinc-600">
+            Material, máquinas, obra… Sale de la hucha (el 20% ahorrado), no de los fijos. Es
+            discrecional: solo cuando hay ahorro suficiente.
+          </p>
+        </div>
       </div>
 
       {/* Recurrentes editables */}
