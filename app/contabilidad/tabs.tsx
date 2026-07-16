@@ -5,12 +5,14 @@ import { usePathname } from "next/navigation";
 
 const TABS = [
   { href: "/contabilidad", etiqueta: "Libro" },
+  { href: "/contabilidad/cierre", etiqueta: "Cierre de mes" },
   { href: "/contabilidad/facturas", etiqueta: "Facturas" },
   { href: "/contabilidad/clientes", etiqueta: "Clientes" },
   { href: "/contabilidad/finanzas", etiqueta: "Finanzas" },
   { href: "/contabilidad/reparto", etiqueta: "Reparto" },
   { href: "/contabilidad/impuestos", etiqueta: "Impuestos" },
   { href: "/contabilidad/tesoreria", etiqueta: "Tesorería" },
+  { href: "/contabilidad/importar", etiqueta: "Importar banco" },
   { href: "/contabilidad/ajustes", etiqueta: "Ajustes" },
 ];
 
