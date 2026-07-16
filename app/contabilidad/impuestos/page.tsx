@@ -10,7 +10,6 @@ interface Ajuste {
   modelo: string;
   importe: number;
 }
-// v_impuestos_declaracion: por año, trimestre y titular
 interface FilaDecl {
   anyo: number;
   trim: number;
@@ -24,39 +23,46 @@ interface FilaDecl {
   iva_resultado: number;
   beneficio: number;
 }
+interface FilaEthos {
+  anyo: number;
+  trim: number;
+  ingresos: number;
+  gastos: number;
+  neto: number;
+}
 
 const inputCls =
   "w-24 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-right text-sm text-white outline-none focus:border-red-500";
 
-// Los tres tributos que se reservan/declaran cada trimestre
 const MODELOS = [
   { key: "iva", etiqueta: "IVA (modelo 303)" },
   { key: "irpf_ret", etiqueta: "IRPF retenciones (111/115)" },
   { key: "irpf_130", etiqueta: "IRPF pago fraccionado (130)" },
 ] as const;
 
-// Cada socio autónomo declara lo suyo; los Alex van dentro de Ethos.
+// Solo 2 autónomos. David = sus clientes; Luis = lo suyo + todo lo de ETHOS.
 const TITULARES = [
   { codigo: "david", nombre: "David" },
   { codigo: "luis", nombre: "Luis" },
-  { codigo: "ethos", nombre: "Ethos (+ Alex)" },
 ];
 
-const IRPF_130_PCT = 0.2; // pago fraccionado estimado sobre beneficio
+const IRPF_130_PCT = 0.2;
 
 interface Calc {
-  iva: number; // a pagar tras compensación
+  iva: number;
   ivaCompensadoUsado: number;
   ivaSaldoRestante: number;
   ivaResultado: number;
   irpf_ret: number;
   irpf_130: number;
+  retClientes: number;
 }
 
 export default function ImpuestosPage() {
   const [anyo, setAnyo] = useState(new Date().getFullYear());
   const [titular, setTitular] = useState<string>("todos");
   const [declaracion, setDeclaracion] = useState<FilaDecl[]>([]);
+  const [ethos, setEthos] = useState<FilaEthos[]>([]);
   const [ajustes, setAjustes] = useState<Ajuste[]>([]);
   const [disponible, setDisponible] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,17 +71,19 @@ export default function ImpuestosPage() {
   const [verDeclaracion, setVerDeclaracion] = useState<number | null>(null);
 
   const cargar = useCallback(async () => {
-    const [d, a] = await Promise.all([
+    const [d, e, a] = await Promise.all([
       supabase.from("v_impuestos_declaracion").select("*").order("anyo").order("trim"),
+      supabase.from("v_cuentas_ethos").select("*").eq("anyo", anyo).order("trim"),
       supabase.from("impuestos_ajustes").select("*").eq("anyo", anyo),
     ]);
     if (d.error) {
       setDisponible(false);
-      setError("Falta la migración mejoras_v2.sql (declaración por titular).");
+      setError("Falta la migración mejoras_v3.sql (declaración por titular).");
       return;
     }
     setDisponible(true);
     setDeclaracion((d.data as FilaDecl[]) ?? []);
+    setEthos((e.data as FilaEthos[]) ?? []);
     setAjustes((a.data as Ajuste[]) ?? []);
   }, [anyo]);
 
@@ -83,7 +91,6 @@ export default function ImpuestosPage() {
     cargar();
   }, [cargar]);
 
-  // Modelo namespaced por titular para "pagado real" (no al ver "todos")
   const modeloKey = (base: string, tit: string) => `${base}:${tit}`;
   const ajusteDe = (trim: number, base: string, tit: string) =>
     ajustes.find((a) => a.trimestre === trim && a.modelo === modeloKey(base, tit))?.importe;
@@ -111,92 +118,76 @@ export default function ImpuestosPage() {
   }
 
   // Cálculo por titular con compensación de IVA arrastrada entre trimestres.
-  // Devuelve Map `${anyo}-${trim}` -> Calc para UN titular.
-  function calcTitular(tit: string): Map<string, Calc> {
-    const filas = declaracion.filter((f) => f.titular === tit);
-    const res = new Map<string, Calc>();
-    let saldoIva = 0; // crédito de IVA a compensar acumulado
-    for (const f of filas) {
-      const cuota = Number(f.iva_resultado);
-      const neto = cuota - saldoIva;
-      let ivaPagar = 0,
-        compensadoUsado = 0,
-        saldoRestante = 0;
-      if (neto > 0) {
-        ivaPagar = neto;
-        compensadoUsado = saldoIva;
-        saldoIva = 0;
-      } else {
-        ivaPagar = 0;
-        compensadoUsado = cuota > 0 ? cuota : 0;
-        saldoRestante = -neto;
-        saldoIva = -neto;
+  const calcPorTitular = useMemo(() => {
+    const out: Record<string, Map<string, Calc>> = {};
+    for (const { codigo } of TITULARES) {
+      const filas = declaracion.filter((f) => f.titular === codigo);
+      const m = new Map<string, Calc>();
+      let saldoIva = 0;
+      for (const f of filas) {
+        const cuota = Number(f.iva_resultado);
+        const neto = cuota - saldoIva;
+        let ivaPagar = 0, compensadoUsado = 0, saldoRestante = 0;
+        if (neto > 0) {
+          ivaPagar = neto;
+          compensadoUsado = saldoIva;
+          saldoIva = 0;
+        } else {
+          compensadoUsado = cuota > 0 ? cuota : 0;
+          saldoRestante = -neto;
+          saldoIva = -neto;
+        }
+        const retClientes = Number(f.irpf_retenido_clientes);
+        // 130: 20% del beneficio menos lo que los clientes ya te retuvieron.
+        const m130 = Math.max(0, Math.round((IRPF_130_PCT * Number(f.beneficio) - retClientes) * 100) / 100);
+        m.set(`${f.anyo}-${f.trim}`, {
+          iva: ivaPagar,
+          ivaCompensadoUsado: compensadoUsado,
+          ivaSaldoRestante: saldoRestante,
+          ivaResultado: cuota,
+          irpf_ret: Math.max(0, Number(f.irpf_retenciones)),
+          irpf_130: m130,
+          retClientes,
+        });
       }
-      res.set(`${f.anyo}-${f.trim}`, {
-        iva: ivaPagar,
-        ivaCompensadoUsado: compensadoUsado,
-        ivaSaldoRestante: saldoRestante,
-        ivaResultado: cuota,
-        irpf_ret: Math.max(0, Number(f.irpf_retenciones)),
-        irpf_130: Math.max(0, Math.round(IRPF_130_PCT * Number(f.beneficio) * 100) / 100),
-      });
-    }
-    return res;
-  }
-
-  // Mapa combinado según el titular seleccionado ("todos" suma los tres)
-  const calc = useMemo(() => {
-    const titulares = titular === "todos" ? TITULARES.map((t) => t.codigo) : [titular];
-    const porTit = titulares.map((t) => calcTitular(t));
-    const out = new Map<string, Calc>();
-    for (let q = 1; q <= 4; q++) {
-      const key = `${anyo}-${q}`;
-      const acc: Calc = {
-        iva: 0,
-        ivaCompensadoUsado: 0,
-        ivaSaldoRestante: 0,
-        ivaResultado: 0,
-        irpf_ret: 0,
-        irpf_130: 0,
-      };
-      for (const m of porTit) {
-        const c = m.get(key);
-        if (!c) continue;
-        acc.iva += c.iva;
-        acc.ivaCompensadoUsado += c.ivaCompensadoUsado;
-        acc.ivaSaldoRestante += c.ivaSaldoRestante;
-        acc.ivaResultado += c.ivaResultado;
-        acc.irpf_ret += c.irpf_ret;
-        acc.irpf_130 += c.irpf_130;
-      }
-      out.set(key, acc);
+      out[codigo] = m;
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [declaracion, titular, anyo]);
+  }, [declaracion]);
 
-  // Cifras "a declarar" agregadas del titular seleccionado
+  // Valor calculado (sin ajuste manual) de un modelo para un titular
+  function calculado(trim: number, base: string, tit: string): number {
+    const c = calcPorTitular[tit]?.get(`${anyo}-${trim}`);
+    if (!c) return 0;
+    return base === "iva" ? c.iva : base === "irpf_ret" ? c.irpf_ret : c.irpf_130;
+  }
+  // Valor a reservar de UN titular: pagado real si existe, si no el calculado
+  function aReservarTitular(trim: number, base: string, tit: string): number {
+    const manual = ajusteDe(trim, base, tit);
+    return manual !== undefined ? Number(manual) : calculado(trim, base, tit);
+  }
+  // Valor mostrado: un titular, o la SUMA de los dos en "todos" (incluye
+  // los pagos reales de cada uno).
+  function aReservar(trim: number, base: string): number {
+    if (titular !== "todos") return aReservarTitular(trim, base, titular);
+    return TITULARES.reduce((s, t) => s + aReservarTitular(trim, base, t.codigo), 0);
+  }
+
+  const totalAnyo = useMemo(() => {
+    let t = 0;
+    for (let q = 1; q <= 4; q++) for (const m of MODELOS) t += aReservar(q, m.key);
+    return t;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calcPorTitular, ajustes, titular, anyo]);
+
+  // Cifras "a declarar" agregadas del titular seleccionado (o suma en "todos")
   const declPorTrim = useMemo(() => {
     const out = new Map<number, FilaDecl>();
-    const rows = declaracion.filter(
-      (f) => f.anyo === anyo && (titular === "todos" || f.titular === titular)
-    );
+    const rows = declaracion.filter((f) => f.anyo === anyo && (titular === "todos" || f.titular === titular));
     for (const f of rows) {
       const acc =
         out.get(f.trim) ??
-        ({
-          anyo,
-          trim: f.trim,
-          titular,
-          ingresos_base: 0,
-          iva_repercutido: 0,
-          irpf_retenido_clientes: 0,
-          gastos_base_deducible: 0,
-          iva_soportado: 0,
-          irpf_retenciones: 0,
-          iva_resultado: 0,
-          beneficio: 0,
-        } as FilaDecl);
+        ({ anyo, trim: f.trim, titular, ingresos_base: 0, iva_repercutido: 0, irpf_retenido_clientes: 0, gastos_base_deducible: 0, iva_soportado: 0, irpf_retenciones: 0, iva_resultado: 0, beneficio: 0 } as FilaDecl);
       acc.ingresos_base += Number(f.ingresos_base);
       acc.iva_repercutido += Number(f.iva_repercutido);
       acc.irpf_retenido_clientes += Number(f.irpf_retenido_clientes);
@@ -210,26 +201,9 @@ export default function ImpuestosPage() {
     return out;
   }, [declaracion, anyo, titular]);
 
-  // Valor a reservar de un modelo: pagado real si existe, si no el calculado.
-  function aReservar(trim: number, base: string): number {
-    if (titular !== "todos") {
-      const manual = ajusteDe(trim, base, titular);
-      if (manual !== undefined) return Number(manual);
-    }
-    const c = calc.get(`${anyo}-${trim}`);
-    if (!c) return 0;
-    return base === "iva" ? c.iva : base === "irpf_ret" ? c.irpf_ret : c.irpf_130;
-  }
-
-  const totalAnyo = useMemo(() => {
-    let t = 0;
-    for (let q = 1; q <= 4; q++) for (const m of MODELOS) t += aReservar(q, m.key);
-    return t;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calc, ajustes, titular, anyo]);
-
   const trimActual = Math.floor(new Date().getMonth() / 3) + 1;
-  const nombreTitular = titular === "todos" ? "todos" : TITULARES.find((t) => t.codigo === titular)?.nombre ?? titular;
+  const nombreTitular = titular === "todos" ? "los dos" : TITULARES.find((t) => t.codigo === titular)?.nombre ?? titular;
+  const ethosAnual = ethos.reduce((s, e) => s + Number(e.neto), 0);
 
   function resumenGestor(d: FilaDecl): string {
     return [
@@ -257,9 +231,7 @@ export default function ImpuestosPage() {
     <button
       key={key ?? etiqueta}
       onClick={onClick}
-      className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${
-        activo ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"
-      }`}
+      className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${activo ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}
     >
       {etiqueta}
     </button>
@@ -269,8 +241,8 @@ export default function ImpuestosPage() {
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-xl text-sm text-zinc-400">
-          Lo que declara cada titular por trimestre. Solo cuenta lo <b>deducible / con factura</b> en
-          gastos y los ingresos marcados para computar. Cuando pagues, apunta el importe en “Pagado real”.
+          Lo que declara cada autónomo por trimestre. <b>David</b> declara sus clientes; <b>Luis</b> lo
+          suyo + todo lo del centro (a su nombre). Solo cuenta lo <b>deducible / con factura</b>. Apunta lo pagado en “Pagado real”.
         </p>
         <select
           value={anyo}
@@ -283,23 +255,22 @@ export default function ImpuestosPage() {
         </select>
       </div>
 
-      {/* Selector de titular */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">Declarar de:</span>
-        {chip(titular === "todos", "Todos", () => setTitular("todos"), "todos")}
+        {chip(titular === "todos", "Los dos", () => setTitular("todos"), "todos")}
         {TITULARES.map((t) => chip(titular === t.codigo, t.nombre, () => setTitular(t.codigo), t.codigo))}
       </div>
 
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
       {!disponible && (
         <p className="mb-3 rounded-xl bg-amber-950 px-4 py-2 text-xs text-amber-300">
-          Ejecuta <b>supabase/mejoras_v2.sql</b> para ver la declaración por titular.
+          Ejecuta <b>supabase/mejoras_v3.sql</b> para ver la declaración por titular.
         </p>
       )}
 
       <div className="mb-4 rounded-2xl border border-red-900 bg-red-950/40 p-4">
         <p className="text-xs font-bold uppercase tracking-wider text-red-400">
-          A reservar en {anyo} · {nombreTitular}
+          A reservar en {anyo} · {titular === "todos" ? "los dos" : nombreTitular}
         </p>
         <p className="mt-1 text-3xl font-black text-white">{eur(totalAnyo)}</p>
         <p className="mt-1 text-xs text-zinc-500">
@@ -309,15 +280,13 @@ export default function ImpuestosPage() {
 
       <div className="grid gap-3 sm:grid-cols-2">
         {[1, 2, 3, 4].map((q) => {
-          const c = calc.get(`${anyo}-${q}`);
           const decl = declPorTrim.get(q);
+          // Datos combinados solo para mostrar el detalle del IVA
+          const c = titular !== "todos" ? calcPorTitular[titular]?.get(`${anyo}-${q}`) : undefined;
           const totalTrim = MODELOS.reduce((s, m) => s + aReservar(q, m.key), 0);
           const esActual = anyo === new Date().getFullYear() && q === trimActual;
           return (
-            <div
-              key={q}
-              className={`rounded-2xl border p-4 ${esActual ? "border-red-600 bg-zinc-900" : "border-zinc-800 bg-zinc-900/40"}`}
-            >
+            <div key={q} className={`rounded-2xl border p-4 ${esActual ? "border-red-600 bg-zinc-900" : "border-zinc-800 bg-zinc-900/40"}`}>
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="font-black text-white">
                   {q}º trimestre {esActual && <span className="text-xs font-bold text-red-500">· en curso</span>}
@@ -332,6 +301,10 @@ export default function ImpuestosPage() {
                     if (c.ivaSaldoRestante > 0) detalle = `cuota ${eur(c.ivaResultado)} · queda a compensar ${eur(c.ivaSaldoRestante)} → paga 0`;
                     else if (c.ivaCompensadoUsado > 0) detalle = `cuota ${eur(c.ivaResultado)} − compensación ${eur(c.ivaCompensadoUsado)} → ${eur(c.iva)}`;
                     else detalle = `estimado ${eur(c.iva)}`;
+                  } else if (m.key === "irpf_130" && c && c.retClientes > 0) {
+                    detalle = `20% beneficio − retenciones ${eur(c.retClientes)}`;
+                  } else if (titular === "todos") {
+                    detalle = "David + Luis";
                   } else if (c) {
                     detalle = `estimado ${eur(m.key === "irpf_ret" ? c.irpf_ret : c.irpf_130)}`;
                   }
@@ -368,16 +341,10 @@ export default function ImpuestosPage() {
               {decl && (
                 <div className="mt-3 border-t border-zinc-800 pt-3">
                   <div className="flex items-center justify-between">
-                    <button
-                      onClick={() => setVerDeclaracion(verDeclaracion === q ? null : q)}
-                      className="text-xs font-bold text-zinc-400 hover:text-white"
-                    >
+                    <button onClick={() => setVerDeclaracion(verDeclaracion === q ? null : q)} className="text-xs font-bold text-zinc-400 hover:text-white">
                       {verDeclaracion === q ? "▾" : "▸"} A declarar (para el gestor)
                     </button>
-                    <button
-                      onClick={() => copiarResumen(decl)}
-                      className="rounded-lg bg-zinc-800 px-2.5 py-1 text-[11px] font-bold text-zinc-300 hover:bg-zinc-700"
-                    >
+                    <button onClick={() => copiarResumen(decl)} className="rounded-lg bg-zinc-800 px-2.5 py-1 text-[11px] font-bold text-zinc-300 hover:bg-zinc-700">
                       {copiado === q ? "✓ Copiado" : "Copiar resumen"}
                     </button>
                   </div>
@@ -411,11 +378,51 @@ export default function ImpuestosPage() {
         })}
       </div>
 
+      {/* Cuentas entre socios: reparto 50/50 del centro (ETHOS), aparte de Hacienda */}
+      <div className="mt-5 rounded-2xl border border-sky-900 bg-sky-950/30 p-4">
+        <div className="mb-1 flex items-center justify-between">
+          <h3 className="text-sm font-black text-white">Cuentas entre socios · ETHOS {anyo}</h3>
+          <span className="text-xs text-sky-300">no es Hacienda: es el reparto 50/50 entre vosotros</span>
+        </div>
+        <p className="mb-3 text-xs text-zinc-500">
+          Neto del centro (entrenos en grupo + Alex − gastos compartidos del local, sin IVA). Se reparte
+          a partes iguales. Fiscalmente todo esto lo declara Luis; esto es solo para ajustar cuentas.
+        </p>
+        <div className="overflow-hidden rounded-xl border border-zinc-800">
+          <div className="grid grid-cols-[0.6fr_1fr_1fr_1fr_1fr] bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wider text-zinc-500">
+            <span>Trim</span><span className="text-right">Ingresos</span><span className="text-right">Gastos</span><span className="text-right">Neto</span><span className="text-right">Cada socio</span>
+          </div>
+          {[1, 2, 3, 4].map((q) => {
+            const e = ethos.find((x) => x.trim === q);
+            const neto = Number(e?.neto ?? 0);
+            return (
+              <div key={q} className="grid grid-cols-[0.6fr_1fr_1fr_1fr_1fr] border-t border-zinc-800 px-3 py-2 text-sm">
+                <span className="text-zinc-400">{q}º</span>
+                <span className="text-right text-zinc-300">{eur(Number(e?.ingresos ?? 0))}</span>
+                <span className="text-right text-zinc-300">{eur(Number(e?.gastos ?? 0))}</span>
+                <span className={`text-right font-semibold ${neto < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(neto)}</span>
+                <span className={`text-right font-bold ${neto < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(neto / 2)}</span>
+              </div>
+            );
+          })}
+          <div className="grid grid-cols-[0.6fr_1fr_1fr_1fr_1fr] border-t border-zinc-700 bg-zinc-900/60 px-3 py-2 text-sm font-black">
+            <span className="text-white">Año</span>
+            <span className="text-right text-zinc-400">{eur(ethos.reduce((s, e) => s + Number(e.ingresos), 0))}</span>
+            <span className="text-right text-zinc-400">{eur(ethos.reduce((s, e) => s + Number(e.gastos), 0))}</span>
+            <span className={`text-right ${ethosAnual < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(ethosAnual)}</span>
+            <span className={`text-right ${ethosAnual < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(ethosAnual / 2)}</span>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-zinc-600">
+          “Cada socio” en negativo = lo que cada uno pone para cubrir el centro; en positivo = lo que le corresponde cobrar.
+        </p>
+      </div>
+
       <div className="mt-4 rounded-xl bg-amber-950 px-4 py-3 text-xs text-amber-300">
         Estimación para reservar dinero, no una liquidación oficial. El modelo 130 real es acumulado
-        anual y resta pagos y retenciones previas. El IVA negativo se compensa en los trimestres
-        siguientes (ya descontado). Cada socio (David, Luis) declara lo suyo; los Alex van dentro de
-        Ethos. Cuadra los definitivos con el gestor y apunta lo pagado en “Pagado real”.
+        anual y resta pagos y retenciones previas (aquí ya se descuentan las retenciones de clientes).
+        El IVA negativo se compensa en los trimestres siguientes. David declara sus clientes; Luis
+        declara lo suyo + todo lo del centro. Cuadra los definitivos con el gestor y apunta lo pagado.
       </div>
     </div>
   );
