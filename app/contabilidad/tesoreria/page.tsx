@@ -17,6 +17,20 @@ interface Recurrente {
   activo: boolean;
 }
 
+interface GastoFijo {
+  concepto: string;
+  proveedor: string | null;
+  base: number;
+  iva_pct: number;
+  irpf_pct: number;
+  categoria_id: number;
+  cuenta_id: number | null;
+  imputado_a: string;
+  canal: string | null;
+  deducible: boolean;
+  tiene_factura: boolean;
+}
+
 const eur = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
 
@@ -52,6 +66,9 @@ export default function Tesoreria() {
   const [saldoActual, setSaldoActual] = useState(0);
   const [nominaMedia, setNominaMedia] = useState(0);
   const [inversionMedia, setInversionMedia] = useState(0);
+  const [fijosPend, setFijosPend] = useState<GastoFijo[]>([]);
+  const [apuntando, setApuntando] = useState(false);
+  const [ok, setOk] = useState<string | null>(null);
   const [meses, setMeses] = useState(6);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,11 +102,63 @@ export default function Tesoreria() {
     setNominaMedia(nominas.length ? nominas.reduce((a, b) => a + b, 0) / nominas.length : 0);
     const invs = ((inv.data as { inversion: number }[]) ?? []).map((x) => Number(x.inversion));
     setInversionMedia(invs.length ? invs.reduce((a, b) => a + b, 0) / invs.length : 0);
+
+    // Gastos fijos por apuntar este mes: copiar los del mes pasado que aún no están
+    const hoy = new Date();
+    const iniMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().slice(0, 10);
+    const iniMesPasado = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1).toISOString().slice(0, 10);
+    const [gPasado, gEste] = await Promise.all([
+      supabase
+        .from("gastos")
+        .select("concepto, proveedor, base, iva_pct, irpf_pct, categoria_id, cuenta_id, imputado_a, canal, deducible, tiene_factura, categorias!inner(es_fijo, nombre)")
+        .gte("fecha", iniMesPasado)
+        .lt("fecha", iniMes),
+      supabase.from("gastos").select("concepto").gte("fecha", iniMes),
+    ]);
+    const yaEste = new Set(((gEste.data as { concepto: string }[]) ?? []).map((g) => g.concepto.trim().toLowerCase()));
+    const pend: GastoFijo[] = [];
+    for (const g of (gPasado.data as unknown as (GastoFijo & { categorias: { es_fijo: boolean; nombre: string } })[]) ?? []) {
+      if (!g.categorias?.es_fijo) continue;
+      if (/mina/i.test(g.categorias.nombre)) continue; // nóminas no
+      if (yaEste.has(g.concepto.trim().toLowerCase())) continue; // ya apuntado este mes
+      if (pend.some((p) => p.concepto.trim().toLowerCase() === g.concepto.trim().toLowerCase())) continue;
+      pend.push(g);
+    }
+    setFijosPend(pend);
   }, []);
 
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  // Apunta de golpe los gastos fijos de este mes (copiando los del mes pasado)
+  async function apuntarFijos() {
+    if (fijosPend.length === 0) return;
+    setApuntando(true);
+    const fecha = new Date().toISOString().slice(0, 10);
+    const filas = fijosPend.map((g) => ({
+      fecha,
+      concepto: g.concepto,
+      proveedor: g.proveedor,
+      base: g.base,
+      iva_pct: g.iva_pct,
+      irpf_pct: g.irpf_pct,
+      categoria_id: g.categoria_id,
+      cuenta_id: g.cuenta_id,
+      imputado_a: g.imputado_a,
+      canal: g.canal,
+      deducible: g.deducible,
+      tiene_factura: g.tiene_factura,
+      iva_soportado: g.deducible ? Math.round(g.base * g.iva_pct * 100) / 100 : 0,
+      es_fijo: true,
+    }));
+    const { error } = await supabase.from("gastos").insert(filas);
+    setApuntando(false);
+    if (error) return setError(error.message);
+    setOk(`${filas.length} gastos fijos apuntados a este mes ✓`);
+    setTimeout(() => setOk(null), 3000);
+    cargar();
+  }
 
   async function crear() {
     if (!nConcepto.trim() || !Number(nImporte)) return setError("Pon concepto e importe.");
@@ -179,9 +248,43 @@ export default function Tesoreria() {
     return filas;
   }, [recurrentes, saldoActual, meses]);
 
+  const totalFijos = fijosPend.reduce((s, g) => s + g.base * (1 + Number(g.iva_pct)), 0);
+
   return (
     <div>
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
+      {ok && <p className="mb-3 rounded-xl bg-emerald-950 px-4 py-2 text-sm text-emerald-300">{ok}</p>}
+
+      {/* Gastos fijos por apuntar este mes */}
+      {fijosPend.length > 0 && (
+        <div className="mb-4 rounded-2xl border border-amber-900 bg-amber-950/20 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-black text-white">Gastos fijos de este mes</h2>
+              <p className="text-xs text-zinc-400">
+                {fijosPend.length} gastos fijos del mes pasado aún sin apuntar este mes (≈ {eur(totalFijos)}).
+              </p>
+            </div>
+            <button
+              onClick={apuntarFijos}
+              disabled={apuntando}
+              className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+            >
+              {apuntando ? "Apuntando…" : `Apuntar los ${fijosPend.length} de golpe`}
+            </button>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {fijosPend.map((g) => (
+              <span key={g.concepto} className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs text-zinc-300">
+                {g.concepto} <span className="text-zinc-500">{eur(g.base * (1 + Number(g.iva_pct)))}</span>
+              </span>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-zinc-600">
+            Copia importe, categoría, cuenta y demás del mes pasado. Revisa y edita en el Libro si algo cambió.
+          </p>
+        </div>
+      )}
 
       {/* Proyección */}
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">

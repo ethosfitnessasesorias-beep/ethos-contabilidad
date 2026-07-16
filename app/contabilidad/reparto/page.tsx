@@ -45,13 +45,19 @@ export default function RepartoPage() {
   const [colab, setColab] = useState<FilaColab[]>([]);
   const [disponible, setDisponible] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
   const [abierto, setAbierto] = useState<string | null>(null);
+  const [cuentaBanco, setCuentaBanco] = useState<number | null>(null);
+  const [nominaCatId, setNominaCatId] = useState<number | null>(null);
+  const [nominaPuesta, setNominaPuesta] = useState<Set<string>>(new Set()); // "mes-socio"
 
   const cargar = useCallback(async () => {
-    const [r, inv, c] = await Promise.all([
+    const [r, inv, c, cue, cat] = await Promise.all([
       supabase.from("v_reparto_beneficios").select("*").order("mes"),
       supabase.from("v_inversion_mensual").select("*").order("mes"),
       supabase.from("v_pagos_colaboradores").select("*").order("mes"),
+      supabase.from("cuentas").select("id, codigo").eq("activa", true),
+      supabase.from("categorias").select("id, nombre").ilike("nombre", "%mina%").limit(1),
     ]);
     if (r.error) {
       setDisponible(false);
@@ -62,6 +68,21 @@ export default function RepartoPage() {
     setFilas((r.data as FilaReparto[]) ?? []);
     setInversiones((inv.data as FilaInversion[]) ?? []);
     setColab((c.data as FilaColab[]) ?? []);
+    const banco = (cue.data as { id: number; codigo: string }[])?.find((x) => x.codigo === "banco");
+    setCuentaBanco(banco?.id ?? (cue.data as { id: number }[])?.[0]?.id ?? null);
+    const nomCat = (cat.data as { id: number }[])?.[0]?.id ?? null;
+    setNominaCatId(nomCat);
+    // Meses/socios que ya tienen nómina apuntada
+    if (nomCat) {
+      const { data: g } = await supabase
+        .from("gastos")
+        .select("fecha, imputado_a")
+        .eq("categoria_id", nomCat);
+      const set = new Set<string>();
+      for (const x of (g as { fecha: string; imputado_a: string }[]) ?? [])
+        set.add(`${x.fecha.slice(0, 7)}-${x.imputado_a}`);
+      setNominaPuesta(set);
+    }
   }, []);
 
   useEffect(() => {
@@ -71,6 +92,29 @@ export default function RepartoPage() {
   // Si no hay beneficio, no hay nómina ni hucha: nunca en negativo.
   const nomina = (b: number) => Math.max(0, b * 0.8);
   const aHucha = (b: number) => Math.max(0, b * 0.2);
+
+  // Registra la nómina del mes como gasto en la categoría Nóminas (imputado al socio)
+  async function registrarNomina(mes: string, socio: string, importe: number) {
+    if (!nominaCatId || importe <= 0) return;
+    const nombreSocio = NOMBRE[socio] ?? socio;
+    const { error } = await supabase.from("gastos").insert({
+      fecha: `${mes.slice(0, 7)}-28`,
+      concepto: `Nómina ${nombreSocio} ${MESLARGO(mes)}`,
+      categoria_id: nominaCatId,
+      cuenta_id: cuentaBanco,
+      imputado_a: socio,
+      base: Math.round(importe * 100) / 100,
+      iva_pct: 0,
+      irpf_pct: 0,
+      deducible: false,
+      tiene_factura: false,
+      es_fijo: false,
+    });
+    if (error) return setError(error.message);
+    setOk(`Nómina de ${nombreSocio} apuntada ✓`);
+    setTimeout(() => setOk(null), 3000);
+    cargar();
+  }
 
   // Hucha (histórico completo): 20% acumulado − inversiones
   const aporte20Total = filas.reduce((s, f) => s + Math.max(0, Number(f.beneficio)) * 0.2, 0);
@@ -154,6 +198,7 @@ export default function RepartoPage() {
       </div>
 
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
+      {ok && <p className="mb-3 rounded-xl bg-emerald-950 px-4 py-2 text-sm text-emerald-300">{ok}</p>}
       {!disponible && (
         <p className="mb-3 rounded-xl bg-amber-950 px-4 py-2 text-xs text-amber-300">
           Ejecuta <b>supabase/mejoras_v6.sql</b> para ver el reparto.
@@ -255,6 +300,18 @@ export default function RepartoPage() {
                             <p className="text-lg font-black text-sky-400">{eur(huc)}</p>
                           </div>
                         </div>
+                        {nom > 0 && (
+                          nominaPuesta.has(`${mes.slice(0, 7)}-${socio}`) ? (
+                            <p className="mt-2 text-center text-[11px] font-bold text-emerald-500">✓ nómina apuntada</p>
+                          ) : (
+                            <button
+                              onClick={() => registrarNomina(mes, socio, nom)}
+                              className="mt-2 w-full rounded-lg bg-zinc-800 py-1.5 text-xs font-bold text-zinc-200 hover:bg-zinc-700"
+                            >
+                              Registrar nómina ({eur(nom)})
+                            </button>
+                          )
+                        )}
                         {abierto === clave && (
                           <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-zinc-800 pt-2 text-xs">
                             <dt className="text-zinc-500">Cobrado propio</dt>
