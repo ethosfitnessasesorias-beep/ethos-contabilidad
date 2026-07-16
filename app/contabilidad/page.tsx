@@ -51,6 +51,7 @@ export default function LibroPage() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [movs, setMovs] = useState<Movimiento[]>([]);
   const [porPedir, setPorPedir] = useState(0);
+  const [inversionMes, setInversionMes] = useState(0);
   const [cargando, setCargando] = useState(true);
 
   // Filtros
@@ -99,6 +100,10 @@ export default function LibroPage() {
         .lt("fecha", hasta),
       supabase.from("gastos").select("id", { count: "exact", head: true }).eq("tiene_factura", false).gt("base", 0),
     ]);
+
+    // Inversión del mes (para separarla del gasto corriente en el balance)
+    const inv = await supabase.from("v_inversion_mensual").select("inversion").eq("mes", desde).maybeSingle();
+    setInversionMes(Number((inv.data as { inversion: number } | null)?.inversion ?? 0));
 
     const lista: Movimiento[] = [];
     for (const c of (cobros.data as unknown as Array<{
@@ -259,7 +264,14 @@ export default function LibroPage() {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2 text-sm">
           <span className="rounded-lg bg-zinc-900 px-3 py-1.5 text-emerald-400">Entra {eur(totales.ing)}</span>
-          <span className="rounded-lg bg-zinc-900 px-3 py-1.5 text-red-400">Sale {eur(totales.gas)}</span>
+          <span className="rounded-lg bg-zinc-900 px-3 py-1.5 text-red-400">
+            Sale {eur(totales.gas)}
+            {inversionMes > 0 && cuentaSel === "todas" && (
+              <span className="ml-1 text-[11px] text-zinc-500">
+                (corriente {eur(Math.max(0, totales.gas - inversionMes))} · inversión {eur(inversionMes)})
+              </span>
+            )}
+          </span>
           <span className="rounded-lg bg-zinc-900 px-3 py-1.5 font-bold text-white">Neto {eur(totales.neto)}</span>
           {cuentaSel !== "todas" && (
             <span className="self-center text-xs text-zinc-500">— filtrando {cuentaSel}, toca la tarjeta para quitar</span>
