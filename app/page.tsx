@@ -54,18 +54,19 @@ function Chips<T extends string | number>(props: {
   opciones: { valor: T; etiqueta: string }[];
   valor: T | null;
   onCambio: (v: T) => void;
+  pequeno?: boolean;
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-1.5">
       {props.opciones.map((o) => (
         <button
           key={String(o.valor)}
           type="button"
           onClick={() => props.onCambio(o.valor)}
-          className={`rounded-full px-4 py-2.5 text-sm font-semibold transition-colors ${
-            props.valor === o.valor
-              ? "bg-red-600 text-white"
-              : "bg-zinc-800 text-zinc-300 active:bg-zinc-700"
+          className={`rounded-full font-semibold transition-colors ${
+            props.pequeno ? "px-3 py-1 text-xs" : "px-3.5 py-2 text-sm"
+          } ${
+            props.valor === o.valor ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-300 active:bg-zinc-700"
           }`}
         >
           {o.etiqueta}
@@ -75,12 +76,10 @@ function Chips<T extends string | number>(props: {
   );
 }
 
-function Campo(props: { etiqueta: string; children: React.ReactNode }) {
+function Campo(props: { etiqueta: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-        {props.etiqueta}
-      </span>
+    <div className={`flex flex-col gap-1.5 ${props.className ?? ""}`}>
+      <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">{props.etiqueta}</span>
       {props.children}
     </div>
   );
@@ -97,30 +96,25 @@ function Toggle(props: {
       type="button"
       disabled={props.deshabilitado}
       onClick={() => props.onCambio(!props.activo)}
-      className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-semibold ${
+      className={`flex items-center justify-between gap-2 rounded-xl px-3.5 py-2.5 text-sm font-semibold ${
         props.activo ? "bg-red-950 text-red-300" : "bg-zinc-900 text-zinc-400"
       } ${props.deshabilitado ? "opacity-40" : ""}`}
     >
-      {props.etiqueta}
+      <span className="text-left leading-tight">{props.etiqueta}</span>
       <span
-        className={`ml-3 inline-block h-6 w-11 shrink-0 rounded-full p-0.5 transition-colors ${
+        className={`inline-block h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors ${
           props.activo ? "bg-red-600" : "bg-zinc-700"
         }`}
       >
-        <span
-          className={`block h-5 w-5 rounded-full bg-white transition-transform ${
-            props.activo ? "translate-x-5" : ""
-          }`}
-        />
+        <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${props.activo ? "translate-x-4" : ""}`} />
       </span>
     </button>
   );
 }
 
 const inputCls =
-  "rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-base text-white placeholder-zinc-600 outline-none focus:border-red-500";
+  "rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
-// Selector de recurrencia: cada N días / semanas / meses
 function RecurrenciaCampo(props: {
   cada: string;
   setCada: (v: string) => void;
@@ -128,18 +122,18 @@ function RecurrenciaCampo(props: {
   setUnidad: (v: Unidad) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl bg-zinc-900 px-4 py-3">
-      <span className="text-sm text-zinc-400">Cada</span>
+    <div className="flex items-center gap-2 rounded-xl bg-zinc-950 px-3.5 py-2.5">
+      <span className="text-xs text-zinc-400">Cada</span>
       <input
         inputMode="numeric"
         value={props.cada}
         onChange={(e) => props.setCada(e.target.value)}
-        className="w-14 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-center text-white outline-none focus:border-red-500"
+        className="w-12 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1 text-center text-white outline-none focus:border-red-500"
       />
       <select
         value={props.unidad}
         onChange={(e) => props.setUnidad(e.target.value as Unidad)}
-        className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-white outline-none"
+        className="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1 text-sm text-white outline-none"
       >
         <option value="dia">día(s)</option>
         <option value="semana">semana(s)</option>
@@ -162,7 +156,7 @@ export default function EntradaRapida() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [metodosPago, setMetodosPago] = useState<Metodo[]>([]);
   const [impuestos, setImpuestos] = useState<Impuesto[]>([]);
-  const [ivaGeneral, setIvaGeneral] = useState(0.21);
+  const [, setIvaGeneral] = useState(0.21);
 
   const [pestana, setPestana] = useState<Pestana>("ingreso");
   const [guardando, setGuardando] = useState(false);
@@ -182,6 +176,7 @@ export default function EntradaRapida() {
   const [ivaPctIngreso, setIvaPctIngreso] = useState<number>(0.21);
   const [irpfPctIngreso, setIrpfPctIngreso] = useState<number>(0);
   const [cobrado, setCobrado] = useState(true);
+  const [computaImpuestos, setComputaImpuestos] = useState(true);
   const [recurrente, setRecurrente] = useState(false);
   const [recurCada, setRecurCada] = useState("1");
   const [recurUnidad, setRecurUnidad] = useState<Unidad>("mes");
@@ -240,7 +235,6 @@ export default function EntradaRapida() {
       setImpuestos((imp.data as Impuesto[]) ?? []);
       if (cfg.data) setIvaGeneral(Number(cfg.data.valor));
 
-      // Preferencias recordadas
       try {
         const p: Prefs = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}");
         if (p.atribucion) setAtribucion(p.atribucion);
@@ -248,6 +242,15 @@ export default function EntradaRapida() {
         if (p.cuentaCodigo) {
           setCuentaCodigo(p.cuentaCodigo);
           setMetodo(METODO_POR_CUENTA[p.cuentaCodigo] ?? "transferencia");
+        }
+      } catch {}
+
+      // Botones "+ Ingreso" / "+ Gasto" del Libro: abren la pestaña pedida
+      try {
+        const tab = sessionStorage.getItem("prefill_pestana");
+        if (tab === "ingreso" || tab === "gasto" || tab === "traspaso") {
+          sessionStorage.removeItem("prefill_pestana");
+          setPestana(tab as Pestana);
         }
       } catch {}
 
@@ -311,6 +314,12 @@ export default function EntradaRapida() {
     guardarPrefs({ cuentaCodigo: codigo });
   }
 
+  function elegirIvaIngreso(pct: number) {
+    setIvaPctIngreso(pct);
+    // Sin IVA normalmente = venta que no se declara: se desmarca computa.
+    setComputaImpuestos(pct > 0);
+  }
+
   function avisar(tipo: "ok" | "error", texto: string) {
     setToast({ tipo, texto });
     setTimeout(() => setToast(null), tipo === "ok" ? 2000 : 5000);
@@ -336,9 +345,7 @@ export default function EntradaRapida() {
     const ivaPct = ivaPctIngreso;
     const irpfPct = irpfPctIngreso;
     const base = Math.round((imp / (1 + ivaPct - irpfPct)) * 100) / 100;
-    const cliente = clientes.find(
-      (c) => c.nombre.toLowerCase() === clienteNombre.trim().toLowerCase()
-    );
+    const cliente = clientes.find((c) => c.nombre.toLowerCase() === clienteNombre.trim().toLowerCase());
     const nombreCat = catIngreso.find((c) => c.id === categoriaIngresoId)?.nombre ?? "Ingreso";
     const conceptoFinal = concepto.trim() || (cliente ? `${nombreCat} — ${cliente.nombre}` : nombreCat);
 
@@ -356,6 +363,7 @@ export default function EntradaRapida() {
         irpf_pct: irpfPct,
         es_recurrente: recurrente,
         canal,
+        computa_impuestos: computaImpuestos,
       })
       .select("id")
       .single();
@@ -384,7 +392,6 @@ export default function EntradaRapida() {
     limpiarTrasGuardar();
   }
 
-  // Crea/actualiza una línea de tesorería para lo recurrente (sin duplicar)
   async function registrarRecurrente(tipo: "ingreso" | "gasto", conceptoR: string, importeR: number) {
     const { data } = await supabase
       .from("tesoreria_recurrentes")
@@ -410,7 +417,6 @@ export default function EntradaRapida() {
     if (!categoriaGastoId) return avisar("error", "Elige una categoría.");
     if (!concepto.trim()) return avisar("error", "Escribe el concepto.");
 
-    // Una devolución de compra es el mismo gasto pero en negativo
     const signo = esDevolucion ? -1 : 1;
     const base = (signo * Math.round((imp / (1 + ivaPctGasto)) * 100)) / 100;
     const esDeducible = deducible && tieneFactura;
@@ -446,8 +452,7 @@ export default function EntradaRapida() {
   async function guardarTraspaso() {
     const imp = parseImporte(importe);
     if (!imp) return avisar("error", "Pon un importe válido.");
-    if (origenCodigo === destinoCodigo)
-      return avisar("error", "Origen y destino no pueden ser la misma cuenta.");
+    if (origenCodigo === destinoCodigo) return avisar("error", "Origen y destino no pueden ser la misma cuenta.");
 
     setGuardando(true);
     const { error } = await supabase.from("traspasos").insert({
@@ -463,389 +468,375 @@ export default function EntradaRapida() {
     limpiarTrasGuardar();
   }
 
-  const guardar =
-    pestana === "ingreso" ? guardarIngreso : pestana === "gasto" ? guardarGasto : guardarTraspaso;
+  const guardar = pestana === "ingreso" ? guardarIngreso : pestana === "gasto" ? guardarGasto : guardarTraspaso;
 
   if (sesionOk === null) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-zinc-950 text-zinc-500">
-        Cargando…
-      </main>
+      <main className="flex min-h-dvh items-center justify-center bg-zinc-950 text-zinc-500">Cargando…</main>
     );
   }
 
   const opcCuentas = cuentas.map((c) => ({ valor: c.codigo, etiqueta: c.nombre.split(" (")[0] }));
+  const colorTipo: Record<Pestana, string> = {
+    ingreso: "bg-emerald-600",
+    gasto: "bg-red-600",
+    traspaso: "bg-zinc-600",
+  };
 
   return (
     <Shell titulo="Apuntar">
-      <main className="mx-auto flex max-w-md flex-col px-4 pb-48 pt-6">
+      <main className="mx-auto max-w-5xl px-4 py-6 md:px-6">
+        <div className="grid items-start gap-4 lg:grid-cols-[300px_1fr]">
+          {/* ---------- Columna izquierda: tipo + importe + guardar ---------- */}
+          <div className="flex flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
+            <div>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-zinc-500">Tipo</p>
+              <div className="flex flex-col gap-2">
+                {(
+                  [
+                    ["ingreso", "Ingreso"],
+                    ["gasto", "Gasto"],
+                    ["traspaso", "Traspaso"],
+                  ] as [Pestana, string][]
+                ).map(([id, etiqueta]) => (
+                  <button
+                    key={id}
+                    onClick={() => setPestana(id)}
+                    className={`flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-bold transition ${
+                      pestana === id ? "bg-zinc-800 text-white ring-1 ring-zinc-700" : "bg-zinc-950 text-zinc-400"
+                    }`}
+                  >
+                    <span className={`h-2.5 w-2.5 rounded-full ${colorTipo[id]}`} />
+                    {etiqueta}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-      {/* Pestañas */}
-      <div className="mb-5 grid grid-cols-3 rounded-xl bg-zinc-900 p-1">
-        {(
-          [
-            ["ingreso", "Ingreso"],
-            ["gasto", "Gasto"],
-            ["traspaso", "Traspaso"],
-          ] as [Pestana, string][]
-        ).map(([id, etiqueta]) => (
-          <button
-            key={id}
-            onClick={() => setPestana(id)}
-            className={`rounded-lg py-2.5 text-sm font-bold ${
-              pestana === id ? "bg-red-600 text-white" : "text-zinc-400"
+            <div>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-zinc-500">Importe</p>
+              <div className="flex items-center rounded-xl border border-zinc-800 bg-zinc-950 px-4">
+                <input
+                  ref={importeRef}
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={importe}
+                  onChange={(e) => setImporte(e.target.value)}
+                  className="w-full bg-transparent py-3 text-3xl font-black text-white placeholder-zinc-700 outline-none"
+                />
+                <span className="text-2xl font-black text-zinc-600">€</span>
+              </div>
+            </div>
+
+            <Campo etiqueta="Fecha">
+              <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className={inputCls} />
+            </Campo>
+
+            <button
+              onClick={guardar}
+              disabled={guardando}
+              className="mt-1 w-full rounded-xl bg-red-600 py-3 text-base font-black text-white active:bg-red-700 disabled:opacity-50"
+            >
+              {guardando ? "Guardando…" : "GUARDAR"}
+            </button>
+          </div>
+
+          {/* ---------- Columna derecha: detalles ---------- */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
+            <p className="mb-4 text-sm font-black text-white">Detalles del movimiento</p>
+
+            {/* INGRESO */}
+            {pestana === "ingreso" && (
+              <div className="flex flex-col gap-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Campo etiqueta="¿Qué es?">
+                    <div className="flex gap-2">
+                      <select
+                        value={categoriaIngresoId ?? ""}
+                        onChange={(e) => {
+                          const v = Number(e.target.value) || null;
+                          setCategoriaIngresoId(v);
+                          const cat = catIngreso.find((c) => c.id === v);
+                          if (cat) setCanal(cat.es_online ? "online" : "presencial");
+                          guardarPrefs({ categoriaIngresoId: v });
+                        }}
+                        className={`${inputCls} flex-1 appearance-none`}
+                      >
+                        <option value="">Elegir…</option>
+                        {catIngreso.map((c) => (
+                          <option key={c.id} value={c.id}>{c.nombre}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setCreandoCat(!creandoCat)}
+                        className="shrink-0 rounded-xl bg-zinc-800 px-3 text-lg font-black text-zinc-300"
+                      >
+                        {creandoCat ? "×" : "+"}
+                      </button>
+                    </div>
+                    {creandoCat && (
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          autoFocus
+                          placeholder="Categoría nueva"
+                          value={nuevaCatNombre}
+                          onChange={(e) => setNuevaCatNombre(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && crearCategoriaRapida()}
+                          className={inputCls}
+                        />
+                        <button type="button" onClick={crearCategoriaRapida} className="shrink-0 rounded-xl bg-red-600 px-4 text-sm font-bold text-white">
+                          Crear
+                        </button>
+                      </div>
+                    )}
+                  </Campo>
+
+                  <Campo etiqueta="Negocio">
+                    <Chips
+                      opciones={[
+                        { valor: "presencial" as Canal, etiqueta: "Presencial" },
+                        { valor: "online" as Canal, etiqueta: "Online" },
+                      ]}
+                      valor={canal}
+                      onCambio={setCanal}
+                    />
+                  </Campo>
+
+                  <Campo etiqueta="¿De quién?">
+                    <select
+                      value={atribucion}
+                      onChange={(e) => {
+                        setAtribucion(e.target.value);
+                        guardarPrefs({ atribucion: e.target.value });
+                      }}
+                      className={`${inputCls} appearance-none`}
+                    >
+                      {personas.map((p) => (
+                        <option key={p.codigo} value={p.codigo}>{p.nombre}</option>
+                      ))}
+                    </select>
+                  </Campo>
+
+                  <Campo etiqueta="Cliente (opcional)">
+                    <input list="lista-clientes" placeholder="Buscar cliente…" value={clienteNombre} onChange={(e) => setClienteNombre(e.target.value)} className={inputCls} />
+                    <datalist id="lista-clientes">
+                      {clientes.map((c) => (
+                        <option key={c.id} value={c.nombre} />
+                      ))}
+                    </datalist>
+                  </Campo>
+
+                  <Campo etiqueta="IVA">
+                    <select value={ivaPctIngreso} onChange={(e) => elegirIvaIngreso(Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                      {ivaIngreso.map((i) => (
+                        <option key={i.id} value={i.pct}>{i.nombre} ({Math.round(i.pct * 100)}%)</option>
+                      ))}
+                    </select>
+                  </Campo>
+
+                  <Campo etiqueta="IRPF">
+                    <select value={irpfPctIngreso} onChange={(e) => setIrpfPctIngreso(Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                      {irpfIngreso.map((i) => (
+                        <option key={i.id} value={i.pct}>{i.nombre}</option>
+                      ))}
+                    </select>
+                  </Campo>
+                </div>
+
+                <Campo etiqueta="Concepto (opcional)">
+                  <input placeholder="Ej: Trimestre entreno" value={concepto} onChange={(e) => setConcepto(e.target.value)} className={inputCls} />
+                </Campo>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Toggle etiqueta="Cobrado ya" activo={cobrado} onCambio={setCobrado} />
+                  <Toggle etiqueta="Cuenta para impuestos" activo={computaImpuestos} onCambio={setComputaImpuestos} />
+                </div>
+                {!computaImpuestos && (
+                  <p className="rounded-lg bg-sky-950 px-3 py-2 text-xs text-sky-300">
+                    Este ingreso NO se sumará en la sección de Impuestos (ni IVA ni IRPF ni 130).
+                  </p>
+                )}
+
+                {cobrado && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Campo etiqueta="¿Dónde ha entrado?">
+                      <Chips opciones={opcCuentas} valor={cuentaCodigo} onCambio={elegirCuenta} pequeno />
+                    </Campo>
+                    <Campo etiqueta="Método">
+                      <select
+                        value={metodo}
+                        onChange={(e) => {
+                          setMetodo(e.target.value as MetodoPago);
+                          if (e.target.value === "domiciliado") setRecurrente(true);
+                        }}
+                        className={`${inputCls} appearance-none`}
+                      >
+                        {metodosPago.map((m) => (
+                          <option key={m.codigo} value={m.codigo}>{m.nombre}</option>
+                        ))}
+                      </select>
+                    </Campo>
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  <Toggle etiqueta="Recurrente (se suma a la tesorería)" activo={recurrente} onCambio={setRecurrente} />
+                  {recurrente && <RecurrenciaCampo cada={recurCada} setCada={setRecurCada} unidad={recurUnidad} setUnidad={setRecurUnidad} />}
+                </div>
+              </div>
+            )}
+
+            {/* GASTO */}
+            {pestana === "gasto" && (
+              <div className="flex flex-col gap-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Campo etiqueta="Categoría">
+                    <select
+                      value={categoriaGastoId ?? ""}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || null;
+                        setCategoriaGastoId(v);
+                        const cat = catGasto.find((c) => c.id === v);
+                        if (cat) {
+                          setGastoFijo(cat.es_fijo);
+                          setCanalGasto(cat.es_online ? "online" : "presencial");
+                        }
+                      }}
+                      className={`${inputCls} appearance-none`}
+                    >
+                      <option value="">Elegir categoría…</option>
+                      {gruposGasto.map(([grupo, cats]) => (
+                        <optgroup key={grupo} label={grupo}>
+                          {cats.map((c) => (
+                            <option key={c.id} value={c.id}>{c.nombre}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </Campo>
+
+                  <Campo etiqueta="Negocio">
+                    <Chips
+                      opciones={[
+                        { valor: "presencial" as Canal, etiqueta: "Presencial" },
+                        { valor: "online" as Canal, etiqueta: "Online" },
+                      ]}
+                      valor={canalGasto}
+                      onCambio={setCanalGasto}
+                    />
+                  </Campo>
+
+                  <Campo etiqueta="Concepto">
+                    <input placeholder="Ej: Bombillas sala" value={concepto} onChange={(e) => setConcepto(e.target.value)} className={inputCls} />
+                  </Campo>
+
+                  <Campo etiqueta="Proveedor (opcional)">
+                    <input placeholder="Ej: Leroy Merlin" value={proveedor} onChange={(e) => setProveedor(e.target.value)} className={inputCls} />
+                  </Campo>
+
+                  <Campo etiqueta="IVA incluido">
+                    <select value={ivaPctGasto} onChange={(e) => setIvaPctGasto(Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                      {ivaGasto.map((i) => (
+                        <option key={i.id} value={i.pct}>{i.nombre} ({Math.round(i.pct * 100)}%)</option>
+                      ))}
+                    </select>
+                  </Campo>
+
+                  <Campo etiqueta="IRPF retenido">
+                    <select value={irpfPctGasto} onChange={(e) => setIrpfPctGasto(Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                      {irpfGasto.map((i) => (
+                        <option key={i.id} value={i.pct}>{i.nombre}</option>
+                      ))}
+                    </select>
+                  </Campo>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Toggle
+                    etiqueta="Tengo factura"
+                    activo={tieneFactura}
+                    onCambio={(v) => {
+                      setTieneFactura(v);
+                      if (!v) setDeducible(false);
+                    }}
+                  />
+                  <Toggle etiqueta="Deducible" activo={deducible && tieneFactura} onCambio={setDeducible} deshabilitado={!tieneFactura} />
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Campo etiqueta="Tipo de gasto">
+                    <Chips
+                      opciones={[
+                        { valor: "variable", etiqueta: "Variable" },
+                        { valor: "fijo", etiqueta: "Fijo" },
+                      ]}
+                      valor={gastoFijo ? "fijo" : "variable"}
+                      onCambio={(v) => setGastoFijo(v === "fijo")}
+                      pequeno
+                    />
+                  </Campo>
+                  <Campo etiqueta="Imputado a">
+                    <Chips
+                      opciones={personas.map((p) => ({ valor: p.codigo, etiqueta: p.nombre }))}
+                      valor={imputadoA}
+                      onCambio={setImputadoA}
+                      pequeno
+                    />
+                  </Campo>
+                </div>
+
+                <Campo etiqueta="¿De dónde ha salido?">
+                  <Chips opciones={opcCuentas} valor={cuentaCodigo} onCambio={elegirCuenta} pequeno />
+                </Campo>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Toggle etiqueta="Recurrente" activo={recurrente} onCambio={setRecurrente} />
+                  <Toggle etiqueta="Es una devolución" activo={esDevolucion} onCambio={setEsDevolucion} />
+                </div>
+                {recurrente && <RecurrenciaCampo cada={recurCada} setCada={setRecurCada} unidad={recurUnidad} setUnidad={setRecurUnidad} />}
+                {esDevolucion && (
+                  <p className="rounded-lg bg-sky-950 px-3 py-2 text-xs text-sky-300">
+                    Se apunta en negativo en la categoría elegida: resta del gasto y el dinero vuelve a la cuenta.
+                  </p>
+                )}
+                {irpfPctGasto > 0 && (
+                  <p className="rounded-lg bg-amber-950 px-3 py-2 text-xs text-amber-300">
+                    Retienes este IRPF y se lo debes a Hacienda (modelo 111/115).
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* TRASPASO */}
+            {pestana === "traspaso" && (
+              <div className="flex flex-col gap-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Campo etiqueta="Desde">
+                    <Chips opciones={opcCuentas} valor={origenCodigo} onCambio={setOrigenCodigo} pequeno />
+                  </Campo>
+                  <Campo etiqueta="Hacia">
+                    <Chips opciones={opcCuentas} valor={destinoCodigo} onCambio={setDestinoCodigo} pequeno />
+                  </Campo>
+                </div>
+                <Campo etiqueta="Motivo (opcional)">
+                  <input placeholder="Ej: Liquidación TPV" value={motivo} onChange={(e) => setMotivo(e.target.value)} className={inputCls} />
+                </Campo>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Toast */}
+        {toast && (
+          <div
+            className={`fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-xl px-5 py-3 text-sm font-bold shadow-lg ${
+              toast.tipo === "ok" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"
             }`}
           >
-            {etiqueta}
-          </button>
-        ))}
-      </div>
-
-      {/* Importe */}
-      <div className="mb-5">
-        <div className="flex items-center rounded-2xl border border-zinc-800 bg-zinc-900 px-5">
-          <input
-            ref={importeRef}
-            inputMode="decimal"
-            placeholder="0,00"
-            value={importe}
-            onChange={(e) => setImporte(e.target.value)}
-            className="w-full bg-transparent py-4 text-4xl font-black text-white placeholder-zinc-700 outline-none"
-          />
-          <span className="text-3xl font-black text-zinc-600">€</span>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-4">
-        {/* ---------- INGRESO ---------- */}
-        {pestana === "ingreso" && (
-          <>
-            <Campo etiqueta="¿Qué es?">
-              <div className="flex gap-2">
-                <select
-                  value={categoriaIngresoId ?? ""}
-                  onChange={(e) => {
-                    const v = Number(e.target.value) || null;
-                    setCategoriaIngresoId(v);
-                    const cat = catIngreso.find((c) => c.id === v);
-                    if (cat) setCanal(cat.es_online ? "online" : "presencial");
-                    guardarPrefs({ categoriaIngresoId: v });
-                  }}
-                  className={`${inputCls} flex-1 appearance-none`}
-                >
-                  <option value="">Elegir…</option>
-                  {catIngreso.map((c) => (
-                    <option key={c.id} value={c.id}>{c.nombre}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => setCreandoCat(!creandoCat)}
-                  className="shrink-0 rounded-xl bg-zinc-800 px-4 text-lg font-black text-zinc-300"
-                >
-                  {creandoCat ? "×" : "+"}
-                </button>
-              </div>
-              {creandoCat && (
-                <div className="mt-2 flex gap-2">
-                  <input
-                    autoFocus
-                    placeholder="Nombre de la categoría nueva"
-                    value={nuevaCatNombre}
-                    onChange={(e) => setNuevaCatNombre(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && crearCategoriaRapida()}
-                    className={inputCls}
-                  />
-                  <button type="button" onClick={crearCategoriaRapida} className="shrink-0 rounded-xl bg-red-600 px-4 text-sm font-bold text-white">
-                    Crear
-                  </button>
-                </div>
-              )}
-            </Campo>
-
-            <Campo etiqueta="Negocio">
-              <Chips
-                opciones={[
-                  { valor: "presencial" as Canal, etiqueta: "Presencial" },
-                  { valor: "online" as Canal, etiqueta: "Online" },
-                ]}
-                valor={canal}
-                onCambio={setCanal}
-              />
-            </Campo>
-
-            <Campo etiqueta="¿De quién?">
-              <select
-                value={atribucion}
-                onChange={(e) => {
-                  setAtribucion(e.target.value);
-                  guardarPrefs({ atribucion: e.target.value });
-                }}
-                className={`${inputCls} appearance-none`}
-              >
-                {personas.map((p) => (
-                  <option key={p.codigo} value={p.codigo}>{p.nombre}</option>
-                ))}
-              </select>
-            </Campo>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Campo etiqueta="IVA">
-                <select value={ivaPctIngreso} onChange={(e) => setIvaPctIngreso(Number(e.target.value))} className={`${inputCls} appearance-none`}>
-                  {ivaIngreso.map((i) => (
-                    <option key={i.id} value={i.pct}>{i.nombre} ({Math.round(i.pct * 100)}%)</option>
-                  ))}
-                </select>
-              </Campo>
-              <Campo etiqueta="IRPF">
-                <select value={irpfPctIngreso} onChange={(e) => setIrpfPctIngreso(Number(e.target.value))} className={`${inputCls} appearance-none`}>
-                  {irpfIngreso.map((i) => (
-                    <option key={i.id} value={i.pct}>{i.nombre}</option>
-                  ))}
-                </select>
-              </Campo>
-            </div>
-
-            <Campo etiqueta="Cliente (opcional)">
-              <input
-                list="lista-clientes"
-                placeholder="Buscar cliente…"
-                value={clienteNombre}
-                onChange={(e) => setClienteNombre(e.target.value)}
-                className={inputCls}
-              />
-              <datalist id="lista-clientes">
-                {clientes.map((c) => (
-                  <option key={c.id} value={c.nombre} />
-                ))}
-              </datalist>
-            </Campo>
-
-            <Campo etiqueta="Concepto (opcional)">
-              <input
-                placeholder="Ej: Trimestre entreno"
-                value={concepto}
-                onChange={(e) => setConcepto(e.target.value)}
-                className={inputCls}
-              />
-            </Campo>
-
-            <Toggle etiqueta="Cobrado ya" activo={cobrado} onCambio={setCobrado} />
-            <Toggle etiqueta="Recurrente (se suma a la tesorería)" activo={recurrente} onCambio={setRecurrente} />
-            {recurrente && <RecurrenciaCampo cada={recurCada} setCada={setRecurCada} unidad={recurUnidad} setUnidad={setRecurUnidad} />}
-
-            {cobrado && (
-              <>
-                <Campo etiqueta="¿Dónde ha entrado?">
-                  <Chips opciones={opcCuentas} valor={cuentaCodigo} onCambio={elegirCuenta} />
-                </Campo>
-                <Campo etiqueta="Método">
-                  <select
-                    value={metodo}
-                    onChange={(e) => {
-                      setMetodo(e.target.value as MetodoPago);
-                      if (e.target.value === "domiciliado") setRecurrente(true);
-                    }}
-                    className={`${inputCls} appearance-none`}
-                  >
-                    {metodosPago.map((m) => (
-                      <option key={m.codigo} value={m.codigo}>{m.nombre}</option>
-                    ))}
-                  </select>
-                </Campo>
-              </>
-            )}
-          </>
+            {toast.texto}
+          </div>
         )}
-
-        {/* ---------- GASTO ---------- */}
-        {pestana === "gasto" && (
-          <>
-            <Campo etiqueta="Categoría">
-              <select
-                value={categoriaGastoId ?? ""}
-                onChange={(e) => {
-                  const v = Number(e.target.value) || null;
-                  setCategoriaGastoId(v);
-                  const cat = catGasto.find((c) => c.id === v);
-                  if (cat) setGastoFijo(cat.es_fijo);
-                }}
-                className={`${inputCls} appearance-none`}
-              >
-                <option value="">Elegir categoría…</option>
-                {gruposGasto.map(([grupo, cats]) => (
-                  <optgroup key={grupo} label={grupo}>
-                    {cats.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.nombre}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </Campo>
-
-            <Campo etiqueta="Concepto">
-              <input
-                placeholder="Ej: Bombillas sala"
-                value={concepto}
-                onChange={(e) => setConcepto(e.target.value)}
-                className={inputCls}
-              />
-            </Campo>
-
-            <Campo etiqueta="Proveedor (opcional)">
-              <input
-                placeholder="Ej: Leroy Merlin"
-                value={proveedor}
-                onChange={(e) => setProveedor(e.target.value)}
-                className={inputCls}
-              />
-            </Campo>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Campo etiqueta="IVA incluido">
-                <select value={ivaPctGasto} onChange={(e) => setIvaPctGasto(Number(e.target.value))} className={`${inputCls} appearance-none`}>
-                  {ivaGasto.map((i) => (
-                    <option key={i.id} value={i.pct}>{i.nombre} ({Math.round(i.pct * 100)}%)</option>
-                  ))}
-                </select>
-              </Campo>
-              <Campo etiqueta="IRPF retenido">
-                <select value={irpfPctGasto} onChange={(e) => setIrpfPctGasto(Number(e.target.value))} className={`${inputCls} appearance-none`}>
-                  {irpfGasto.map((i) => (
-                    <option key={i.id} value={i.pct}>{i.nombre}</option>
-                  ))}
-                </select>
-              </Campo>
-            </div>
-            {irpfPctGasto > 0 && (
-              <p className="rounded-lg bg-amber-950 px-3 py-2 text-xs text-amber-300">
-                Retienes este IRPF y se lo debes a Hacienda (modelo 111/115). Sale de tu cuenta
-                el importe menos la retención; el resto queda apartado como impuesto pendiente.
-              </p>
-            )}
-
-            <Campo etiqueta="Negocio">
-              <Chips
-                opciones={[
-                  { valor: "presencial" as Canal, etiqueta: "Presencial" },
-                  { valor: "online" as Canal, etiqueta: "Online" },
-                ]}
-                valor={canalGasto}
-                onCambio={setCanalGasto}
-              />
-            </Campo>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Toggle
-                etiqueta="Tengo factura"
-                activo={tieneFactura}
-                onCambio={(v) => {
-                  setTieneFactura(v);
-                  if (!v) setDeducible(false);
-                }}
-              />
-              <Toggle
-                etiqueta="Deducible"
-                activo={deducible && tieneFactura}
-                onCambio={setDeducible}
-                deshabilitado={!tieneFactura}
-              />
-            </div>
-            <Campo etiqueta="Tipo de gasto">
-              <Chips
-                opciones={[
-                  { valor: "variable", etiqueta: "Variable" },
-                  { valor: "fijo", etiqueta: "Fijo (recurrente e ineludible)" },
-                ]}
-                valor={gastoFijo ? "fijo" : "variable"}
-                onCambio={(v) => setGastoFijo(v === "fijo")}
-              />
-            </Campo>
-            <Toggle etiqueta="Recurrente (se suma a la tesorería)" activo={recurrente} onCambio={setRecurrente} />
-            {recurrente && <RecurrenciaCampo cada={recurCada} setCada={setRecurCada} unidad={recurUnidad} setUnidad={setRecurUnidad} />}
-            <Toggle
-              etiqueta="Es una devolución (te devuelven dinero)"
-              activo={esDevolucion}
-              onCambio={setEsDevolucion}
-            />
-            {esDevolucion && (
-              <p className="rounded-lg bg-sky-950 px-3 py-2 text-xs text-sky-300">
-                Se apuntará en negativo en la categoría elegida: resta del gasto y el dinero
-                vuelve a la cuenta. Usa la misma categoría que el gasto original.
-              </p>
-            )}
-
-            <Campo etiqueta="¿De dónde ha salido?">
-              <Chips opciones={opcCuentas} valor={cuentaCodigo} onCambio={elegirCuenta} />
-            </Campo>
-
-            <Campo etiqueta="Imputado a">
-              <Chips
-                opciones={personas.map((p) => ({ valor: p.codigo, etiqueta: p.nombre }))}
-                valor={imputadoA}
-                onCambio={setImputadoA}
-              />
-            </Campo>
-          </>
-        )}
-
-        {/* ---------- TRASPASO ---------- */}
-        {pestana === "traspaso" && (
-          <>
-            <Campo etiqueta="Desde">
-              <Chips opciones={opcCuentas} valor={origenCodigo} onCambio={setOrigenCodigo} />
-            </Campo>
-            <Campo etiqueta="Hacia">
-              <Chips opciones={opcCuentas} valor={destinoCodigo} onCambio={setDestinoCodigo} />
-            </Campo>
-            <Campo etiqueta="Motivo (opcional)">
-              <input
-                placeholder="Ej: Liquidación TPV"
-                value={motivo}
-                onChange={(e) => setMotivo(e.target.value)}
-                className={inputCls}
-              />
-            </Campo>
-          </>
-        )}
-
-        {/* Fecha (común) */}
-        <Campo etiqueta="Fecha">
-          <input
-            type="date"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-            className={inputCls}
-          />
-        </Campo>
-      </div>
-
-      {/* Botón fijo de guardar */}
-      <div className="fixed inset-x-0 bottom-0 bg-gradient-to-t from-zinc-950 via-zinc-950 to-transparent px-4 pb-5 pt-8 md:left-60">
-        <div className="mx-auto max-w-md">
-          <button
-            onClick={guardar}
-            disabled={guardando}
-            className="w-full rounded-2xl bg-red-600 py-4 text-lg font-black text-white active:bg-red-700 disabled:opacity-50"
-          >
-            {guardando ? "Guardando…" : "GUARDAR"}
-          </button>
-        </div>
-      </div>
-
-      {/* Toast */}
-      {toast && (
-        <div
-          className={`fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-xl px-5 py-3 text-sm font-bold shadow-lg ${
-            toast.tipo === "ok" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"
-          }`}
-        >
-          {toast.texto}
-        </div>
-      )}
-
       </main>
     </Shell>
   );

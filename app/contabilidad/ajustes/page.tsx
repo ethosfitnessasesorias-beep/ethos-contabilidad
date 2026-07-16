@@ -288,32 +288,66 @@ export default function Ajustes() {
       {seccion === "categorias" && (
         <div className="flex flex-col gap-3">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Nueva categoría</p>
-            <div className="flex flex-wrap gap-2">
-              <select value={cTipo} onChange={(e) => setCTipo(e.target.value as "gasto" | "ingreso")} className={inputCls}>
-                <option value="gasto">Gasto</option>
-                <option value="ingreso">Ingreso</option>
-              </select>
-              <input list="grupos" placeholder="Grupo (categoría)" value={cGrupo} onChange={(e) => setCGrupo(e.target.value)} className={inputCls} />
-              <datalist id="grupos">
-                {gruposGasto.map((g) => (
-                  <option key={g} value={g} />
-                ))}
-              </datalist>
-              <input placeholder="Nombre (subcategoría)" value={cNombre} onChange={(e) => setCNombre(e.target.value)} className={inputCls} />
-              <button onClick={crearCategoria} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white">
-                Añadir
-              </button>
-            </div>
-            {cTipo === "gasto" && (
-              <div className="mt-2 flex flex-wrap gap-4 text-xs text-zinc-400">
-                <label className="flex items-center gap-1.5"><input type="checkbox" checked={cFijo} onChange={(e) => setCFijo(e.target.checked)} className="accent-red-600" /> Gasto fijo</label>
-                <label className="flex items-center gap-1.5"><input type="checkbox" checked={cInversion} onChange={(e) => setCInversion(e.target.checked)} className="accent-red-600" /> Inversión (activo &gt;1 año)</label>
+            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-zinc-500">Nueva categoría</p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Tipo</span>
+                <select value={cTipo} onChange={(e) => setCTipo(e.target.value as "gasto" | "ingreso")} className={inputCls}>
+                  <option value="gasto">Gasto</option>
+                  <option value="ingreso">Ingreso</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Grupo (categoría)</span>
+                <input list="grupos" placeholder="Ej: Operativo" value={cGrupo} onChange={(e) => setCGrupo(e.target.value)} className={inputCls} />
+                <datalist id="grupos">
+                  {gruposGasto.map((g) => (
+                    <option key={g} value={g} />
+                  ))}
+                </datalist>
+              </label>
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Nombre (subcategoría)</span>
+                <input placeholder="Ej: Marketing" value={cNombre} onChange={(e) => setCNombre(e.target.value)} className={inputCls} />
+              </label>
+
+              {cTipo === "gasto" && (
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Naturaleza</span>
+                  <select
+                    value={cInversion ? "inversion" : cFijo ? "fijo" : "corriente"}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCFijo(v === "fijo");
+                      setCInversion(v === "inversion");
+                    }}
+                    className={inputCls}
+                  >
+                    <option value="corriente">Gasto corriente</option>
+                    <option value="fijo">Gasto fijo (recurrente e ineludible)</option>
+                    <option value="inversion">Inversión (activo &gt;1 año)</option>
+                  </select>
+                </label>
+              )}
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Negocio</span>
+                <select value={cOnline ? "online" : "presencial"} onChange={(e) => setCOnline(e.target.value === "online")} className={inputCls}>
+                  <option value="presencial">Presencial</option>
+                  <option value="online">Online</option>
+                </select>
+              </label>
+
+              <div className="flex items-end">
+                <button onClick={crearCategoria} className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-bold text-white">
+                  Añadir categoría
+                </button>
               </div>
-            )}
-            {cTipo === "ingreso" && (
-              <label className="mt-2 flex items-center gap-1.5 text-xs text-zinc-400"><input type="checkbox" checked={cOnline} onChange={(e) => setCOnline(e.target.checked)} className="accent-red-600" /> Es negocio online</label>
-            )}
+            </div>
+            <p className="mt-2 text-xs text-zinc-600">
+              La naturaleza (corriente/fijo/inversión) afecta al runway y al modelo 130; el negocio
+              (online/presencial) separa los ingresos y gastos en Reportes e Impuestos.
+            </p>
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { eur } from "@/lib/formato";
 
 interface Factura {
   id: number;
@@ -26,20 +27,27 @@ interface Persona {
   codigo: string;
   nombre: string;
 }
-
-const eur = (n: number) =>
-  new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
+interface Saldo {
+  pendiente: number;
+  fecha_ultimo_cobro: string | null;
+}
 
 const inputCls =
   "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
-type Filtro = "todas" | "borrador" | "emitidas" | "pendientes";
+type Filtro = "todas" | "borrador" | "emitidas" | "pendientes" | "cobradas";
+
+function fechaCorta(iso: string | null): string {
+  return iso ? new Date(iso).toLocaleDateString("es-ES") : "—";
+}
 
 export default function FacturasPage() {
   const router = useRouter();
   const [facturas, setFacturas] = useState<Factura[]>([]);
-  const [pendientes, setPendientes] = useState<Map<number, number>>(new Map());
+  const [saldos, setSaldos] = useState<Map<number, Saldo>>(new Map());
   const [filtro, setFiltro] = useState<Filtro>("todas");
+  const [busqueda, setBusqueda] = useState("");
+  const [mes, setMes] = useState(""); // "" = todos, formato YYYY-MM
   const [cargando, setCargando] = useState(true);
 
   // Catálogos para crear
@@ -60,21 +68,28 @@ export default function FacturasPage() {
   const [nPersona, setNPersona] = useState("ethos");
 
   const cargar = useCallback(async () => {
-    const [f, saldos, cli, cat, per] = await Promise.all([
+    // fecha_ultimo_cobro requiere la migración mejoras_kanban_canal.sql;
+    // si aún no está, se recae en la consulta antigua.
+    let s = await supabase.from("v_facturas_saldo").select("id, pendiente, fecha_ultimo_cobro");
+    if (s.error) s = await supabase.from("v_facturas_saldo").select("id, pendiente");
+    const [f, cli, cat, per] = await Promise.all([
       supabase
         .from("facturas")
         .select("id, numero, fecha_emision, concepto, total, canal, clientes(nombre)")
         .order("fecha_emision", { ascending: false })
-        .limit(200),
-      supabase.from("v_facturas_saldo").select("id, pendiente").gt("pendiente", 0.01),
+        .limit(500),
       supabase.from("clientes").select("id, nombre").is("fecha_baja", null).order("nombre"),
       supabase.from("categorias").select("id, nombre").eq("tipo", "ingreso").eq("activa", true).order("nombre"),
       supabase.from("personas").select("codigo, nombre").eq("activa", true).order("orden"),
     ]);
     setFacturas((f.data as unknown as Factura[]) ?? []);
-    const m = new Map<number, number>();
-    for (const s of saldos.data ?? []) m.set(s.id as number, Number(s.pendiente));
-    setPendientes(m);
+    const m = new Map<number, Saldo>();
+    for (const row of s.data ?? [])
+      m.set(row.id as number, {
+        pendiente: Number(row.pendiente),
+        fecha_ultimo_cobro: (row as Partial<Saldo>).fecha_ultimo_cobro ?? null,
+      });
+    setSaldos(m);
     setClientes((cli.data as Cliente[]) ?? []);
     setCategorias((cat.data as Categoria[]) ?? []);
     setPersonas((per.data as Persona[]) ?? []);
@@ -112,13 +127,22 @@ export default function FacturasPage() {
   }
 
   const visibles = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
     return facturas.filter((f) => {
-      if (filtro === "borrador") return !f.numero;
-      if (filtro === "emitidas") return !!f.numero;
-      if (filtro === "pendientes") return pendientes.has(f.id);
+      const saldo = saldos.get(f.id);
+      const debe = (saldo?.pendiente ?? 0) > 0.01;
+      if (filtro === "borrador" && f.numero) return false;
+      if (filtro === "emitidas" && !f.numero) return false;
+      if (filtro === "pendientes" && !debe) return false;
+      if (filtro === "cobradas" && (debe || !f.numero)) return false;
+      if (mes && !f.fecha_emision.startsWith(mes)) return false;
+      if (q) {
+        const texto = `${f.numero ?? ""} ${f.clientes?.nombre ?? ""} ${f.concepto}`.toLowerCase();
+        if (!texto.includes(q)) return false;
+      }
       return true;
     });
-  }, [facturas, filtro, pendientes]);
+  }, [facturas, filtro, saldos, busqueda, mes]);
 
   const chip = (v: Filtro, etiqueta: string) => (
     <button
@@ -131,13 +155,42 @@ export default function FacturasPage() {
     </button>
   );
 
+  function estadoDe(f: Factura): { etiqueta: string; clase: string } {
+    const saldo = saldos.get(f.id);
+    if (!f.numero) return { etiqueta: "Borrador", clase: "bg-zinc-800 text-zinc-400" };
+    if ((saldo?.pendiente ?? 0) > 0.01)
+      return { etiqueta: `Debe ${eur(saldo!.pendiente)}`, clase: "bg-amber-950 text-amber-400" };
+    return { etiqueta: "Cobrada", clase: "bg-emerald-950 text-emerald-400" };
+  }
+
   return (
     <div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          placeholder="Buscar por nº, cliente o concepto…"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          className={`${inputCls} min-w-52 flex-1`}
+        />
+        <input
+          type="month"
+          value={mes}
+          onChange={(e) => setMes(e.target.value)}
+          className={inputCls}
+          title="Filtrar por mes de emisión"
+        />
+        {mes && (
+          <button onClick={() => setMes("")} className="rounded-lg bg-zinc-800 px-2.5 py-2 text-xs font-bold text-zinc-400">
+            ✕ mes
+          </button>
+        )}
+      </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {chip("todas", "Todas")}
         {chip("borrador", "Borradores")}
         {chip("emitidas", "Emitidas")}
         {chip("pendientes", "Pendientes de cobro")}
+        {chip("cobradas", "Cobradas")}
         <button
           onClick={() => {
             setCreando(!creando);
@@ -195,42 +248,51 @@ export default function FacturasPage() {
       )}
 
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
+        <div className="hidden grid-cols-[1fr_2fr_1fr_1fr_1fr_1.2fr] gap-2 border-b border-zinc-800 bg-zinc-900 px-4 py-2.5 md:grid">
+          {["Nº / Serie", "Cliente", "F. emisión", "F. cobro", "Importe", "Estado"].map((h) => (
+            <span key={h} className="text-[11px] font-black uppercase tracking-wider text-zinc-500 last:text-right">
+              {h}
+            </span>
+          ))}
+        </div>
         {cargando ? (
           <p className="px-4 py-8 text-center text-sm text-zinc-500">Cargando…</p>
         ) : visibles.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-zinc-500">Sin facturas.</p>
+          <p className="px-4 py-8 text-center text-sm text-zinc-500">Sin facturas con esos filtros.</p>
         ) : (
           visibles.map((f) => {
-            const pendiente = pendientes.get(f.id);
+            const saldo = saldos.get(f.id);
+            const estado = estadoDe(f);
             return (
               <button
                 key={f.id}
                 onClick={() => router.push(`/facturas/${f.id}`)}
-                className="flex w-full items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3 text-left last:border-0 hover:bg-zinc-900"
+                className="grid w-full grid-cols-[1fr_auto] items-center gap-2 border-b border-zinc-800 px-4 py-3 text-left last:border-0 hover:bg-zinc-900 md:grid-cols-[1fr_2fr_1fr_1fr_1fr_1.2fr]"
               >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-white">
+                <span className="hidden text-sm font-semibold text-sky-400 md:block">
+                  {f.numero ?? <span className="text-zinc-600">borrador</span>}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-white">
                     {f.clientes?.nombre ?? f.concepto}
-                  </p>
-                  <p className="truncate text-xs text-zinc-500">
-                    {f.numero ? (
-                      <span className="text-sky-400">{f.numero}</span>
-                    ) : (
-                      <span className="text-zinc-600">borrador</span>
-                    )}
-                    {" · "}
-                    {new Date(f.fecha_emision).toLocaleDateString("es-ES")}
+                  </span>
+                  <span className="block truncate text-xs text-zinc-500 md:hidden">
+                    {f.numero ?? "borrador"} · {fechaCorta(f.fecha_emision)}
                     {f.canal ? ` · ${f.canal}` : ""}
-                  </p>
-                </div>
-                <div className="shrink-0 text-right">
-                  <p className="text-sm font-bold text-white">{eur(Number(f.total))}</p>
-                  {pendiente ? (
-                    <p className="text-xs font-bold text-amber-400">debe {eur(pendiente)}</p>
-                  ) : (
-                    <p className="text-xs text-emerald-500">cobrada</p>
-                  )}
-                </div>
+                  </span>
+                  <span className="hidden truncate text-xs text-zinc-600 md:block">{f.concepto}</span>
+                </span>
+                <span className="hidden text-sm text-zinc-400 md:block">{fechaCorta(f.fecha_emision)}</span>
+                <span className="hidden text-sm text-zinc-400 md:block">
+                  {saldo?.fecha_ultimo_cobro ? fechaCorta(saldo.fecha_ultimo_cobro) : "—"}
+                </span>
+                <span className="hidden text-sm font-bold text-white md:block">{eur(Number(f.total))}</span>
+                <span className="text-right">
+                  <span className={`inline-block rounded-full px-3 py-1 text-xs font-bold ${estado.clase}`}>
+                    {estado.etiqueta}
+                  </span>
+                  <span className="mt-0.5 block text-sm font-bold text-white md:hidden">{eur(Number(f.total))}</span>
+                </span>
               </button>
             );
           })

@@ -61,30 +61,39 @@ function Seccion(props: { titulo: string; children: React.ReactNode }) {
   );
 }
 
+interface FacturaCanal {
+  fecha_emision: string;
+  total: number;
+  canal: "online" | "presencial" | null;
+}
+
 export default function Reportes() {
   const sesionOk = useSesion();
   const [flujo, setFlujo] = useState<FlujoFila[]>([]);
   const [reparto, setReparto] = useState<RepartoFila[]>([]);
   const [factMensual, setFactMensual] = useState<FactMes[]>([]);
   const [gastos, setGastos] = useState<GastoDetalle[]>([]);
+  const [factCanal, setFactCanal] = useState<FacturaCanal[]>([]);
   const [canalGasto, setCanalGasto] = useState<"todos" | "presencial" | "online">("todos");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sesionOk) return;
     (async () => {
-      const [f, r, fm, g] = await Promise.all([
+      const [f, r, fm, g, fc] = await Promise.all([
         supabase.from("v_flujo_mensual").select("*").order("mes", { ascending: false }).limit(12),
         supabase.from("v_reparto_mensual").select("*").order("mes", { ascending: false }).limit(60),
         supabase.from("v_facturacion_mensual").select("*").order("mes", { ascending: false }).limit(60),
         supabase.from("v_gastos_detalle").select("*"),
+        supabase.from("facturas").select("fecha_emision, total, canal"),
       ]);
-      const fallo = f.error ?? r.error ?? fm.error ?? g.error;
+      const fallo = f.error ?? r.error ?? fm.error ?? g.error ?? fc.error;
       if (fallo) return setError(fallo.message);
       setFlujo(((f.data as FlujoFila[]) ?? []).reverse());
       setReparto((r.data as RepartoFila[]) ?? []);
       setFactMensual((fm.data as FactMes[]) ?? []);
       setGastos((g.data as GastoDetalle[]) ?? []);
+      setFactCanal((fc.data as FacturaCanal[]) ?? []);
     })();
   }, [sesionOk]);
 
@@ -133,6 +142,17 @@ export default function Reportes() {
   }
   const categoriasOrden = [...porCategoria.entries()].sort((a, b) => b[1].total - a[1].total);
   const totalGastoAnyo = categoriasOrden.reduce((s, [, c]) => s + c.total, 0);
+
+  // Resultado del año por negocio (online vs presencial)
+  const porCanal = { online: { ingresos: 0, gastos: 0 }, presencial: { ingresos: 0, gastos: 0 } };
+  for (const f of factCanal) {
+    if (new Date(f.fecha_emision).getFullYear() !== anyo) continue;
+    porCanal[f.canal === "online" ? "online" : "presencial"].ingresos += Number(f.total);
+  }
+  for (const g of gastos) {
+    if (new Date(g.mes).getFullYear() !== anyo) continue;
+    porCanal[g.canal === "online" ? "online" : "presencial"].gastos += Number(g.total);
+  }
 
   return (
     <Shell titulo="Reportes">
@@ -201,6 +221,44 @@ export default function Reportes() {
               ))}
             {factAnyo.size === 0 && <p className="text-sm text-zinc-600">Sin facturación este año.</p>}
           </div>
+        </Seccion>
+
+        {/* Resultado por negocio: online vs presencial */}
+        <Seccion titulo={`Resultado ${anyo} por negocio`}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(
+              [
+                ["online", "Online", "bg-blue-950 text-blue-400"],
+                ["presencial", "Presencial", "bg-red-950 text-red-400"],
+              ] as const
+            ).map(([id, etiqueta, badge]) => {
+              const v = porCanal[id];
+              const neto = v.ingresos - v.gastos;
+              return (
+                <div key={id} className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4">
+                  <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${badge}`}>{etiqueta}</span>
+                  <dl className="mt-3 flex flex-col gap-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <dt className="text-zinc-500">Facturado</dt>
+                      <dd className="font-semibold text-emerald-400">{eur(v.ingresos)}</dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-zinc-500">Gastos</dt>
+                      <dd className="font-semibold text-red-400">{eur(v.gastos)}</dd>
+                    </div>
+                    <div className="flex justify-between border-t border-zinc-800 pt-1.5">
+                      <dt className="font-bold text-zinc-300">Neto</dt>
+                      <dd className={`font-black ${neto < 0 ? "text-red-400" : "text-white"}`}>{eur(neto)}</dd>
+                    </div>
+                  </dl>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-xs text-zinc-600">
+            Ingresos por el canal de la factura; gastos por el canal del gasto (los históricos del
+            Excel se recuperan con scripts/reetiquetar-onl.mjs).
+          </p>
         </Seccion>
 
         {/* Gasto desglosado por categoría y subcategoría */}

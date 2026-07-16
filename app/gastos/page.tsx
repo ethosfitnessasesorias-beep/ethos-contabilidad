@@ -42,6 +42,7 @@ export default function Gastos() {
   const [catGrupoNuevo, setCatGrupoNuevo] = useState("");
   const [catFijo, setCatFijo] = useState(false);
   const [catInversion, setCatInversion] = useState(false);
+  const [catOnline, setCatOnline] = useState(false);
 
   function avisar(tipo: "ok" | "error", texto: string) {
     setToast({ tipo, texto });
@@ -115,6 +116,7 @@ export default function Gastos() {
       nombre,
       es_fijo: catFijo,
       es_inversion: catInversion,
+      es_online: catOnline,
     });
     if (error) return avisar("error", error.message);
     avisar("ok", `Categoría "${nombre}" creada ✓`);
@@ -122,6 +124,7 @@ export default function Gastos() {
     setCatGrupoNuevo("");
     setCatFijo(false);
     setCatInversion(false);
+    setCatOnline(false);
     setCreandoCat(false);
     cargar();
   }
@@ -270,6 +273,15 @@ export default function Gastos() {
                 className="accent-red-600"
               />
               Inversión
+            </label>
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <input
+                type="checkbox"
+                checked={catOnline}
+                onChange={(e) => setCatOnline(e.target.checked)}
+                className="accent-red-600"
+              />
+              Es negocio online (los gastos de esta categoría cuentan como online)
             </label>
             {catInversion && (
               <p className="rounded-lg bg-amber-950 px-3 py-2 text-xs text-amber-300">

@@ -51,6 +51,7 @@ export default function PaginaFactura() {
   const [eConcepto, setEConcepto] = useState("");
   const [eBase, setEBase] = useState("");
   const [eIva, setEIva] = useState(0.21);
+  const [eIrpf, setEIrpf] = useState(0);
   const [eCliNombre, setECliNombre] = useState("");
   const [eCliNif, setECliNif] = useState("");
   const [eCliDireccion, setECliDireccion] = useState("");
@@ -82,6 +83,7 @@ export default function PaginaFactura() {
     setEConcepto(factura.concepto);
     setEBase(String(factura.base));
     setEIva(Number(factura.iva_pct));
+    setEIrpf(Number(factura.irpf_pct));
     setECliNombre(factura.clientes?.nombre ?? "");
     setECliNif(factura.clientes?.nif ?? "");
     setECliDireccion(factura.clientes?.direccion ?? "");
@@ -94,7 +96,7 @@ export default function PaginaFactura() {
     if (!Number.isFinite(base)) return setError("Base no válida.");
     const f = await supabase
       .from("facturas")
-      .update({ concepto: eConcepto.trim() || factura.concepto, base: Math.round(base * 100) / 100, iva_pct: eIva })
+      .update({ concepto: eConcepto.trim() || factura.concepto, base: Math.round(base * 100) / 100, iva_pct: eIva, irpf_pct: eIrpf })
       .eq("id", facturaId);
     if (f.error) return setError(f.error.message);
     if (factura.cliente_id) {
@@ -240,7 +242,20 @@ export default function PaginaFactura() {
               <option value={0.04}>IVA 4%</option>
               <option value={0}>Sin IVA</option>
             </select>
+            <select
+              value={eIrpf}
+              onChange={(e) => setEIrpf(Number(e.target.value))}
+              className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-white outline-none"
+            >
+              <option value={0}>Sin IRPF</option>
+              <option value={0.07}>IRPF 7%</option>
+              <option value={0.15}>IRPF 15%</option>
+              <option value={0.19}>IRPF 19%</option>
+            </select>
           </div>
+          <p className="text-xs text-zinc-500">
+            Puedes combinar IVA + IRPF (p. ej. una factura de servicios profesionales lleva ambos).
+          </p>
           {factura.cliente_id ? (
             <>
               <input
