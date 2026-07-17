@@ -119,6 +119,9 @@ export default function ContenidoPage() {
   const [modal, setModal] = useState(false);
   const [ed, setEd] = useState<Contenido | null>(null);
   const [f, setF] = useState<Partial<Contenido>>({});
+  const [feedUrl, setFeedUrl] = useState<string | null>(null);
+  const [verSync, setVerSync] = useState(false);
+  const [copiado, setCopiado] = useState(false);
 
   const sensores = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -144,6 +147,11 @@ export default function ContenidoPage() {
     setItems((c.data as Contenido[]) ?? []);
     setPersonas((per.data as Persona[]) ?? []);
     setClientes((cli.data as ClienteRef[]) ?? []);
+
+    // Enlace del feed para suscribir en Google Calendar
+    const { data: cfg } = await supabase.from("contenido_config").select("feed_token").eq("id", 1).single();
+    const token = (cfg as { feed_token: string } | null)?.feed_token;
+    if (token && typeof window !== "undefined") setFeedUrl(`${window.location.origin}/api/calendario/${token}`);
   }, []);
 
   useEffect(() => {
@@ -315,6 +323,51 @@ export default function ContenidoPage() {
         </div>
 
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
+
+        {/* Sincronizar con Google Calendar (feed .ics) */}
+        <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+          <button onClick={() => setVerSync((v) => !v)} className="flex w-full items-center justify-between text-left">
+            <span className="flex items-center gap-2 text-sm font-bold text-white">
+              <span className="grid h-6 w-6 place-items-center rounded-md bg-sky-950 text-sky-400">📅</span>
+              Sincronizar con Google Calendar
+            </span>
+            <span className="text-xs text-zinc-500">{verSync ? "ocultar" : "cómo"}</span>
+          </button>
+          {verSync && (
+            <div className="mt-3 border-t border-zinc-800 pt-3">
+              <p className="mb-2 text-xs text-zinc-400">
+                Las publicaciones con fecha aparecen solas en tu Google Calendar (calendario aparte,
+                se actualiza cada pocas horas). Añádelo una vez:
+              </p>
+              <ol className="mb-3 ml-4 list-decimal space-y-1 text-xs text-zinc-400">
+                <li>Copia el enlace de abajo.</li>
+                <li>En Google Calendar (ordenador): <b>Otros calendarios</b> → <b>+</b> → <b>Suscribirse mediante URL</b>.</li>
+                <li>Pega el enlace y listo.</li>
+              </ol>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="flex-1 overflow-x-auto whitespace-nowrap rounded-lg bg-zinc-950 px-3 py-2 text-xs text-zinc-300">
+                  {feedUrl ?? "Cargando…"}
+                </code>
+                <button
+                  onClick={() => {
+                    if (feedUrl) {
+                      navigator.clipboard.writeText(feedUrl).then(() => {
+                        setCopiado(true);
+                        setTimeout(() => setCopiado(false), 2000);
+                      });
+                    }
+                  }}
+                  className="rounded-lg bg-zinc-800 px-3 py-2 text-xs font-bold text-zinc-200"
+                >
+                  {copiado ? "✓ Copiado" : "Copiar"}
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] text-zinc-600">
+                Es de solo lectura (los cambios se hacen aquí, no en Google). Trátalo como privado: quien tenga el enlace ve el calendario.
+              </p>
+            </div>
+          )}
+        </div>
 
         {vista === "tablero" ? (
           <DndContext sensors={sensores} onDragEnd={alSoltar}>
