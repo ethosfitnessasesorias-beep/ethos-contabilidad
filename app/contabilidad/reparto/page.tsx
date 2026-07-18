@@ -161,19 +161,11 @@ export default function RepartoPage() {
   }, [colab, anyo]);
   const totalColab = colabAnyo.reduce((s, c) => s + c.aPagar, 0);
 
-  const maxNomina = Math.max(
-    1,
-    ...meses.flatMap(([, p]) => [
-      Math.max(0, nomina(Number(p.luis?.beneficio ?? 0))),
-      Math.max(0, nomina(Number(p.david?.beneficio ?? 0))),
-    ])
-  );
-
   const stat = (etiqueta: string, valor: string, color: string, sub?: string) => (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
       <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{etiqueta}</p>
-      <p className={`mt-1 text-2xl font-black ${color}`}>{valor}</p>
-      {sub && <p className="mt-0.5 text-xs text-zinc-600">{sub}</p>}
+      <p className={`mt-0.5 text-lg font-black ${color}`}>{valor}</p>
+      {sub && <p className="mt-0.5 text-[11px] text-zinc-600">{sub}</p>}
     </div>
   );
 
@@ -212,42 +204,6 @@ export default function RepartoPage() {
         {stat("A colaboradores · " + anyo, eurEntero(totalColab), "text-sky-400", "Alex y empleados")}
         {stat("Hucha (saldo)", eurEntero(huchaSaldo), huchaSaldo < 0 ? "text-red-400" : "text-white", "20% acum. − inversión")}
       </div>
-
-      {/* Gráfica de nómina mensual */}
-      {meses.length > 0 && (
-        <div className="mb-5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-black uppercase tracking-wide text-zinc-400">Nómina por mes</h3>
-            <div className="flex gap-4 text-xs">
-              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" /> Luis</span>
-              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-sky-500" /> David</span>
-            </div>
-          </div>
-          <div className="flex items-end gap-2 overflow-x-auto pb-2" style={{ height: 180 }}>
-            {meses.map(([mes, par]) => {
-              const nl = Math.max(0, nomina(Number(par.luis?.beneficio ?? 0)));
-              const nd = Math.max(0, nomina(Number(par.david?.beneficio ?? 0)));
-              return (
-                <div key={mes} className="flex min-w-12 flex-1 flex-col items-center gap-1">
-                  <div className="flex w-full flex-1 items-end justify-center gap-1">
-                    <div
-                      className="w-1/2 max-w-6 rounded-t bg-emerald-500"
-                      style={{ height: `${(nl / maxNomina) * 100}%` }}
-                      title={`Luis ${eur(nl)}`}
-                    />
-                    <div
-                      className="w-1/2 max-w-6 rounded-t bg-sky-500"
-                      style={{ height: `${(nd / maxNomina) * 100}%` }}
-                      title={`David ${eur(nd)}`}
-                    />
-                  </div>
-                  <span className="text-[10px] capitalize text-zinc-500">{MESCORTO(mes)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* Detalle por mes */}
       {meses.length === 0 ? (
@@ -290,14 +246,14 @@ export default function RepartoPage() {
                           </button>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
-                          <div className="rounded-lg bg-emerald-950/40 px-3 py-2">
+                          <div className="rounded-lg bg-emerald-950/40 px-3 py-1.5">
                             <p className="text-[10px] font-bold uppercase text-emerald-500/80">Nómina (80%)</p>
-                            <p className="text-lg font-black text-emerald-400">{eur(nom)}</p>
+                            <p className="text-base font-black text-emerald-400">{eur(nom)}</p>
                             {ben <= 0 && <p className="text-[10px] text-zinc-500">sin beneficio este mes</p>}
                           </div>
-                          <div className="rounded-lg bg-sky-950/40 px-3 py-2">
+                          <div className="rounded-lg bg-sky-950/40 px-3 py-1.5">
                             <p className="text-[10px] font-bold uppercase text-sky-500/80">A hucha (20%)</p>
-                            <p className="text-lg font-black text-sky-400">{eur(huc)}</p>
+                            <p className="text-base font-black text-sky-400">{eur(huc)}</p>
                           </div>
                         </div>
                         {nom > 0 && (
@@ -390,7 +346,7 @@ export default function RepartoPage() {
       <div className="rounded-2xl border border-sky-900 bg-sky-950/30 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-black text-white">Hucha de la empresa</h3>
-          <span className={`text-2xl font-black ${huchaSaldo < 0 ? "text-red-400" : "text-white"}`}>{eur(huchaSaldo)}</span>
+          <span className={`text-xl font-black ${huchaSaldo < 0 ? "text-red-400" : "text-white"}`}>{eur(huchaSaldo)}</span>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
           <div className="rounded-lg bg-zinc-950/60 px-3 py-2">
