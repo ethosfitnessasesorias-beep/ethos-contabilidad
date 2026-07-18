@@ -66,9 +66,6 @@ export default function CrmPage() {
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [ed, setEd] = useState<Cli | null>(null);
   const [f, setF] = useState<Partial<Cli>>({});
-  const [feedUrl, setFeedUrl] = useState<string | null>(null);
-  const [verWebhook, setVerWebhook] = useState(false);
-  const [copiado, setCopiado] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
@@ -78,9 +75,6 @@ export default function CrmPage() {
       return;
     }
     setCli((data as Cli[]) ?? []);
-    const { data: cfg } = await supabase.from("crm_config").select("intake_token").eq("id", 1).single();
-    const token = (cfg as { intake_token: string } | null)?.intake_token;
-    if (token && typeof window !== "undefined") setFeedUrl(`${window.location.origin}/api/intake/${token}`);
   }, []);
 
   useEffect(() => {
@@ -103,6 +97,25 @@ export default function CrmPage() {
     datos.estado = f.fecha_baja ? "baja" : (ed.estado === "lead" && !f.fecha_compra ? "lead" : "cliente");
     const { error } = await supabase.from("clientes").update(datos).eq("id", ed.id);
     if (error) return setError(error.message);
+    setEd(null);
+    cargar();
+  }
+  async function borrar() {
+    if (!ed) return;
+    const nom = `${ed.nombre} ${ed.apellidos ?? ""}`.trim();
+    if (!confirm(`¿Borrar a ${nom} de forma permanente?\n\nEsto no se puede deshacer. Úsalo solo para pruebas o registros que no son clientes.`)) return;
+    setError(null);
+    const { data, error } = await supabase.from("clientes").delete().eq("id", ed.id).select();
+    if (error) {
+      setError(/foreign key|violates|referenced/i.test(error.message)
+        ? "No se puede borrar: tiene facturas u otros registros asociados. Da de baja al cliente en su lugar."
+        : error.message);
+      return;
+    }
+    if (!data || data.length === 0) {
+      setError("No se pudo borrar (la base de datos no lo permite). Avísame y habilito el permiso de borrado.");
+      return;
+    }
     setEd(null);
     cargar();
   }
@@ -212,27 +225,6 @@ export default function CrmPage() {
         </div>
 
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
-
-        {/* Webhook del formulario */}
-        <div className="mb-5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <button onClick={() => setVerWebhook((v) => !v)} className="flex w-full items-center justify-between text-left">
-            <span className="flex items-center gap-2 text-sm font-bold text-white">
-              <span className="grid h-6 w-6 place-items-center rounded-md bg-emerald-950 text-emerald-400">⚡</span>
-              Conectar el Google Form (entrada automática)
-            </span>
-            <span className="text-xs text-zinc-500">{verWebhook ? "ocultar" : "cómo"}</span>
-          </button>
-          {verWebhook && (
-            <div className="mt-3 border-t border-zinc-800 pt-3 text-xs text-zinc-400">
-              <p className="mb-2">Cada respuesta del formulario entra sola como cliente. Se configura una vez con un Apps Script en la hoja de respuestas. Tu enlace de entrada (privado):</p>
-              <div className="flex flex-wrap items-center gap-2">
-                <code className="flex-1 overflow-x-auto whitespace-nowrap rounded-lg bg-zinc-950 px-3 py-2 text-zinc-300">{feedUrl ?? "Cargando…"}</code>
-                <button onClick={() => { if (feedUrl) navigator.clipboard.writeText(feedUrl).then(() => { setCopiado(true); setTimeout(() => setCopiado(false), 2000); }); }} className="rounded-lg bg-zinc-800 px-3 py-2 font-bold text-zinc-200">{copiado ? "✓" : "Copiar"}</button>
-              </div>
-              <p className="mt-2 text-[11px] text-zinc-600">El script para pegar en Google está en <code>docs/apps-script-formulario.md</code> del repo. Trata el enlace como privado.</p>
-            </div>
-          )}
-        </div>
 
         {/* Resumen compacto */}
         <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-2.5">
@@ -373,11 +365,12 @@ export default function CrmPage() {
               <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-red-400">Fecha de baja</span><input type="date" value={fEd("fecha_baja")} onChange={(e) => setF({ ...f, fecha_baja: e.target.value })} className={inputCls} /></label>
             </div>
             <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Objetivo</span><textarea rows={2} value={fEd("objetivo")} onChange={(e) => setF({ ...f, objetivo: e.target.value })} className={inputCls} /></label>
-            <div className="flex gap-2 border-t border-zinc-800 pt-3">
+            <div className="flex items-center gap-2 border-t border-zinc-800 pt-3">
               <button onClick={guardarEditar} className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">Guardar</button>
               {f.fecha_baja ? null : (
-                <button onClick={() => setF({ ...f, fecha_baja: new Date().toISOString().slice(0, 10) })} className="rounded-xl bg-zinc-800 px-4 text-sm font-bold text-red-400">Dar de baja hoy</button>
+                <button onClick={() => setF({ ...f, fecha_baja: new Date().toISOString().slice(0, 10) })} className="rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-bold text-red-400">Dar de baja hoy</button>
               )}
+              <button onClick={borrar} title="Borrar permanentemente" className="rounded-xl border border-red-900 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-950">Borrar</button>
             </div>
           </div>
         </Modal>
