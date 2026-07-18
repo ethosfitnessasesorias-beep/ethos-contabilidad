@@ -176,14 +176,19 @@ export default function FichaCliente() {
     if (!destino) return;
     if (
       !window.confirm(
-        `"${cliente.nombre}" desaparecerá y todas sus facturas pasarán a "${destino.nombre}". ¿Seguro?`
+        `"${cliente.nombre}" desaparecerá y todo su historial (facturas, actividades, oportunidades y contenido) pasará a "${destino.nombre}". ¿Seguro?`
       )
     )
       return;
-    const mov = await supabase.from("facturas").update({ cliente_id: fusionId }).eq("cliente_id", clienteId);
-    if (mov.error) return avisar("error", mov.error.message);
-    const del = await supabase.from("clientes").delete().eq("id", clienteId);
+    // Mueve TODO lo que apunta a este cliente antes de borrarlo. Si no, las
+    // actividades se borrarían en cascada y el borrado fallaría por las facturas.
+    for (const tabla of ["facturas", "deals", "actividades", "contenido"]) {
+      const { error } = await supabase.from(tabla).update({ cliente_id: fusionId }).eq("cliente_id", clienteId);
+      if (error) return avisar("error", `No se pudo mover ${tabla}: ${error.message}`);
+    }
+    const del = await supabase.from("clientes").delete().eq("id", clienteId).select();
     if (del.error) return avisar("error", del.error.message);
+    if (!del.data || del.data.length === 0) return avisar("error", "No se pudo borrar el duplicado (permiso denegado).");
     router.push(`/clientes/${fusionId}`);
   }
 
