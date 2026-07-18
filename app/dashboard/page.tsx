@@ -6,233 +6,176 @@ import { useSesion } from "@/lib/useSesion";
 import { Shell } from "../shell";
 import { type Canal } from "@/lib/tipos";
 
-interface NegocioFila {
-  canal: Canal;
-  facturado: number;
-  cobrado: number;
-  leads_mes: number;
-  tasa_cierre: number | null;
-}
+interface NegocioFila { canal: Canal; facturado: number; cobrado: number }
+interface Saldo { codigo: string; nombre: string; es_transito: boolean; saldo: number }
+interface Kpis { caja_libre: number; iva_pendiente: number; irpf_pendiente: number; hucha_actual: number; runway_meses: number | null; gasto_fijo_mensual: number }
+interface Reparto { atribucion: string; balance: number; a_entrenador: number }
+interface Actividad { id: number; titulo: string; cuando: string }
+interface Cli { fecha_inicio: string | null; fecha_baja: string | null; estado: string | null }
 
-interface Actividad {
-  id: number;
-  tipo: string;
-  titulo: string;
-  cuando: string;
-}
+const eur0 = (n: number) =>
+  new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
 
-interface Saldo {
-  codigo: string;
-  nombre: string;
-  es_transito: boolean;
-  saldo: number;
-}
-
-const eur = (n: number) =>
-  new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
-const eurC = (n: number) =>
-  new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" }).format(n);
-
-function PanelNegocio({
-  titulo,
-  color,
-  datos,
-  gasto,
-}: {
-  titulo: string;
-  color: string;
-  datos: NegocioFila | undefined;
-  gasto: number;
-}) {
-  const ingreso = Number(datos?.facturado ?? 0);
-  const neto = ingreso - gasto;
+function Kpi({ label, valor, color = "text-white", sub, alarma }: { label: string; valor: string; color?: string; sub?: string; alarma?: boolean }) {
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-      <div className="mb-4 flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 rounded-full ${color}`} />
-        <h2 className="text-lg font-black text-white">{titulo}</h2>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-xl bg-emerald-950/40 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-500/80">Ingresos (mes)</p>
-          <p className="mt-1.5 text-2xl font-black text-emerald-400">{eur(ingreso)}</p>
-        </div>
-        <div className="rounded-xl bg-red-950/40 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-red-500/80">Gastos (mes)</p>
-          <p className="mt-1.5 text-2xl font-black text-red-400">{eur(gasto)}</p>
-        </div>
-        <div className="rounded-xl bg-zinc-900/60 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Neto (mes)</p>
-          <p className={`mt-1.5 text-2xl font-black ${neto < 0 ? "text-red-400" : "text-white"}`}>{eur(neto)}</p>
-        </div>
-        <div className="rounded-xl bg-zinc-900/60 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Cobrado / Leads</p>
-          <p className="mt-1.5 text-2xl font-black text-white">{eur(Number(datos?.cobrado ?? 0))}</p>
-          <p className="mt-0.5 text-xs text-zinc-600">{datos?.leads_mes ?? 0} leads este mes</p>
-        </div>
-      </div>
+    <div className={`rounded-xl border p-3 ${alarma ? "border-red-700 bg-red-950" : "border-zinc-800 bg-zinc-900/40"}`}>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{label}</p>
+      <p className={`mt-0.5 text-lg font-black ${alarma ? "text-red-300" : color}`}>{valor}</p>
+      {sub && <p className="mt-0.5 text-[11px] leading-tight text-zinc-600">{sub}</p>}
     </div>
   );
 }
 
 export default function Dashboard() {
   const sesionOk = useSesion();
-  const [negocio, setNegocio] = useState<NegocioFila[]>([]);
-  const [actividades, setActividades] = useState<Actividad[]>([]);
-  const [gastosCanal, setGastosCanal] = useState<{ online: number; presencial: number }>({ online: 0, presencial: 0 });
+  const [neg, setNeg] = useState<NegocioFila[]>([]);
   const [saldos, setSaldos] = useState<Saldo[]>([]);
+  const [kpis, setKpis] = useState<Kpis | null>(null);
+  const [reparto, setReparto] = useState<Reparto[]>([]);
+  const [acts, setActs] = useState<Actividad[]>([]);
+  const [clientes, setClientes] = useState<Cli[]>([]);
+  const [pendiente, setPendiente] = useState(0);
+  const [evo, setEvo] = useState<{ mes: string; facturado: number; cobrado: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sesionOk) return;
     (async () => {
-      const desde = new Date();
-      desde.setDate(1);
-      const desdeISO = desde.toISOString().slice(0, 10);
-      const hastaISO = new Date(desde.getFullYear(), desde.getMonth() + 1, 1).toISOString().slice(0, 10);
-      const [n, a, g, s] = await Promise.all([
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      // "YYYY-MM" de hace d meses (en horario local, sin líos de zona horaria)
+      const ym = (d: number) => { const dt = new Date(now.getFullYear(), now.getMonth() + d, 1); return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}`; };
+      const mesActual = ym(0);
+      const desde6 = `${ym(-5)}-01`;
+
+      const [n, s, k, r, a, cli, sal, fact, cob] = await Promise.all([
         supabase.from("v_dashboard_negocio").select("*"),
-        supabase
-          .from("actividades")
-          .select("id, tipo, titulo, cuando")
-          .eq("hecha", false)
-          .gte("cuando", new Date().toISOString())
-          .order("cuando")
-          .limit(6),
-        supabase.from("gastos").select("canal, total, categorias!inner(nombre)").gte("fecha", desdeISO).lt("fecha", hastaISO),
         supabase.from("v_saldo_cuentas").select("codigo, nombre, es_transito, saldo").order("id"),
+        supabase.from("v_kpis").select("*").single(),
+        supabase.from("v_reparto_mensual").select("atribucion, balance, a_entrenador").eq("mes", `${mesActual}-01`),
+        supabase.from("actividades").select("id, titulo, cuando").eq("hecha", false).gte("cuando", new Date().toISOString()).order("cuando").limit(6),
+        supabase.from("clientes").select("fecha_inicio, fecha_baja, estado"),
+        supabase.from("v_facturas_saldo").select("pendiente"),
+        supabase.from("facturas").select("fecha_emision, base").gte("fecha_emision", desde6),
+        supabase.from("cobros").select("fecha, importe").gte("fecha", desde6),
       ]);
-      if (n.error) {
-        setError(
-          n.error.message.includes("v_dashboard_negocio")
-            ? "Falta ejecutar supabase/crm.sql en el SQL Editor."
-            : n.error.message
-        );
-        return;
-      }
-      setNegocio((n.data as NegocioFila[]) ?? []);
-      setActividades((a.data as Actividad[]) ?? []);
-      const gc = { online: 0, presencial: 0 };
-      for (const row of (g.data as unknown as { canal: string | null; total: number; categorias: { nombre: string } | null }[]) ?? []) {
-        if (/mina/i.test(row.categorias?.nombre ?? "")) continue; // nóminas fuera (reparto, no gasto)
-        gc[row.canal === "online" ? "online" : "presencial"] += Number(row.total);
-      }
-      setGastosCanal(gc);
+      if (n.error) { setError(n.error.message.includes("v_dashboard_negocio") ? "Falta ejecutar supabase/crm.sql en el SQL Editor." : n.error.message); }
+      setNeg((n.data as NegocioFila[]) ?? []);
       setSaldos((s.data as Saldo[]) ?? []);
+      if (k.data) setKpis(k.data as Kpis);
+      setReparto((r.data as Reparto[]) ?? []);
+      setActs((a.data as Actividad[]) ?? []);
+      setClientes((cli.data as Cli[]) ?? []);
+      setPendiente(((sal.data as { pendiente: number }[]) ?? []).reduce((t, x) => t + Number(x.pendiente), 0));
+
+      const meses: string[] = [];
+      for (let i = 5; i >= 0; i--) meses.push(ym(-i));
+      const fm = new Map<string, number>(), cm = new Map<string, number>();
+      for (const f of (fact.data as { fecha_emision: string; base: number }[]) ?? []) { const m = f.fecha_emision.slice(0, 7); fm.set(m, (fm.get(m) ?? 0) + Number(f.base)); }
+      for (const c of (cob.data as { fecha: string; importe: number }[]) ?? []) { const m = c.fecha.slice(0, 7); cm.set(m, (cm.get(m) ?? 0) + Number(c.importe)); }
+      setEvo(meses.map((m) => ({ mes: m, facturado: fm.get(m) ?? 0, cobrado: cm.get(m) ?? 0 })));
     })();
   }, [sesionOk]);
 
-  if (sesionOk === null) {
-    return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
-  }
+  if (sesionOk === null) return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
 
-  const online = negocio.find((x) => x.canal === "online");
-  const presencial = negocio.find((x) => x.canal === "presencial");
-  const saldoDe = (codigo: string) => Number(saldos.find((s) => s.codigo === codigo)?.saldo ?? 0);
-  const saldoBanco = saldoDe("banco");
-  const saldoCaja = saldoDe("caja");
-  const saldoTransito = saldos.filter((s) => s.es_transito).reduce((t, s) => t + Number(s.saldo), 0);
+  const saldoDe = (c: string) => Number(saldos.find((x) => x.codigo === c)?.saldo ?? 0);
+  const retenido = kpis ? Number(kpis.iva_pendiente) + Number(kpis.irpf_pendiente) + Number(kpis.hucha_actual) : 0;
+  const transito = saldos.filter((s) => s.es_transito).reduce((t, s) => t + Number(s.saldo), 0);
+  const efectivoLibre = saldoDe("caja");
+  const bancoLibre = saldoDe("banco") - retenido;
+  const facturadoMes = neg.reduce((t, x) => t + Number(x.facturado), 0);
+  const cobradoMes = neg.reduce((t, x) => t + Number(x.cobrado), 0);
+  const socios = reparto.filter((r) => r.atribucion === "luis" || r.atribucion === "david");
+  const nominaMes = socios.reduce((t, r) => t + Math.max(0, Number(r.a_entrenador)), 0);
+  const beneficioMes = socios.reduce((t, r) => t + Number(r.balance), 0);
+  const mesActualISO = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+  const activos = clientes.filter((c) => !c.fecha_baja && c.estado !== "lead").length;
+  const leads = clientes.filter((c) => !c.fecha_baja && c.estado === "lead").length;
+  const altasMes = clientes.filter((c) => c.fecha_inicio?.slice(0, 7) === mesActualISO).length;
+  const bajasMes = clientes.filter((c) => c.fecha_baja?.slice(0, 7) === mesActualISO).length;
+  const maxEvo = Math.max(1, ...evo.flatMap((e) => [e.facturado, e.cobrado]));
   const mesTexto = new Date().toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+  const runwayAlarma = kpis?.runway_meses != null && Number(kpis.runway_meses) < 3;
 
   return (
     <Shell titulo="Dashboard">
       <div className="px-5 py-6 md:px-8">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-black tracking-tight text-white">Dashboard</h1>
-            <p className="mt-1 text-sm capitalize text-zinc-500">Resumen de rendimiento · {mesTexto}</p>
-          </div>
+        <div className="mb-5">
+          <h1 className="text-3xl font-black tracking-tight text-white">Dashboard</h1>
+          <p className="mt-1 text-sm capitalize text-zinc-500">Resumen del negocio · {mesTexto}</p>
         </div>
 
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
 
-        {/* Saldos de control */}
-        <div className="mb-4 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Cuenta banco Ethos</p>
-            <p className={`mt-1.5 text-2xl font-black ${saldoBanco < 0 ? "text-red-400" : "text-white"}`}>{eurC(saldoBanco)}</p>
-          </div>
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Efectivo</p>
-            <p className={`mt-1.5 text-2xl font-black ${saldoCaja < 0 ? "text-red-400" : "text-white"}`}>{eurC(saldoCaja)}</p>
-          </div>
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">En tránsito (TPV + Stripe)</p>
-            <p className="mt-1.5 text-2xl font-black text-zinc-300">{eurC(saldoTransito)}</p>
-            <p className="mt-0.5 text-xs text-zinc-600">pendiente de liquidar al banco</p>
-          </div>
+        {/* Dinero disponible */}
+        <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-zinc-600">Dinero disponible</p>
+        <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <Kpi label="Caja libre (usable)" valor={eur0(kpis?.caja_libre ?? 0)} sub={`Efectivo ${eur0(efectivoLibre)} · Banco ${eur0(bancoLibre)}`} />
+          <Kpi label="Retenido" valor={eur0(retenido)} color="text-amber-400" sub="impuestos + hucha (no tocar)" />
+          <Kpi label="En tránsito" valor={eur0(transito)} color="text-zinc-300" sub="TPV/Stripe sin liquidar" />
+          <Kpi label="Runway" valor={kpis?.runway_meses == null ? "—" : `${kpis.runway_meses} meses`} alarma={runwayAlarma} sub={`fijos ${eur0(kpis?.gasto_fijo_mensual ?? 0)}/mes`} />
         </div>
 
-        {/* Ingresos vs gastos por negocio + próximos eventos */}
+        {/* Negocio del mes */}
+        <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-zinc-600">Negocio del mes</p>
+        <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <Kpi label="Facturado" valor={eur0(facturadoMes)} />
+          <Kpi label="Cash collected" valor={eur0(cobradoMes)} color="text-emerald-400" />
+          <Kpi label="Pendiente de cobro" valor={eur0(pendiente)} color="text-amber-400" />
+          <Kpi label="Nómina del mes" valor={eur0(nominaMes)} color="text-emerald-400" sub={`beneficio ${eur0(beneficioMes)}`} />
+        </div>
+
+        {/* Clientes */}
+        <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-zinc-600">Clientes</p>
+        <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <Kpi label="Activos" valor={String(activos)} />
+          <Kpi label="Altas del mes" valor={String(altasMes)} color="text-emerald-400" />
+          <Kpi label="Bajas del mes" valor={String(bajasMes)} color={bajasMes > 0 ? "text-red-400" : "text-white"} />
+          <Kpi label="Leads" valor={String(leads)} color="text-amber-400" />
+        </div>
+
+        {/* Evolución + próximos eventos */}
         <div className="grid gap-4 lg:grid-cols-3">
-          <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
-            <PanelNegocio titulo="Online" color="bg-blue-500" datos={online} gasto={gastosCanal.online} />
-            <PanelNegocio titulo="Presencial (GYM)" color="bg-red-500" datos={presencial} gasto={gastosCanal.presencial} />
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 lg:col-span-2">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-black uppercase tracking-wide text-zinc-400">Evolución (6 meses)</h2>
+              <div className="flex gap-3 text-[11px]">
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-zinc-500" /> Facturado</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-500" /> Cobrado</span>
+              </div>
+            </div>
+            <div className="flex items-end gap-3" style={{ height: 150 }}>
+              {evo.map((e) => (
+                <div key={e.mes} className="flex flex-1 flex-col items-center gap-1">
+                  <div className="flex w-full flex-1 items-end justify-center gap-1">
+                    <div className="w-1/2 max-w-5 rounded-t bg-zinc-600" style={{ height: `${(e.facturado / maxEvo) * 100}%` }} title={`Facturado ${eur0(e.facturado)}`} />
+                    <div className="w-1/2 max-w-5 rounded-t bg-emerald-500" style={{ height: `${(e.cobrado / maxEvo) * 100}%` }} title={`Cobrado ${eur0(e.cobrado)}`} />
+                  </div>
+                  <span className="text-[10px] capitalize text-zinc-500">{new Date(e.mes + "-01T00:00:00").toLocaleDateString("es-ES", { month: "short" })}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-            <h2 className="mb-4 text-lg font-black text-white">Próximos eventos</h2>
-            {actividades.length === 0 ? (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <h2 className="mb-3 text-sm font-black uppercase tracking-wide text-zinc-400">Próximos eventos</h2>
+            {acts.length === 0 ? (
               <p className="text-sm text-zinc-600">Sin actividades programadas.</p>
             ) : (
-              <ul className="flex flex-col gap-3">
-                {actividades.map((a) => (
+              <ul className="flex flex-col gap-2.5">
+                {acts.map((a) => (
                   <li key={a.id} className="flex items-start gap-2.5">
                     <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-red-500" />
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-zinc-200">{a.titulo}</p>
-                      <p className="text-xs text-zinc-600">
-                        {new Date(a.cuando).toLocaleDateString("es-ES", { weekday: "short", hour: "2-digit", minute: "2-digit" })}
-                      </p>
+                      <p className="text-xs text-zinc-600">{new Date(a.cuando).toLocaleDateString("es-ES", { weekday: "short", hour: "2-digit", minute: "2-digit" })}</p>
                     </div>
                   </li>
                 ))}
               </ul>
             )}
           </div>
-        </div>
-
-        {/* Comparativa ingresos vs gastos del mes (barras) */}
-        <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-          <h2 className="mb-4 text-lg font-black text-white">Ingresos vs gastos del mes</h2>
-          {(() => {
-            const filas = [
-              { etiqueta: "Online", ing: Number(online?.facturado ?? 0), gas: gastosCanal.online, color: "bg-blue-500" },
-              { etiqueta: "Presencial", ing: Number(presencial?.facturado ?? 0), gas: gastosCanal.presencial, color: "bg-red-500" },
-            ];
-            const max = Math.max(1, ...filas.flatMap((f) => [f.ing, f.gas]));
-            return (
-              <div className="flex flex-col gap-4">
-                {filas.map((f) => (
-                  <div key={f.etiqueta}>
-                    <div className="mb-1 flex items-center justify-between text-xs">
-                      <span className="font-bold uppercase text-zinc-400">{f.etiqueta}</span>
-                      <span className={`font-bold ${f.ing - f.gas < 0 ? "text-red-400" : "text-emerald-400"}`}>
-                        neto {eur(f.ing - f.gas)}
-                      </span>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <div className="h-3 flex-1 overflow-hidden rounded-full bg-zinc-800">
-                          <div className="h-full rounded-full bg-emerald-600" style={{ width: `${(f.ing / max) * 100}%` }} />
-                        </div>
-                        <span className="w-20 shrink-0 text-right text-xs text-emerald-400">{eur(f.ing)}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="h-3 flex-1 overflow-hidden rounded-full bg-zinc-800">
-                          <div className="h-full rounded-full bg-red-600" style={{ width: `${(f.gas / max) * 100}%` }} />
-                        </div>
-                        <span className="w-20 shrink-0 text-right text-xs text-red-400">{eur(f.gas)}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
-          <p className="mt-4 text-xs text-zinc-600">
-            Ingresos = facturado del mes por canal · Gastos = gastos del mes por canal. Barra verde ingresos, roja gastos.
-          </p>
         </div>
       </div>
     </Shell>
