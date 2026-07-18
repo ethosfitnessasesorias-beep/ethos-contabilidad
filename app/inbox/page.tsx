@@ -63,7 +63,7 @@ export default function Inbox() {
           nivel: "alto",
           titulo: `${m.cliente ?? m.concepto} debe ${eur(Number(m.pendiente))}`,
           detalle: `${m.concepto} · desde ${new Date(m.fecha_emision).toLocaleDateString("es-ES")}`,
-          href: m.cliente_id ? `/clientes/${m.cliente_id}` : "/contabilidad/clientes",
+          href: m.cliente_id ? `/clientes/${m.cliente_id}` : "/crm",
         });
       }
 

@@ -7,7 +7,6 @@ const TABS = [
   { href: "/contabilidad", etiqueta: "Libro" },
   { href: "/contabilidad/cierre", etiqueta: "Cierre de mes" },
   { href: "/contabilidad/facturas", etiqueta: "Facturas" },
-  { href: "/contabilidad/clientes", etiqueta: "Clientes" },
   { href: "/contabilidad/finanzas", etiqueta: "Finanzas" },
   { href: "/contabilidad/reparto", etiqueta: "Reparto" },
   { href: "/contabilidad/impuestos", etiqueta: "Impuestos" },

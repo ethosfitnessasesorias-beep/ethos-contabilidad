@@ -33,8 +33,7 @@ const GRUPOS: { titulo: string; items: ItemNav[] }[] = [
     titulo: "Workspace",
     items: [
       { href: "/dashboard", etiqueta: "Dashboard", icono: ic("M4 13h6V4H4z|M14 20h6v-9h-6z|M14 8h6V4h-6z|M4 20h6v-4H4z") },
-      { href: "/contactos", etiqueta: "Contactos", icono: ic("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2|M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8|M22 21v-2a4 4 0 0 0-3-3.87|M16 3.13a4 4 0 0 1 0 7.75") },
-      { href: "/crm", etiqueta: "CRM", icono: ic("M3 3v18h18|M18 9l-5 5-3-3-4 4") },
+      { href: "/crm", etiqueta: "CRM", icono: ic("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2|M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8|M22 21v-2a4 4 0 0 0-3-3.87|M16 3.13a4 4 0 0 1 0 7.75") },
       { href: "/pipeline", etiqueta: "Pipeline", icono: ic("M3 6h18|M7 12h10|M11 18h6") },
       { href: "/actividades", etiqueta: "Actividades", icono: ic("M20 7h-9|M14 17H5|M17 17a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M7 7a3 3 0 1 0 0 .01") },
       { href: "/contenido", etiqueta: "Contenido", icono: ic("M15 10l4.55-2.28A1 1 0 0 1 21 8.62v6.76a1 1 0 0 1-1.45.9L15 14|M3 6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z") },

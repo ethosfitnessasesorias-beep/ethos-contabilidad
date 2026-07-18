@@ -7,6 +7,7 @@ import { useSesion } from "@/lib/useSesion";
 import { Shell } from "../shell";
 import Modal from "@/components/Modal";
 import { ATRIBUCIONES } from "@/lib/tipos";
+import { eur } from "@/lib/formato";
 
 interface Cli {
   id: number;
@@ -66,6 +67,7 @@ export default function CrmPage() {
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [ed, setEd] = useState<Cli | null>(null);
   const [f, setF] = useState<Partial<Cli>>({});
+  const [saldos, setSaldos] = useState<Map<number, { cobrado: number; pendiente: number }>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
@@ -75,6 +77,15 @@ export default function CrmPage() {
       return;
     }
     setCli((data as Cli[]) ?? []);
+    const { data: sal } = await supabase.from("v_facturas_saldo").select("cliente_id, cobrado, pendiente");
+    const m = new Map<number, { cobrado: number; pendiente: number }>();
+    for (const s of (sal as { cliente_id: number | null; cobrado: number; pendiente: number }[]) ?? []) {
+      if (!s.cliente_id) continue;
+      const cur = m.get(s.cliente_id) ?? { cobrado: 0, pendiente: 0 };
+      cur.cobrado += Number(s.cobrado); cur.pendiente += Number(s.pendiente);
+      m.set(s.cliente_id, cur);
+    }
+    setSaldos(m);
   }, []);
 
   useEffect(() => {
@@ -186,6 +197,20 @@ export default function CrmPage() {
     });
   }, [cli, busqueda, filtroEstado, filtroPrep, filtroCanal]);
 
+  // Dinero de los clientes visibles (respeta filtros): facturado, cobrado, media por cliente
+  const dinero = useMemo(() => {
+    let facturado = 0, cobrado = 0, pendiente = 0, conPago = 0;
+    for (const c of visibles) {
+      const s = saldos.get(c.id);
+      if (!s) continue;
+      facturado += s.cobrado + s.pendiente;
+      cobrado += s.cobrado;
+      pendiente += s.pendiente;
+      if (s.cobrado > 0.01) conPago++;
+    }
+    return { facturado, cobrado, pendiente, media: conPago ? cobrado / conPago : 0 };
+  }, [visibles, saldos]);
+
   const valorOrden = (c: Cli, k: string): string | number => {
     switch (k) {
       case "nombre": return `${c.nombre} ${c.apellidos ?? ""}`.toLowerCase();
@@ -193,6 +218,8 @@ export default function CrmPage() {
       case "entrenador": return c.entrenador;
       case "canal": return c.canal ?? "zzz";
       case "plan": return (c.tipo_plan ?? "zzz").toLowerCase();
+      case "pagado": return saldos.get(c.id)?.cobrado ?? 0;
+      case "deuda": return saldos.get(c.id)?.pendiente ?? 0;
       case "inicio": return c.fecha_inicio ? new Date(c.fecha_inicio).getTime() : 0;
       case "compra": return c.fecha_compra && c.primer_contacto ? diasEntre(c.primer_contacto, c.fecha_compra) : -1;
       default: return 0;
@@ -241,6 +268,16 @@ export default function CrmPage() {
           <span className="h-3.5 w-px bg-zinc-800" />
           {mini(humano(metricas.mediaCompra), "media hasta comprar")}
         </div>
+        {/* Dinero (respeta los filtros) */}
+        <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-2.5">
+          {mini(eur(dinero.facturado), "facturado", "text-white")}
+          <span className="h-3.5 w-px bg-zinc-800" />
+          {mini(eur(dinero.cobrado), "cash collected", "text-emerald-400")}
+          <span className="h-3.5 w-px bg-zinc-800" />
+          {mini(eur(dinero.media), "media por cliente", "text-white")}
+          <span className="h-3.5 w-px bg-zinc-800" />
+          {mini(eur(dinero.pendiente), "pendiente de cobro", "text-amber-400")}
+        </div>
         {metricas.porPrep.length > 0 && (
           <div className="mb-5 flex flex-wrap gap-x-4 gap-y-1 px-1 text-[11px] text-zinc-500">
             {metricas.porPrep.map((p) => (
@@ -276,7 +313,7 @@ export default function CrmPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-900 text-left text-[11px] font-black uppercase tracking-wider text-zinc-500">
-                {([["nombre", "Cliente"], ["estado", "Estado"], ["entrenador", "Prep."], ["canal", "Canal"], ["plan", "Plan"], ["inicio", "Con nosotros"], ["compra", "Compra"]] as [string, string][]).map(([k, et]) => (
+                {([["nombre", "Cliente"], ["estado", "Estado"], ["entrenador", "Prep."], ["canal", "Canal"], ["plan", "Plan"], ["inicio", "Con nosotros"], ["compra", "Compra"], ["pagado", "Pagado"], ["deuda", "Deuda"]] as [string, string][]).map(([k, et]) => (
                   <th key={k} onClick={() => clicOrden(k)} className="cursor-pointer whitespace-nowrap px-3 py-2.5 hover:text-zinc-300">
                     {et}{sortKey === k ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </th>
@@ -288,6 +325,7 @@ export default function CrmPage() {
               {ordenados.map((c) => {
                 const tiempo = esCliente(c) && c.fecha_inicio ? humano(diasEntre(c.fecha_inicio, c.fecha_baja ?? hoy)) : "—";
                 const compra = c.fecha_compra && c.primer_contacto ? humano(diasEntre(c.primer_contacto, c.fecha_compra)) : "—";
+                const sd = saldos.get(c.id) ?? { cobrado: 0, pendiente: 0 };
                 return (
                   <tr key={c.id} className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-900/40">
                     <td className="px-4 py-2.5">
@@ -319,6 +357,8 @@ export default function CrmPage() {
                     <td className="px-3 py-2.5 text-zinc-400">{c.tipo_plan ?? "—"}</td>
                     <td className="px-3 py-2.5 text-zinc-300">{tiempo}</td>
                     <td className="px-3 py-2.5 text-zinc-300">{compra}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-emerald-400">{sd.cobrado > 0.01 ? eur(sd.cobrado) : "—"}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5">{sd.pendiente > 0.01 ? <span className="rounded-full bg-amber-950 px-2.5 py-0.5 text-[11px] font-bold text-amber-400">{eur(sd.pendiente)}</span> : <span className="text-zinc-600">—</span>}</td>
                     {SEG.map((s) => (
                       <td key={String(s.campo)} className="px-2 py-2.5 text-center">
                         <button
@@ -334,7 +374,7 @@ export default function CrmPage() {
                 );
               })}
               {visibles.length === 0 && (
-                <tr><td colSpan={7 + SEG.length} className="px-4 py-8 text-center text-sm text-zinc-500">Sin clientes con esos filtros.</td></tr>
+                <tr><td colSpan={9 + SEG.length} className="px-4 py-8 text-center text-sm text-zinc-500">Sin clientes con esos filtros.</td></tr>
               )}
             </tbody>
           </table>

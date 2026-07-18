@@ -130,7 +130,7 @@ export default function CierrePage() {
   // Estado de cada paso
   const nominasPendientes = reparto.filter((r) => nominaDe(r.socio) > 0 && !nominaPuesta.has(r.socio));
   const pasos = [
-    { hecho: morososN === 0, titulo: morososN === 0 ? "Sin cobros pendientes" : `${morososN} clientes deben ${eur(morososTotal)}`, href: "/contabilidad/clientes", accion: "Revisar" },
+    { hecho: morososN === 0, titulo: morososN === 0 ? "Sin cobros pendientes" : `${morososN} clientes deben ${eur(morososTotal)}`, href: "/crm", accion: "Revisar" },
     { hecho: porFacturar === 0, titulo: porFacturar === 0 ? "Todas las facturas pedidas" : `${porFacturar} gastos sin factura por pedir`, href: "/gastos", accion: "Ver" },
     { hecho: fijosPend === 0, titulo: fijosPend === 0 ? "Gastos fijos del mes apuntados" : `${fijosPend} gastos fijos por apuntar`, href: "/contabilidad/tesoreria", accion: "Apuntar" },
     { hecho: nominasPendientes.length === 0, titulo: nominasPendientes.length === 0 ? "Nóminas registradas" : `Registrar nómina de ${nominasPendientes.map((r) => NOMBRE[r.socio]).join(" y ")}`, href: null, accion: "" },
