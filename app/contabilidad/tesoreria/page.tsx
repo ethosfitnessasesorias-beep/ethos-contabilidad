@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 interface Recurrente {
@@ -61,6 +61,48 @@ function vecesEnMes(r: Recurrente, primerDiaMes: Date): number {
   return veces;
 }
 
+// Sugerencias de recurrentes desde los datos reales del libro:
+// - un gasto por cada CONCEPTO fijo de los últimos ~2 meses (última cuantía)
+// - un ingreso con el MRR de las suscripciones (facturas recurrentes)
+async function calcularSugerencias(existentes: { concepto: string }[]): Promise<
+  { concepto: string; tipo: "ingreso" | "gasto"; importe: number; dia_mes: number; cada_meses: number }[]
+> {
+  const ya = new Set(existentes.map((r) => r.concepto.trim().toLowerCase()));
+  const desde = new Date();
+  desde.setDate(desde.getDate() - 70);
+  const desdeISO = desde.toISOString().slice(0, 10);
+  const [gs, domic] = await Promise.all([
+    supabase
+      .from("gastos")
+      .select("concepto, total, fecha, es_fijo, categorias!inner(es_fijo, nombre)")
+      .gte("fecha", desdeISO)
+      .order("fecha"),
+    supabase.from("cobros").select("importe, fecha, facturas!inner(es_recurrente)").gte("fecha", desdeISO),
+  ]);
+  const nuevos: { concepto: string; tipo: "ingreso" | "gasto"; importe: number; dia_mes: number; cada_meses: number }[] = [];
+  // Último importe visto por concepto fijo (el orden por fecha deja el más reciente)
+  const porConcepto = new Map<string, { concepto: string; total: number; dia: number }>();
+  for (const g of (gs.data ?? []) as unknown as { concepto: string; total: number; fecha: string; es_fijo: boolean | null; categorias: { es_fijo: boolean; nombre: string } }[]) {
+    if (!g.es_fijo && !g.categorias?.es_fijo) continue;
+    if (/mina/i.test(g.categorias?.nombre ?? "") || /^(n[óo]mina|pago )/i.test(g.concepto)) continue; // nóminas/pagos de reparto no
+    const k = g.concepto.trim().toLowerCase();
+    porConcepto.set(k, { concepto: g.concepto.trim(), total: Number(g.total), dia: Math.min(28, new Date(g.fecha + "T00:00:00").getDate()) });
+  }
+  for (const [k, v] of porConcepto) {
+    if (ya.has(k)) continue;
+    nuevos.push({ concepto: v.concepto, tipo: "gasto", importe: Math.round(v.total * 100) / 100, dia_mes: v.dia, cada_meses: 1 });
+  }
+  // MRR: media mensual de cobros de facturas marcadas recurrentes (grupales, cuotas…)
+  const mrr = ((domic.data ?? []) as unknown as { importe: number; facturas: { es_recurrente: boolean } }[])
+    .filter((c) => c.facturas?.es_recurrente)
+    .reduce((s, c) => s + Number(c.importe), 0);
+  const ETIQ_MRR = "Suscripciones (grupales y cuotas)";
+  if (mrr > 0 && !ya.has(ETIQ_MRR.toLowerCase()) && !ya.has("domiciliaciones (mrr)")) {
+    nuevos.push({ concepto: ETIQ_MRR, tipo: "ingreso", importe: Math.round(mrr / 2.3), dia_mes: 1, cada_meses: 1 });
+  }
+  return nuevos;
+}
+
 export default function Tesoreria() {
   const [recurrentes, setRecurrentes] = useState<Recurrente[]>([]);
   const [saldoActual, setSaldoActual] = useState(0);
@@ -78,6 +120,7 @@ export default function Tesoreria() {
   const [nImporte, setNImporte] = useState("");
   const [nDia, setNDia] = useState("1");
   const [nCada, setNCada] = useState("1");
+  const syncHecho = useRef(false);
 
   const cargar = useCallback(async () => {
     // Media de los 3 últimos meses de nómina (reparto) e inversión
@@ -91,7 +134,23 @@ export default function Tesoreria() {
       supabase.from("v_inversion_mensual").select("mes, inversion").gte("mes", desde3ISO),
     ]);
     if (r.error) return setError(r.error.message);
-    setRecurrentes((r.data as Recurrente[]) ?? []);
+    let lista = (r.data as Recurrente[]) ?? [];
+    // Sincronización automática: lo apuntado como fijo/recurrente en el libro
+    // aparece aquí solo (sin tocar lo que ya hayas editado a mano).
+    if (!syncHecho.current) {
+      syncHecho.current = true;
+      const nuevos = await calcularSugerencias(lista);
+      if (nuevos.length > 0) {
+        const ins = await supabase.from("tesoreria_recurrentes").insert(nuevos);
+        if (!ins.error) {
+          const r2 = await supabase.from("tesoreria_recurrentes").select("*").order("tipo").order("dia_mes");
+          lista = (r2.data as Recurrente[]) ?? lista;
+          setOk(`${nuevos.length} recurrente(s) añadidos desde el libro ✓`);
+          setTimeout(() => setOk(null), 4000);
+        }
+      }
+    }
+    setRecurrentes(lista);
     setSaldoActual((s.data ?? []).reduce((t: number, x: { saldo: number }) => t + Number(x.saldo), 0));
 
     // Nómina mensual = suma de las nóminas (80% del beneficio, nunca negativa) por mes
@@ -186,42 +245,16 @@ export default function Tesoreria() {
     cargar();
   }
 
-  // Sugerir recurrentes desde los gastos fijos y domiciliaciones detectados
+  // Resincroniza a mano (misma lógica que la sincronización automática)
   async function sugerir() {
-    const desde = new Date();
-    desde.setMonth(desde.getMonth() - 3);
-    const [gastosFijos, domic] = await Promise.all([
-      supabase
-        .from("gastos")
-        .select("concepto, total, fecha, categorias!inner(es_fijo, nombre)")
-        .gte("fecha", desde.toISOString().slice(0, 10)),
-      supabase
-        .from("cobros")
-        .select("importe, fecha, facturas!inner(es_recurrente)")
-        .gte("fecha", desde.toISOString().slice(0, 10)),
-    ]);
-    const nuevos: Omit<Recurrente, "id">[] = [];
-    // Un gasto fijo por subcategoría (media mensual de los últimos 3 meses)
-    const porCat = new Map<string, number>();
-    for (const g of (gastosFijos.data ?? []) as unknown as { total: number; categorias: { es_fijo: boolean; nombre: string } }[]) {
-      if (!g.categorias?.es_fijo) continue;
-      porCat.set(g.categorias.nombre, (porCat.get(g.categorias.nombre) ?? 0) + Number(g.total));
-    }
-    for (const [nombre, total] of porCat) {
-      if (recurrentes.some((r) => r.concepto === nombre)) continue;
-      nuevos.push({ concepto: nombre, tipo: "gasto", importe: Math.round(total / 3), dia_mes: 1, cada_meses: 1, cada: 1, unidad: "mes", desde: new Date().toISOString().slice(0, 10), hasta: null, activo: true });
-    }
-    // Ingreso recurrente: MRR medio de domiciliaciones
-    const mrrTotal = ((domic.data ?? []) as unknown as { importe: number; facturas: { es_recurrente: boolean } }[])
-      .filter((c) => c.facturas?.es_recurrente)
-      .reduce((s, c) => s + Number(c.importe), 0);
-    if (mrrTotal > 0 && !recurrentes.some((r) => r.concepto === "Domiciliaciones (MRR)")) {
-      nuevos.push({ concepto: "Domiciliaciones (MRR)", tipo: "ingreso", importe: Math.round(mrrTotal / 3), dia_mes: 1, cada_meses: 1, cada: 1, unidad: "mes", desde: new Date().toISOString().slice(0, 10), hasta: null, activo: true });
-    }
-    if (nuevos.length === 0) return setError("No hay nada nuevo que sugerir (o ya está todo).");
+    const nuevos = await calcularSugerencias(recurrentes);
+    if (nuevos.length === 0) return setError("Todo lo fijo del libro ya está aquí.");
     const { error } = await supabase.from("tesoreria_recurrentes").insert(nuevos);
     if (error) return setError(error.message);
     setError(null);
+    setOk(`${nuevos.length} recurrente(s) añadidos ✓`);
+    setTimeout(() => setOk(null), 3000);
+    syncHecho.current = true;
     cargar();
   }
 
@@ -354,12 +387,13 @@ export default function Tesoreria() {
       <div className="mt-6 flex items-center justify-between">
         <h2 className="text-lg font-black text-white">Pagos y cobros recurrentes</h2>
         <button onClick={sugerir} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-300">
-          Sugerir desde mis datos
+          Resincronizar con el libro
         </button>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
-        Edita importes o fechas cuando cambien (ej: cuando acabe la cuota bonificada de autónomos,
-        sube el importe o pon una fecha &quot;desde&quot; con el nuevo importe en otra línea).
+        Los gastos apuntados como <b>fijos</b> y los ingresos por <b>suscripción</b> (grupales, cuotas)
+        entran aquí solos desde el libro. Si un mes cambia el importe, edítalo en la lista; lo que
+        edites o borres aquí se respeta.
       </p>
 
       {/* Alta */}
