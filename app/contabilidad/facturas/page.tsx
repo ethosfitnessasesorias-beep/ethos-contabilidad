@@ -144,17 +144,6 @@ export default function FacturasPage() {
     });
   }, [facturas, filtro, saldos, busqueda, mes]);
 
-  const chip = (v: Filtro, etiqueta: string) => (
-    <button
-      onClick={() => setFiltro(v)}
-      className={`rounded-full px-3 py-1.5 text-xs font-bold ${
-        filtro === v ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"
-      }`}
-    >
-      {etiqueta}
-    </button>
-  );
-
   function estadoDe(f: Factura): { etiqueta: string; clase: string } {
     const saldo = saldos.get(f.id);
     if (!f.numero) return { etiqueta: "Borrador", clase: "bg-zinc-800 text-zinc-400" };
@@ -186,11 +175,13 @@ export default function FacturasPage() {
         )}
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        {chip("todas", "Todas")}
-        {chip("borrador", "Borradores")}
-        {chip("emitidas", "Emitidas")}
-        {chip("pendientes", "Pendientes de cobro")}
-        {chip("cobradas", "Cobradas")}
+        <select value={filtro} onChange={(e) => setFiltro(e.target.value as Filtro)} className={`${inputCls} appearance-none`}>
+          <option value="todas">Estado: todas</option>
+          <option value="borrador">Borradores</option>
+          <option value="emitidas">Emitidas</option>
+          <option value="pendientes">Pendientes de cobro</option>
+          <option value="cobradas">Cobradas</option>
+        </select>
         <button
           onClick={() => {
             setCreando(!creando);

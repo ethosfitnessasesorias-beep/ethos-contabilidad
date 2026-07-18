@@ -23,13 +23,6 @@ interface FilaDecl {
   iva_resultado: number;
   beneficio: number;
 }
-interface FilaEthos {
-  anyo: number;
-  trim: number;
-  ingresos: number;
-  gastos: number;
-  neto: number;
-}
 
 const inputCls =
   "w-24 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-right text-sm text-white outline-none focus:border-red-500";
@@ -62,7 +55,6 @@ export default function ImpuestosPage() {
   const [anyo, setAnyo] = useState(new Date().getFullYear());
   const [titular, setTitular] = useState<string>("todos");
   const [declaracion, setDeclaracion] = useState<FilaDecl[]>([]);
-  const [ethos, setEthos] = useState<FilaEthos[]>([]);
   const [ajustes, setAjustes] = useState<Ajuste[]>([]);
   const [disponible, setDisponible] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,9 +63,8 @@ export default function ImpuestosPage() {
   const [verDeclaracion, setVerDeclaracion] = useState<number | null>(null);
 
   const cargar = useCallback(async () => {
-    const [d, e, a] = await Promise.all([
+    const [d, a] = await Promise.all([
       supabase.from("v_impuestos_declaracion").select("*").order("anyo").order("trim"),
-      supabase.from("v_cuentas_ethos").select("*").eq("anyo", anyo).order("trim"),
       supabase.from("impuestos_ajustes").select("*").eq("anyo", anyo),
     ]);
     if (d.error) {
@@ -83,7 +74,6 @@ export default function ImpuestosPage() {
     }
     setDisponible(true);
     setDeclaracion((d.data as FilaDecl[]) ?? []);
-    setEthos((e.data as FilaEthos[]) ?? []);
     setAjustes((a.data as Ajuste[]) ?? []);
   }, [anyo]);
 
@@ -203,7 +193,6 @@ export default function ImpuestosPage() {
 
   const trimActual = Math.floor(new Date().getMonth() / 3) + 1;
   const nombreTitular = titular === "todos" ? "los dos" : TITULARES.find((t) => t.codigo === titular)?.nombre ?? titular;
-  const ethosAnual = ethos.reduce((s, e) => s + Number(e.neto), 0);
 
   function resumenGestor(d: FilaDecl): string {
     return [
@@ -376,46 +365,6 @@ export default function ImpuestosPage() {
             </div>
           );
         })}
-      </div>
-
-      {/* Cuentas entre socios: reparto 50/50 del centro (ETHOS), aparte de Hacienda */}
-      <div className="mt-5 rounded-2xl border border-sky-900 bg-sky-950/30 p-4">
-        <div className="mb-1 flex items-center justify-between">
-          <h3 className="text-sm font-black text-white">Cuentas entre socios · ETHOS {anyo}</h3>
-          <span className="text-xs text-sky-300">no es Hacienda: es el reparto 50/50 entre vosotros</span>
-        </div>
-        <p className="mb-3 text-xs text-zinc-500">
-          Neto del centro (entrenos en grupo + Alex − gastos compartidos del local, sin IVA). Se reparte
-          a partes iguales. Fiscalmente todo esto lo declara Luis; esto es solo para ajustar cuentas.
-        </p>
-        <div className="overflow-hidden rounded-xl border border-zinc-800">
-          <div className="grid grid-cols-[0.6fr_1fr_1fr_1fr_1fr] bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wider text-zinc-500">
-            <span>Trim</span><span className="text-right">Ingresos</span><span className="text-right">Gastos</span><span className="text-right">Neto</span><span className="text-right">Cada socio</span>
-          </div>
-          {[1, 2, 3, 4].map((q) => {
-            const e = ethos.find((x) => x.trim === q);
-            const neto = Number(e?.neto ?? 0);
-            return (
-              <div key={q} className="grid grid-cols-[0.6fr_1fr_1fr_1fr_1fr] border-t border-zinc-800 px-3 py-2 text-sm">
-                <span className="text-zinc-400">{q}º</span>
-                <span className="text-right text-zinc-300">{eur(Number(e?.ingresos ?? 0))}</span>
-                <span className="text-right text-zinc-300">{eur(Number(e?.gastos ?? 0))}</span>
-                <span className={`text-right font-semibold ${neto < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(neto)}</span>
-                <span className={`text-right font-bold ${neto < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(neto / 2)}</span>
-              </div>
-            );
-          })}
-          <div className="grid grid-cols-[0.6fr_1fr_1fr_1fr_1fr] border-t border-zinc-700 bg-zinc-900/60 px-3 py-2 text-sm font-black">
-            <span className="text-white">Año</span>
-            <span className="text-right text-zinc-400">{eur(ethos.reduce((s, e) => s + Number(e.ingresos), 0))}</span>
-            <span className="text-right text-zinc-400">{eur(ethos.reduce((s, e) => s + Number(e.gastos), 0))}</span>
-            <span className={`text-right ${ethosAnual < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(ethosAnual)}</span>
-            <span className={`text-right ${ethosAnual < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(ethosAnual / 2)}</span>
-          </div>
-        </div>
-        <p className="mt-2 text-xs text-zinc-600">
-          “Cada socio” en negativo = lo que cada uno pone para cubrir el centro; en positivo = lo que le corresponde cobrar.
-        </p>
       </div>
 
       <div className="mt-4 rounded-xl bg-amber-950 px-4 py-3 text-xs text-amber-300">

@@ -226,17 +226,6 @@ export default function LibroPage() {
     router.push("/");
   }
 
-  const chip = (activo: boolean, etiqueta: string, onClick: () => void) => (
-    <button
-      key={etiqueta}
-      onClick={onClick}
-      className={`rounded-full px-3 py-1.5 text-xs font-bold ${
-        activo ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"
-      }`}
-    >
-      {etiqueta}
-    </button>
-  );
 
   return (
     <div>
@@ -318,12 +307,17 @@ export default function LibroPage() {
           onChange={(e) => setFTexto(e.target.value)}
           className={`${inputCls} min-w-48 flex-1`}
         />
-        {chip(fTipo === "todos", "Todo", () => setFTipo("todos"))}
-        {chip(fTipo === "ingreso", "Ingresos", () => setFTipo("ingreso"))}
-        {chip(fTipo === "gasto", "Gastos", () => setFTipo("gasto"))}
-        {chip(fTipo === "traspaso", "Traspasos", () => setFTipo("traspaso"))}
-        {chip(fCanal === "online", "Online", () => setFCanal(fCanal === "online" ? "todos" : "online"))}
-        {chip(fCanal === "presencial", "Presencial", () => setFCanal(fCanal === "presencial" ? "todos" : "presencial"))}
+        <select value={fTipo} onChange={(e) => setFTipo(e.target.value as typeof fTipo)} className={`${inputCls} appearance-none`}>
+          <option value="todos">Tipo: todo</option>
+          <option value="ingreso">Ingresos</option>
+          <option value="gasto">Gastos</option>
+          <option value="traspaso">Traspasos</option>
+        </select>
+        <select value={fCanal} onChange={(e) => setFCanal(e.target.value as typeof fCanal)} className={`${inputCls} appearance-none`}>
+          <option value="todos">Canal: todos</option>
+          <option value="online">Online</option>
+          <option value="presencial">GYM</option>
+        </select>
         <select
           value={fCategoria === "todas" ? "" : fCategoria}
           onChange={(e) => setFCategoria(e.target.value === "" ? "todas" : Number(e.target.value))}
