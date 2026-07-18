@@ -296,13 +296,13 @@ export default function CrmPage() {
                 return (
                   <tr key={c.id} className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-900/40">
                     <td className="px-4 py-2.5">
-                      <button onClick={() => abrirEditar(c)} className="text-left font-semibold text-white hover:text-red-400" title="Editar cliente">
-                        {c.nombre} {c.apellidos ?? ""}
-                      </button>
-                      <p className="text-[11px] text-zinc-600">
-                        {c.email ?? c.telefono ?? "—"}
-                        <Link href={`/clientes/${c.id}`} className="ml-2 text-zinc-500 hover:text-zinc-300">ver ficha ↗</Link>
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => abrirEditar(c)} aria-label="Editar" title="Editar cliente" className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-zinc-800 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white">✎</button>
+                        <Link href={`/clientes/${c.id}`} className="font-semibold text-white hover:text-red-400">
+                          {c.nombre} {c.apellidos ?? ""}
+                        </Link>
+                      </div>
+                      <p className="pl-8 text-[11px] text-zinc-600">{c.email ?? c.telefono ?? "—"}</p>
                     </td>
                     <td className="px-3 py-2.5">
                       <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${esBaja(c) ? "bg-zinc-800 text-zinc-500" : esLead(c) ? "bg-amber-950 text-amber-400" : "bg-emerald-950 text-emerald-400"}`}>
