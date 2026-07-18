@@ -12,6 +12,11 @@ interface Kpis { caja_libre: number; iva_pendiente: number; irpf_pendiente: numb
 interface Reparto { atribucion: string; balance: number; a_entrenador: number }
 interface Actividad { id: number; titulo: string; cuando: string }
 interface Cli { fecha_inicio: string | null; fecha_baja: string | null; estado: string | null }
+interface Beneficio { mes: string; socio: string; beneficio: number }
+
+// Inversión total del local desde la apertura (se puede sobreescribir con la
+// clave 'inversion_local_total' en la tabla config)
+const INVERSION_LOCAL = 84333.09;
 
 const eur0 = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
@@ -36,6 +41,9 @@ export default function Dashboard() {
   const [clientes, setClientes] = useState<Cli[]>([]);
   const [pendiente, setPendiente] = useState(0);
   const [evo, setEvo] = useState<{ mes: string; facturado: number; cobrado: number }[]>([]);
+  const [gastosCanal, setGastosCanal] = useState<{ online: number; presencial: number }>({ online: 0, presencial: 0 });
+  const [beneficios, setBeneficios] = useState<Beneficio[]>([]);
+  const [inversionTotal, setInversionTotal] = useState(INVERSION_LOCAL);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -48,7 +56,7 @@ export default function Dashboard() {
       const mesActual = ym(0);
       const desde6 = `${ym(-5)}-01`;
 
-      const [n, s, k, r, a, cli, sal, fact, cob] = await Promise.all([
+      const [n, s, k, r, a, cli, sal, fact, cob, gm, ben, cfg] = await Promise.all([
         supabase.from("v_dashboard_negocio").select("*"),
         supabase.from("v_saldo_cuentas").select("codigo, nombre, es_transito, saldo").order("id"),
         supabase.from("v_kpis").select("*").single(),
@@ -58,6 +66,9 @@ export default function Dashboard() {
         supabase.from("v_facturas_saldo").select("pendiente"),
         supabase.from("facturas").select("fecha_emision, base").gte("fecha_emision", desde6),
         supabase.from("cobros").select("fecha, importe").gte("fecha", desde6),
+        supabase.from("gastos").select("canal, total, categorias!inner(nombre)").gte("fecha", `${mesActual}-01`),
+        supabase.from("v_reparto_beneficios").select("mes, socio, beneficio").order("mes"),
+        supabase.from("config").select("valor").eq("clave", "inversion_local_total").maybeSingle(),
       ]);
       if (n.error) { setError(n.error.message.includes("v_dashboard_negocio") ? "Falta ejecutar supabase/crm.sql en el SQL Editor." : n.error.message); }
       setNeg((n.data as NegocioFila[]) ?? []);
@@ -67,6 +78,17 @@ export default function Dashboard() {
       setActs((a.data as Actividad[]) ?? []);
       setClientes((cli.data as Cli[]) ?? []);
       setPendiente(((sal.data as { pendiente: number }[]) ?? []).reduce((t, x) => t + Number(x.pendiente), 0));
+
+      // Gastos del mes por canal (nóminas fuera: son reparto, no gasto)
+      const gc = { online: 0, presencial: 0 };
+      for (const row of (gm.data as unknown as { canal: string | null; total: number; categorias: { nombre: string } | null }[]) ?? []) {
+        if (/mina/i.test(row.categorias?.nombre ?? "")) continue;
+        gc[row.canal === "online" ? "online" : "presencial"] += Number(row.total);
+      }
+      setGastosCanal(gc);
+      setBeneficios((ben.data as Beneficio[]) ?? []);
+      const invCfg = Number((cfg.data as { valor: string } | null)?.valor);
+      if (Number.isFinite(invCfg) && invCfg > 0) setInversionTotal(invCfg);
 
       const meses: string[] = [];
       for (let i = 5; i >= 0; i--) meses.push(ym(-i));
@@ -98,6 +120,32 @@ export default function Dashboard() {
   const mesTexto = new Date().toLocaleDateString("es-ES", { month: "long", year: "numeric" });
   const runwayAlarma = kpis?.runway_meses != null && Number(kpis.runway_meses) < 3;
 
+  // --- Retorno de la inversión del local ---
+  // Beneficio total por mes (Luis + David, meses en negativo cuentan 0)
+  const benMes = new Map<string, number>();
+  for (const b of beneficios) benMes.set(b.mes, (benMes.get(b.mes) ?? 0) + Number(b.beneficio));
+  const mesesBen = [...benMes.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const recuperado = mesesBen.reduce((t, [, v]) => t + Math.max(0, v), 0);
+  const restanteROI = Math.max(0, inversionTotal - recuperado);
+  const ultimos3 = mesesBen.slice(-3).map(([, v]) => Math.max(0, v));
+  const ritmo = ultimos3.length ? ultimos3.reduce((s, x) => s + x, 0) / ultimos3.length : 0;
+  const mesesROI = ritmo > 0 ? Math.ceil(restanteROI / ritmo) : null;
+  const fechaROI = mesesROI !== null ? new Date(new Date().getFullYear(), new Date().getMonth() + mesesROI, 1) : null;
+
+  // Proyección: favorable (beneficio +5 %/mes) vs estancado (−2 %/mes)
+  const proyeccion = (() => {
+    if (ritmo <= 0 || restanteROI <= 0) return null;
+    const fav: number[] = [restanteROI];
+    const est: number[] = [restanteROI];
+    let rf = restanteROI, re = restanteROI, vf = ritmo, ve = ritmo;
+    for (let i = 1; i <= 48 && (rf > 0 || re > 0); i++) {
+      vf *= 1.05; ve *= 0.98;
+      rf = Math.max(0, rf - vf); re = Math.max(0, re - ve);
+      fav.push(rf); est.push(re);
+    }
+    return { fav, est };
+  })();
+
   return (
     <Shell titulo="Dashboard">
       <div className="px-5 py-6 md:px-8">
@@ -117,11 +165,45 @@ export default function Dashboard() {
           <Kpi label="Runway" valor={kpis?.runway_meses == null ? "—" : `${kpis.runway_meses} meses`} alarma={runwayAlarma} sub={`fijos ${eur0(kpis?.gasto_fijo_mensual ?? 0)}/mes`} />
         </div>
 
-        {/* Negocio del mes */}
+        {/* Negocio del mes, por canal */}
         <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-zinc-600">Negocio del mes</p>
+        <div className="mb-2.5 grid gap-2.5 lg:grid-cols-2">
+          {([
+            ["online", "Online", "bg-blue-500", gastosCanal.online],
+            ["presencial", "Presencial (GYM)", "bg-red-500", gastosCanal.presencial],
+          ] as [Canal, string, string, number][]).map(([canal, titulo, color, gasto]) => {
+            const d = neg.find((x) => x.canal === canal);
+            const fact = Number(d?.facturado ?? 0);
+            const cobr = Number(d?.cobrado ?? 0);
+            const neto = fact - gasto;
+            return (
+              <div key={canal} className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${color}`} />
+                  <span className="text-sm font-black text-white">{titulo}</span>
+                  <span className={`ml-auto text-sm font-black ${neto < 0 ? "text-red-400" : "text-emerald-400"}`}>neto {eur0(neto)}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg bg-zinc-950/60 px-2 py-1.5">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500">Facturado</p>
+                    <p className="text-sm font-black text-white">{eur0(fact)}</p>
+                  </div>
+                  <div className="rounded-lg bg-zinc-950/60 px-2 py-1.5">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500">Cobrado</p>
+                    <p className="text-sm font-black text-emerald-400">{eur0(cobr)}</p>
+                  </div>
+                  <div className="rounded-lg bg-zinc-950/60 px-2 py-1.5">
+                    <p className="text-[10px] font-bold uppercase text-zinc-500">Gastos</p>
+                    <p className="text-sm font-black text-red-400">{eur0(gasto)}</p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
         <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-          <Kpi label="Facturado" valor={eur0(facturadoMes)} />
-          <Kpi label="Cash collected" valor={eur0(cobradoMes)} color="text-emerald-400" />
+          <Kpi label="Total facturado" valor={eur0(facturadoMes)} />
+          <Kpi label="Total cobrado" valor={eur0(cobradoMes)} color="text-emerald-400" />
           <Kpi label="Pendiente de cobro" valor={eur0(pendiente)} color="text-amber-400" />
           <Kpi label="Nómina del mes" valor={eur0(nominaMes)} color="text-emerald-400" sub={`beneficio ${eur0(beneficioMes)}`} />
         </div>
@@ -133,6 +215,61 @@ export default function Dashboard() {
           <Kpi label="Altas del mes" valor={String(altasMes)} color="text-emerald-400" />
           <Kpi label="Bajas del mes" valor={String(bajasMes)} color={bajasMes > 0 ? "text-red-400" : "text-white"} />
           <Kpi label="Leads" valor={String(leads)} color="text-amber-400" />
+        </div>
+
+        {/* Retorno de la inversión del local */}
+        <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-zinc-600">Inversión del local</p>
+        <div className="mb-4 grid gap-2.5 lg:grid-cols-3">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Recuperar la inversión</p>
+            <p className="mt-0.5 text-lg font-black text-white">{eur0(restanteROI)} <span className="text-xs font-bold text-zinc-500">restante</span></p>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+              <div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(100, (recuperado / inversionTotal) * 100)}%` }} />
+            </div>
+            <p className="mt-1.5 text-[11px] text-zinc-600">
+              Invertido {eur0(inversionTotal)} · recuperado {eur0(recuperado)} ({Math.round((recuperado / inversionTotal) * 100)}%)
+            </p>
+            <p className="mt-1 text-[11px] text-zinc-500">
+              {mesesROI === null
+                ? "Aún sin ritmo de beneficio para estimar el plazo."
+                : <>Al ritmo actual ({eur0(ritmo)}/mes): <b className="text-white">≈ {mesesROI} meses</b> ({fechaROI?.toLocaleDateString("es-ES", { month: "long", year: "numeric" })})</>}
+            </p>
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 lg:col-span-2">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Proyección del retorno · 2 escenarios</p>
+              <div className="flex gap-3 text-[11px]">
+                <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 rounded bg-emerald-500" /> Creciendo +5%/mes</span>
+                <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 rounded bg-amber-500" /> Estancado −2%/mes</span>
+              </div>
+            </div>
+            {!proyeccion ? (
+              <p className="py-6 text-center text-sm text-zinc-600">Sin datos suficientes para proyectar.</p>
+            ) : (() => {
+              const n = Math.max(proyeccion.fav.length, proyeccion.est.length);
+              const W = 600, H = 140, PAD = 4;
+              const x = (i: number) => PAD + (i / (n - 1)) * (W - PAD * 2);
+              const y = (v: number) => PAD + (1 - v / restanteROI) * (H - PAD * 2);
+              const linea = (arr: number[]) => arr.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+              const finFav = proyeccion.fav.findIndex((v) => v <= 0);
+              const finEst = proyeccion.est.findIndex((v) => v <= 0);
+              const fecha = (m: number) => new Date(new Date().getFullYear(), new Date().getMonth() + m, 1).toLocaleDateString("es-ES", { month: "short", year: "2-digit" });
+              return (
+                <>
+                  <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none" style={{ height: 120 }}>
+                    <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} stroke="#3f3f46" strokeWidth="1" />
+                    <polyline points={linea(proyeccion.est)} fill="none" stroke="#f59e0b" strokeWidth="2" />
+                    <polyline points={linea(proyeccion.fav)} fill="none" stroke="#10b981" strokeWidth="2" />
+                  </svg>
+                  <p className="mt-1 text-[11px] text-zinc-600">
+                    Deuda de inversión pendiente mes a mes.
+                    {finFav > 0 && <> Favorable: recuperada en <b className="text-emerald-400">{finFav} meses</b> ({fecha(finFav)}).</>}
+                    {finEst > 0 ? <> Estancado: en <b className="text-amber-400">{finEst} meses</b> ({fecha(finEst)}).</> : finFav > 0 ? " Estancado: más de 4 años." : ""}
+                  </p>
+                </>
+              );
+            })()}
+          </div>
         </div>
 
         {/* Evolución + próximos eventos */}
