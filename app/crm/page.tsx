@@ -94,7 +94,10 @@ export default function CrmPage() {
     const datos: Record<string, unknown> = {};
     const src = f as Record<string, unknown>;
     for (const k of campos) { const v = src[k]; datos[k] = v === "" ? null : v ?? null; }
-    datos.estado = f.fecha_baja ? "baja" : (ed.estado === "lead" && !f.fecha_compra ? "lead" : "cliente");
+    const estado = (f.estado as string) || "cliente";
+    datos.estado = estado;
+    // En toda la app la baja se detecta por fecha_baja: la mantenemos coherente con el estado.
+    datos.fecha_baja = estado === "baja" ? (f.fecha_baja || hoy) : null;
     const { error } = await supabase.from("clientes").update(datos).eq("id", ed.id);
     if (error) return setError(error.message);
     setEd(null);
@@ -339,6 +342,13 @@ export default function CrmPage() {
 
         <Modal abierto={!!ed} onCerrar={() => setEd(null)} titulo={ed ? `${ed.nombre} ${ed.apellidos ?? ""}` : ""} ancho="max-w-2xl">
           <div className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Estado</span>
+              <select value={(f.estado as string) ?? "cliente"} onChange={(e) => setF({ ...f, estado: e.target.value })} className={`${inputCls} appearance-none`}>
+                <option value="lead">Lead</option>
+                <option value="cliente">Cliente</option>
+                <option value="baja">Baja</option>
+              </select>
+            </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Nombre</span><input value={fEd("nombre")} onChange={(e) => setF({ ...f, nombre: e.target.value })} className={inputCls} /></label>
               <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Apellidos</span><input value={fEd("apellidos")} onChange={(e) => setF({ ...f, apellidos: e.target.value })} className={inputCls} /></label>
@@ -367,9 +377,6 @@ export default function CrmPage() {
             <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Objetivo</span><textarea rows={2} value={fEd("objetivo")} onChange={(e) => setF({ ...f, objetivo: e.target.value })} className={inputCls} /></label>
             <div className="flex items-center gap-2 border-t border-zinc-800 pt-3">
               <button onClick={guardarEditar} className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">Guardar</button>
-              {f.fecha_baja ? null : (
-                <button onClick={() => setF({ ...f, fecha_baja: new Date().toISOString().slice(0, 10) })} className="rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-bold text-red-400">Dar de baja hoy</button>
-              )}
               <button onClick={borrar} title="Borrar permanentemente" className="rounded-xl border border-red-900 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-950">Borrar</button>
             </div>
           </div>
