@@ -196,15 +196,11 @@ export default function CrmPage() {
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
   }
 
-  const stat = (et: string, v: string, c: string, sub?: string) => (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{et}</p>
-      <p className={`mt-1 text-2xl font-black ${c}`}>{v}</p>
-      {sub && <p className="mt-0.5 text-xs text-zinc-600">{sub}</p>}
-    </div>
-  );
-  const chip = (activo: boolean, etiqueta: string, onClick: () => void, key?: string) => (
-    <button key={key ?? etiqueta} onClick={onClick} className={`rounded-full px-3.5 py-1.5 text-xs font-bold ${activo ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>{etiqueta}</button>
+  const mini = (v: string, et: string, c = "text-zinc-200") => (
+    <span className="flex items-baseline gap-1.5">
+      <span className={`text-base font-black ${c}`}>{v}</span>
+      <span className="text-[11px] text-zinc-500">{et}</span>
+    </span>
   );
 
   return (
@@ -238,21 +234,24 @@ export default function CrmPage() {
           )}
         </div>
 
-        {/* Métricas */}
-        <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {stat("Clientes activos", String(metricas.activos), "text-white")}
-          {stat("Leads", String(metricas.leads), "text-amber-400")}
-          {stat("Conversión", `${metricas.conversion}%`, "text-emerald-400", "leads → clientes")}
-          {stat("Media con nosotros", humano(metricas.mediaTiempo), "text-white")}
-          {stat("Media hasta comprar", humano(metricas.mediaCompra), "text-white", "1er contacto → compra")}
+        {/* Resumen compacto */}
+        <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-2.5">
+          {mini(String(metricas.activos), "activos", "text-white")}
+          <span className="h-3.5 w-px bg-zinc-800" />
+          {mini(String(metricas.leads), "leads", "text-amber-400")}
+          <span className="h-3.5 w-px bg-zinc-800" />
+          {mini(`${metricas.conversion}%`, "conversión", "text-emerald-400")}
+          <span className="h-3.5 w-px bg-zinc-800" />
+          {mini(humano(metricas.mediaTiempo), "media con nosotros")}
+          <span className="h-3.5 w-px bg-zinc-800" />
+          {mini(humano(metricas.mediaCompra), "media hasta comprar")}
         </div>
         {metricas.porPrep.length > 0 && (
-          <div className="mb-5 flex flex-wrap gap-2">
+          <div className="mb-5 flex flex-wrap gap-x-4 gap-y-1 px-1 text-[11px] text-zinc-500">
             {metricas.porPrep.map((p) => (
-              <div key={p.prep} className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs">
-                <span className="font-black text-white">{NOMBRE[p.prep] ?? p.prep}</span>
-                <span className="text-zinc-500"> · {p.n} activos · media {humano(p.mediaTiempo)} · compra {humano(p.mediaCompra)}</span>
-              </div>
+              <span key={p.prep}>
+                <span className="font-bold text-zinc-300">{NOMBRE[p.prep] ?? p.prep}</span> · {p.n} activos · media {humano(p.mediaTiempo)} · compra {humano(p.mediaCompra)}
+              </span>
             ))}
           </div>
         )}
@@ -288,7 +287,6 @@ export default function CrmPage() {
                   </th>
                 ))}
                 {SEG.map((s) => <th key={String(s.campo)} className="px-2 py-2.5 text-center">{s.corto}</th>)}
-                <th className="px-2 py-2.5"></th>
               </tr>
             </thead>
             <tbody>
@@ -298,10 +296,13 @@ export default function CrmPage() {
                 return (
                   <tr key={c.id} className="border-b border-zinc-800/60 last:border-0 hover:bg-zinc-900/40">
                     <td className="px-4 py-2.5">
-                      <Link href={`/clientes/${c.id}`} className="font-semibold text-white hover:text-red-400">
+                      <button onClick={() => abrirEditar(c)} className="text-left font-semibold text-white hover:text-red-400" title="Editar cliente">
                         {c.nombre} {c.apellidos ?? ""}
-                      </Link>
-                      <p className="text-[11px] text-zinc-600">{c.email ?? c.telefono ?? "—"}</p>
+                      </button>
+                      <p className="text-[11px] text-zinc-600">
+                        {c.email ?? c.telefono ?? "—"}
+                        <Link href={`/clientes/${c.id}`} className="ml-2 text-zinc-500 hover:text-zinc-300">ver ficha ↗</Link>
+                      </p>
                     </td>
                     <td className="px-3 py-2.5">
                       <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${esBaja(c) ? "bg-zinc-800 text-zinc-500" : esLead(c) ? "bg-amber-950 text-amber-400" : "bg-emerald-950 text-emerald-400"}`}>
@@ -334,9 +335,6 @@ export default function CrmPage() {
                         </button>
                       </td>
                     ))}
-                    <td className="px-2 py-2.5 text-center">
-                      <button onClick={() => abrirEditar(c)} aria-label="Editar" className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700">✎</button>
-                    </td>
                   </tr>
                 );
               })}
