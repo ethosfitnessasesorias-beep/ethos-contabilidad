@@ -15,6 +15,7 @@ interface Cli {
   telefono: string | null;
   entrenador: string;
   estado: string | null;
+  canal: string | null;
   origen: string | null;
   tipo_plan: string | null;
   primer_contacto: string | null;
@@ -57,6 +58,7 @@ export default function CrmPage() {
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState<"todos" | "cliente" | "lead" | "baja">("todos");
   const [filtroPrep, setFiltroPrep] = useState("todos");
+  const [filtroCanal, setFiltroCanal] = useState<"todos" | "online" | "presencial">("todos");
   const [feedUrl, setFeedUrl] = useState<string | null>(null);
   const [verWebhook, setVerWebhook] = useState(false);
   const [copiado, setCopiado] = useState(false);
@@ -77,6 +79,12 @@ export default function CrmPage() {
   useEffect(() => {
     if (sesionOk) cargar();
   }, [sesionOk, cargar]);
+
+  async function setCanal(c: Cli, canal: string | null) {
+    setCli((prev) => prev.map((x) => (x.id === c.id ? { ...x, canal } : x)));
+    const { error } = await supabase.from("clientes").update({ canal }).eq("id", c.id);
+    if (error) { setError(error.message); cargar(); }
+  }
 
   async function toggleSeg(c: Cli, campo: keyof Cli) {
     const nuevo = !c[campo];
@@ -129,10 +137,11 @@ export default function CrmPage() {
       if (filtroEstado === "cliente" && !esCliente(c)) return false;
       if (filtroEstado === "lead" && !esLead(c)) return false;
       if (filtroPrep !== "todos" && c.entrenador !== filtroPrep) return false;
+      if (filtroCanal !== "todos" && c.canal !== filtroCanal) return false;
       if (q && ![c.nombre, c.apellidos, c.email, c.telefono].filter(Boolean).some((v) => String(v).toLowerCase().includes(q))) return false;
       return true;
     });
-  }, [cli, busqueda, filtroEstado, filtroPrep]);
+  }, [cli, busqueda, filtroEstado, filtroPrep, filtroCanal]);
 
   if (sesionOk === null) {
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
@@ -208,6 +217,9 @@ export default function CrmPage() {
           {chip(filtroEstado === "baja", "Bajas", () => setFiltroEstado("baja"), "baja")}
           <span className="mx-1 hidden h-4 w-px bg-zinc-800 sm:block" />
           {ATRIBUCIONES.map((a) => chip(filtroPrep === a.valor, a.etiqueta, () => setFiltroPrep(filtroPrep === a.valor ? "todos" : a.valor), a.valor))}
+          <span className="mx-1 hidden h-4 w-px bg-zinc-800 sm:block" />
+          {chip(filtroCanal === "online", "Online", () => setFiltroCanal(filtroCanal === "online" ? "todos" : "online"), "on")}
+          {chip(filtroCanal === "presencial", "GYM", () => setFiltroCanal(filtroCanal === "presencial" ? "todos" : "presencial"), "gym")}
         </div>
 
         {/* Tabla */}
@@ -218,6 +230,7 @@ export default function CrmPage() {
                 <th className="px-4 py-2.5">Cliente</th>
                 <th className="px-3 py-2.5">Estado</th>
                 <th className="px-3 py-2.5">Prep.</th>
+                <th className="px-3 py-2.5">Canal</th>
                 <th className="px-3 py-2.5">Plan</th>
                 <th className="px-3 py-2.5">Con nosotros</th>
                 <th className="px-3 py-2.5">Compra</th>
@@ -242,6 +255,17 @@ export default function CrmPage() {
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-zinc-400">{NOMBRE[c.entrenador] ?? c.entrenador}</td>
+                    <td className="px-3 py-2.5">
+                      <select
+                        value={c.canal ?? ""}
+                        onChange={(e) => setCanal(c, e.target.value || null)}
+                        className={`rounded-md border-0 px-2 py-1 text-xs font-bold outline-none ${c.canal === "online" ? "bg-blue-950 text-blue-400" : c.canal === "presencial" ? "bg-red-950 text-red-400" : "bg-zinc-800 text-zinc-500"}`}
+                      >
+                        <option value="">—</option>
+                        <option value="online">Online</option>
+                        <option value="presencial">GYM</option>
+                      </select>
+                    </td>
                     <td className="px-3 py-2.5 text-zinc-400">{c.tipo_plan ?? "—"}</td>
                     <td className="px-3 py-2.5 text-zinc-300">{tiempo}</td>
                     <td className="px-3 py-2.5 text-zinc-300">{compra}</td>
@@ -260,7 +284,7 @@ export default function CrmPage() {
                 );
               })}
               {visibles.length === 0 && (
-                <tr><td colSpan={6 + SEG.length} className="px-4 py-8 text-center text-sm text-zinc-500">Sin clientes con esos filtros.</td></tr>
+                <tr><td colSpan={7 + SEG.length} className="px-4 py-8 text-center text-sm text-zinc-500">Sin clientes con esos filtros.</td></tr>
               )}
             </tbody>
           </table>
