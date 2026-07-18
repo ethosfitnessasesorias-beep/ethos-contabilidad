@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useSesion } from "@/lib/useSesion";
 import { Shell } from "../shell";
+import Modal from "@/components/Modal";
 import { ATRIBUCIONES } from "@/lib/tipos";
 
 interface Cli {
@@ -13,6 +14,8 @@ interface Cli {
   apellidos: string | null;
   email: string | null;
   telefono: string | null;
+  nif: string | null;
+  fecha_registro: string | null;
   entrenador: string;
   estado: string | null;
   canal: string | null;
@@ -59,6 +62,10 @@ export default function CrmPage() {
   const [filtroEstado, setFiltroEstado] = useState<"todos" | "cliente" | "lead" | "baja">("todos");
   const [filtroPrep, setFiltroPrep] = useState("todos");
   const [filtroCanal, setFiltroCanal] = useState<"todos" | "online" | "presencial">("todos");
+  const [sortKey, setSortKey] = useState<string>("inicio");
+  const [sortDir, setSortDir] = useState<1 | -1>(-1);
+  const [ed, setEd] = useState<Cli | null>(null);
+  const [f, setF] = useState<Partial<Cli>>({});
   const [feedUrl, setFeedUrl] = useState<string | null>(null);
   const [verWebhook, setVerWebhook] = useState(false);
   const [copiado, setCopiado] = useState(false);
@@ -79,6 +86,26 @@ export default function CrmPage() {
   useEffect(() => {
     if (sesionOk) cargar();
   }, [sesionOk, cargar]);
+
+  function abrirEditar(c: Cli) {
+    setEd(c);
+    setF({ ...c });
+  }
+  async function guardarEditar() {
+    if (!ed) return;
+    const campos = [
+      "nombre", "apellidos", "email", "telefono", "nif", "entrenador", "canal", "tipo_plan", "objetivo",
+      "fecha_registro", "primer_contacto", "fecha_compra", "fecha_inicio", "fecha_baja",
+    ] as const;
+    const datos: Record<string, unknown> = {};
+    const src = f as Record<string, unknown>;
+    for (const k of campos) { const v = src[k]; datos[k] = v === "" ? null : v ?? null; }
+    datos.estado = f.fecha_baja ? "baja" : (ed.estado === "lead" && !f.fecha_compra ? "lead" : "cliente");
+    const { error } = await supabase.from("clientes").update(datos).eq("id", ed.id);
+    if (error) return setError(error.message);
+    setEd(null);
+    cargar();
+  }
 
   async function setCanal(c: Cli, canal: string | null) {
     setCli((prev) => prev.map((x) => (x.id === c.id ? { ...x, canal } : x)));
@@ -142,6 +169,28 @@ export default function CrmPage() {
       return true;
     });
   }, [cli, busqueda, filtroEstado, filtroPrep, filtroCanal]);
+
+  const valorOrden = (c: Cli, k: string): string | number => {
+    switch (k) {
+      case "nombre": return `${c.nombre} ${c.apellidos ?? ""}`.toLowerCase();
+      case "estado": return esBaja(c) ? 2 : esLead(c) ? 0 : 1;
+      case "entrenador": return c.entrenador;
+      case "canal": return c.canal ?? "zzz";
+      case "plan": return (c.tipo_plan ?? "zzz").toLowerCase();
+      case "inicio": return c.fecha_inicio ? new Date(c.fecha_inicio).getTime() : 0;
+      case "compra": return c.fecha_compra && c.primer_contacto ? diasEntre(c.primer_contacto, c.fecha_compra) : -1;
+      default: return 0;
+    }
+  };
+  const ordenados = useMemo(() => {
+    return [...visibles].sort((a, b) => {
+      const va = valorOrden(a, sortKey), vb = valorOrden(b, sortKey);
+      return (va < vb ? -1 : va > vb ? 1 : 0) * sortDir;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibles, sortKey, sortDir]);
+  const clicOrden = (k: string) => { if (sortKey === k) setSortDir((d) => (d === 1 ? -1 : 1)); else { setSortKey(k); setSortDir(1); } };
+  const fEd = (k: keyof Cli) => (f[k] as string) ?? "";
 
   if (sesionOk === null) {
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
@@ -227,18 +276,17 @@ export default function CrmPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-900 text-left text-[11px] font-black uppercase tracking-wider text-zinc-500">
-                <th className="px-4 py-2.5">Cliente</th>
-                <th className="px-3 py-2.5">Estado</th>
-                <th className="px-3 py-2.5">Prep.</th>
-                <th className="px-3 py-2.5">Canal</th>
-                <th className="px-3 py-2.5">Plan</th>
-                <th className="px-3 py-2.5">Con nosotros</th>
-                <th className="px-3 py-2.5">Compra</th>
+                {([["nombre", "Cliente"], ["estado", "Estado"], ["entrenador", "Prep."], ["canal", "Canal"], ["plan", "Plan"], ["inicio", "Con nosotros"], ["compra", "Compra"]] as [string, string][]).map(([k, et]) => (
+                  <th key={k} onClick={() => clicOrden(k)} className="cursor-pointer whitespace-nowrap px-3 py-2.5 hover:text-zinc-300">
+                    {et}{sortKey === k ? (sortDir === 1 ? " ↑" : " ↓") : ""}
+                  </th>
+                ))}
                 {SEG.map((s) => <th key={String(s.campo)} className="px-2 py-2.5 text-center">{s.corto}</th>)}
+                <th className="px-2 py-2.5"></th>
               </tr>
             </thead>
             <tbody>
-              {visibles.map((c) => {
+              {ordenados.map((c) => {
                 const tiempo = esCliente(c) && c.fecha_inicio ? humano(diasEntre(c.fecha_inicio, c.fecha_baja ?? hoy)) : "—";
                 const compra = c.fecha_compra && c.primer_contacto ? humano(diasEntre(c.primer_contacto, c.fecha_compra)) : "—";
                 return (
@@ -280,6 +328,9 @@ export default function CrmPage() {
                         </button>
                       </td>
                     ))}
+                    <td className="px-2 py-2.5 text-center">
+                      <button onClick={() => abrirEditar(c)} aria-label="Editar" className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-700">✎</button>
+                    </td>
                   </tr>
                 );
               })}
@@ -289,6 +340,43 @@ export default function CrmPage() {
             </tbody>
           </table>
         </div>
+
+        <Modal abierto={!!ed} onCerrar={() => setEd(null)} titulo={ed ? `${ed.nombre} ${ed.apellidos ?? ""}` : ""} ancho="max-w-2xl">
+          <div className="flex flex-col gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Nombre</span><input value={fEd("nombre")} onChange={(e) => setF({ ...f, nombre: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Apellidos</span><input value={fEd("apellidos")} onChange={(e) => setF({ ...f, apellidos: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Email</span><input value={fEd("email")} onChange={(e) => setF({ ...f, email: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Teléfono</span><input value={fEd("telefono")} onChange={(e) => setF({ ...f, telefono: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">DNI/NIE</span><input value={fEd("nif")} onChange={(e) => setF({ ...f, nif: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Plan</span><input value={fEd("tipo_plan")} onChange={(e) => setF({ ...f, tipo_plan: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Preparador</span>
+                <select value={fEd("entrenador")} onChange={(e) => setF({ ...f, entrenador: e.target.value })} className={`${inputCls} appearance-none`}>
+                  {ATRIBUCIONES.map((a) => <option key={a.valor} value={a.valor}>{a.etiqueta}</option>)}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Canal</span>
+                <select value={fEd("canal")} onChange={(e) => setF({ ...f, canal: e.target.value })} className={`${inputCls} appearance-none`}>
+                  <option value="">—</option><option value="online">Online</option><option value="presencial">GYM</option>
+                </select>
+              </label>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">1er contacto</span><input type="date" value={fEd("primer_contacto")} onChange={(e) => setF({ ...f, primer_contacto: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Compra</span><input type="date" value={fEd("fecha_compra")} onChange={(e) => setF({ ...f, fecha_compra: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Inicio</span><input type="date" value={fEd("fecha_inicio")} onChange={(e) => setF({ ...f, fecha_inicio: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Registro form</span><input type="date" value={fEd("fecha_registro")} onChange={(e) => setF({ ...f, fecha_registro: e.target.value })} className={inputCls} /></label>
+              <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-red-400">Fecha de baja</span><input type="date" value={fEd("fecha_baja")} onChange={(e) => setF({ ...f, fecha_baja: e.target.value })} className={inputCls} /></label>
+            </div>
+            <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Objetivo</span><textarea rows={2} value={fEd("objetivo")} onChange={(e) => setF({ ...f, objetivo: e.target.value })} className={inputCls} /></label>
+            <div className="flex gap-2 border-t border-zinc-800 pt-3">
+              <button onClick={guardarEditar} className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">Guardar</button>
+              {f.fecha_baja ? null : (
+                <button onClick={() => setF({ ...f, fecha_baja: new Date().toISOString().slice(0, 10) })} className="rounded-xl bg-zinc-800 px-4 text-sm font-bold text-red-400">Dar de baja hoy</button>
+              )}
+            </div>
+          </div>
+        </Modal>
       </div>
     </Shell>
   );
