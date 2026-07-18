@@ -18,19 +18,31 @@ Cada respuesta del formulario entra sola como cliente en la app. Se configura **
 const WEBHOOK_URL = "https://TU-DOMINIO/api/intake/TU-TOKEN";
 const TIPO = "valoracion"; // en la hoja "Entrada de datos" pon "entrada"
 
+// 1) Instala el disparador (borra duplicados antes). Ejecutar UNA vez.
 function instalarTrigger() {
-  ScriptApp.newTrigger("alEnviar")
-    .forSpreadsheet(SpreadsheetApp.getActive())
-    .onFormSubmit()
-    .create();
+  ScriptApp.getProjectTriggers().forEach((t) => {
+    if (t.getHandlerFunction() === "alEnviar") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("alEnviar").forSpreadsheet(SpreadsheetApp.getActive()).onFormSubmit().create();
+  Logger.log("Trigger instalado ✔");
 }
 
+// 2) PRUEBA rápida: crea un cliente de test en la app sin esperar a nadie.
+//    Ejecútala y mira el log (abajo). Debe salir 200 {"ok":true,...}.
+function probar() {
+  const resp = UrlFetchApp.fetch(WEBHOOK_URL, {
+    method: "post", contentType: "application/json", muteHttpExceptions: true,
+    payload: JSON.stringify({ tipo: "valoracion", fecha: "2026-07-18", email: "prueba@ethos.test", nombre: "PRUEBA", apellidos: "Webhook" }),
+  });
+  Logger.log("RESPUESTA: " + resp.getResponseCode() + " " + resp.getContentText());
+}
+
+// 3) Se dispara con cada respuesta del formulario.
 function alEnviar(e) {
   const r = e.namedValues || {};
   const get = (...claves) => {
     for (const q in r) {
-      const qn = q.toLowerCase();
-      if (claves.some((k) => qn.includes(k))) {
+      if (claves.some((k) => q.toLowerCase().includes(k))) {
         const v = r[q];
         return (Array.isArray(v) ? v.join(", ") : v) || "";
       }
@@ -45,21 +57,41 @@ function alEnviar(e) {
     apellidos: get("apellidos"),
     nif: get("dni", "nie"),
     telefono: get("teléfono", "telefono"),
-    objetivo: get("objetivos a nivel físico", "objetivos a nivel fisico"),
-    servicio: get("servicio estás interesad", "servicio estas interesad"),
+    objetivo: get("objetivos a nivel f"),
+    servicio: get("servicio est"),
     // Solo se usan en "Entrada de datos":
-    tipo_plan: get("qué tipo de plan", "que tipo de plan"),
+    tipo_plan: get("tipo de plan"),
     preparador: get("preparador se te ha asignado"),
     fecha_inicio: get("día actual", "dia actual"),
   };
-  UrlFetchApp.fetch(WEBHOOK_URL, {
-    method: "post",
-    contentType: "application/json",
-    muteHttpExceptions: true,
+  const resp = UrlFetchApp.fetch(WEBHOOK_URL, {
+    method: "post", contentType: "application/json", muteHttpExceptions: true,
     payload: JSON.stringify(payload),
   });
+  Logger.log("COLUMNAS: " + JSON.stringify(Object.keys(r)));
+  Logger.log("ENVIADO: " + JSON.stringify(payload));
+  Logger.log("RESPUESTA: " + resp.getResponseCode() + " " + resp.getContentText());
 }
 ```
+
+## Por qué el email SÍ coincide (no es el problema)
+
+`get("correo electrón")` busca por **trozo**, no por el texto exacto. Internamente hace:
+
+```
+"dirección de correo electrónico".includes("correo electrón")  // → true
+```
+
+Como la columna B *contiene* "correo electrón", **coincide**. Ese no es el fallo.
+
+## Diagnóstico paso a paso (si "no funciona")
+
+1. Ejecuta la función **`probar`** y abre **Ejecuciones** (icono ⏱ a la izquierda). Si sale `200 {"ok":true,...}` → el webhook funciona y aparece un cliente **PRUEBA Webhook** en la app. Bórralo luego desde el CRM.
+   - Si NO sale 200 → el problema es el `WEBHOOK_URL` o los permisos de red; revisa que la URL esté copiada entera.
+2. Si `probar` funciona pero los formularios reales no, el fallo está en el **disparador**. Causas típicas:
+   - Las respuestas del formulario **no están enlazadas a ESTA hoja** (Formulario → pestaña Respuestas → icono verde de Sheets → "Vincular a una hoja").
+   - Abriste Apps Script desde el sitio equivocado: debe ser **desde la hoja de respuestas** (Extensiones → Apps Script), no desde el propio formulario.
+3. Envía una respuesta de prueba real y vuelve a **Ejecuciones**. La línea `COLUMNAS: [...]` te muestra los nombres EXACTOS de las columnas que llegan; si "Dirección de correo electrónico" no está en esa lista, es que Google recoge el email aparte y hay que activarlo como **pregunta** del formulario.
 
 ## Notas
 - El cliente se identifica por **email**: si ya existe (p. ej. rellenó primero la valoración y luego la entrada), se **actualiza** el mismo, no se duplica.
