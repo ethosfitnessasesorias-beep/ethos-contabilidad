@@ -260,15 +260,21 @@ export default function CrmPage() {
         {/* Filtros */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <input placeholder="Buscar por nombre, email o teléfono…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className={`${inputCls} min-w-56 flex-1 sm:max-w-xs`} />
-          {chip(filtroEstado === "todos", "Todos", () => setFiltroEstado("todos"), "todos")}
-          {chip(filtroEstado === "cliente", "Clientes", () => setFiltroEstado("cliente"), "cliente")}
-          {chip(filtroEstado === "lead", "Leads", () => setFiltroEstado("lead"), "lead")}
-          {chip(filtroEstado === "baja", "Bajas", () => setFiltroEstado("baja"), "baja")}
-          <span className="mx-1 hidden h-4 w-px bg-zinc-800 sm:block" />
-          {ATRIBUCIONES.map((a) => chip(filtroPrep === a.valor, a.etiqueta, () => setFiltroPrep(filtroPrep === a.valor ? "todos" : a.valor), a.valor))}
-          <span className="mx-1 hidden h-4 w-px bg-zinc-800 sm:block" />
-          {chip(filtroCanal === "online", "Online", () => setFiltroCanal(filtroCanal === "online" ? "todos" : "online"), "on")}
-          {chip(filtroCanal === "presencial", "GYM", () => setFiltroCanal(filtroCanal === "presencial" ? "todos" : "presencial"), "gym")}
+          <select value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value as typeof filtroEstado)} className={`${inputCls} appearance-none`}>
+            <option value="todos">Estado: todos</option>
+            <option value="cliente">Clientes</option>
+            <option value="lead">Leads</option>
+            <option value="baja">Bajas</option>
+          </select>
+          <select value={filtroPrep} onChange={(e) => setFiltroPrep(e.target.value)} className={`${inputCls} appearance-none`}>
+            <option value="todos">Preparador: todos</option>
+            {ATRIBUCIONES.map((a) => <option key={a.valor} value={a.valor}>{a.etiqueta}</option>)}
+          </select>
+          <select value={filtroCanal} onChange={(e) => setFiltroCanal(e.target.value as typeof filtroCanal)} className={`${inputCls} appearance-none`}>
+            <option value="todos">Canal: todos</option>
+            <option value="online">Online</option>
+            <option value="presencial">GYM</option>
+          </select>
         </div>
 
         {/* Tabla */}
