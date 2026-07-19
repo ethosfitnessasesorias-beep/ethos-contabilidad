@@ -11,6 +11,17 @@ interface Persona {
   reparto_base: "balance" | "bruto_sin_iva" | "ninguno";
   activa: boolean;
   orden: number;
+  nombre_fiscal?: string | null;
+  nif?: string | null;
+  direccion?: string | null;
+}
+interface Cuenta {
+  id: number;
+  codigo: string;
+  nombre: string;
+  es_transito: boolean;
+  saldo_inicial: number;
+  activa: boolean;
 }
 interface Categoria {
   id: number;
@@ -52,26 +63,39 @@ const slug = (s: string) =>
   s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 
 export default function Ajustes() {
-  const [seccion, setSeccion] = useState<"personas" | "categorias" | "metodos" | "impuestos">("personas");
+  const [seccion, setSeccion] = useState<"negocio" | "personas" | "categorias" | "metodos" | "impuestos" | "cuentas">("negocio");
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [metodos, setMetodos] = useState<Metodo[]>([]);
   const [impuestos, setImpuestos] = useState<Impuesto[]>([]);
+  const [cuentas, setCuentas] = useState<Cuenta[]>([]);
+  const [cfg, setCfg] = useState<Record<string, number>>({});
+  const [cfgTxt, setCfgTxt] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
-    const [p, c, m, i] = await Promise.all([
+    const [p, c, m, i, cu, co, ct] = await Promise.all([
       supabase.from("personas").select("*").order("orden"),
       supabase.from("categorias").select("*").order("tipo").order("grupo").order("nombre"),
       supabase.from("metodos_pago").select("*").order("orden"),
       supabase.from("impuestos").select("*").order("orden"),
+      supabase.from("cuentas").select("id, codigo, nombre, es_transito, saldo_inicial, activa").order("id"),
+      supabase.from("config").select("clave, valor"),
+      supabase.from("config_texto").select("clave, valor"),
     ]);
     if (p.error) return setError(p.error.message);
     setPersonas((p.data as Persona[]) ?? []);
     setCategorias((c.data as Categoria[]) ?? []);
     setMetodos((m.data as Metodo[]) ?? []);
     setImpuestos((i.data as Impuesto[]) ?? []);
+    setCuentas((cu.data as Cuenta[]) ?? []);
+    const numeros: Record<string, number> = {};
+    for (const x of (co.data as { clave: string; valor: number }[]) ?? []) numeros[x.clave] = Number(x.valor);
+    setCfg(numeros);
+    const textos: Record<string, string> = {};
+    for (const x of (ct.data as { clave: string; valor: string }[]) ?? []) textos[x.clave] = x.valor;
+    setCfgTxt(textos);
   }, []);
 
   useEffect(() => {
@@ -81,6 +105,51 @@ export default function Ajustes() {
   function avisar(msg: string) {
     setOk(msg);
     setTimeout(() => setOk(null), 2000);
+  }
+
+  // ---------- Negocio: config numérica y de texto ----------
+  async function guardarCfg(clave: string, valor: string, descripcion: string) {
+    const n = Number(valor.replace(",", "."));
+    if (!Number.isFinite(n)) return setError("Número no válido.");
+    const { error } = await supabase.from("config").upsert({ clave, valor: n, descripcion });
+    if (error) return setError(error.message);
+    avisar("Guardado ✓");
+    cargar();
+  }
+  async function guardarCfgTxt(clave: string, valor: string, descripcion: string) {
+    if (!valor.trim()) return;
+    const { error } = await supabase.from("config_texto").upsert({ clave, valor: valor.trim(), descripcion });
+    if (error) return setError(error.message);
+    avisar("Guardado ✓");
+    cargar();
+  }
+  async function guardarFiscal(codigo: string, campos: Partial<Persona>) {
+    const { error } = await supabase.from("personas").update(campos).eq("codigo", codigo);
+    if (error) return setError(error.message);
+    avisar("Guardado ✓");
+    cargar();
+  }
+
+  // ---------- Cuentas ----------
+  const [cuNombre, setCuNombre] = useState("");
+  const [cuTransito, setCuTransito] = useState(false);
+  async function crearCuenta() {
+    if (!cuNombre.trim()) return setError("Pon un nombre a la cuenta.");
+    const { error } = await supabase.from("cuentas").insert({
+      codigo: slug(cuNombre) || `cuenta_${Date.now()}`,
+      nombre: cuNombre.trim(),
+      es_transito: cuTransito,
+      saldo_inicial: 0,
+    });
+    if (error) return setError(error.message);
+    setCuNombre("");
+    avisar("Cuenta creada ✓");
+    cargar();
+  }
+  async function actualizarCuenta(id: number, campos: Partial<Cuenta>) {
+    const { error } = await supabase.from("cuentas").update(campos).eq("id", id);
+    if (error) return setError(error.message);
+    cargar();
   }
 
   // ---------- Personas ----------
@@ -190,8 +259,10 @@ export default function Ajustes() {
       <div className="mb-4 flex flex-wrap gap-2">
         {(
           [
+            ["negocio", "Negocio"],
             ["personas", "Personas y reparto"],
             ["categorias", "Categorías"],
+            ["cuentas", "Cuentas"],
             ["metodos", "Métodos de pago"],
             ["impuestos", "Impuestos"],
           ] as const
@@ -210,6 +281,118 @@ export default function Ajustes() {
 
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
       {ok && <p className="mb-3 rounded-xl bg-emerald-950 px-4 py-2 text-sm text-emerald-300">{ok}</p>}
+
+      {/* ---------- NEGOCIO ---------- */}
+      {seccion === "negocio" && (
+        <div className="flex flex-col gap-4">
+          {/* Datos fiscales */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="mb-1 text-xs font-bold uppercase tracking-wider text-zinc-500">Datos fiscales de los autónomos</p>
+            <p className="mb-3 text-xs text-zinc-600">Para las facturas y el gestor. Se guardan al salir de cada campo.</p>
+            <div className="flex flex-col gap-3">
+              {personas.filter((p) => p.tipo === "socio").map((p) => (
+                <div key={p.codigo} className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                  <p className="mb-2 text-sm font-black text-white">{p.nombre}</p>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Nombre fiscal completo</span>
+                      <input defaultValue={p.nombre_fiscal ?? ""} onBlur={(e) => e.target.value !== (p.nombre_fiscal ?? "") && guardarFiscal(p.codigo, { nombre_fiscal: e.target.value.trim() || null })} className={inputCls} placeholder="Nombre y apellidos" />
+                    </label>
+                    <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">NIF/DNI</span>
+                      <input defaultValue={p.nif ?? ""} onBlur={(e) => e.target.value !== (p.nif ?? "") && guardarFiscal(p.codigo, { nif: e.target.value.trim() || null })} className={inputCls} placeholder="00000000X" />
+                    </label>
+                    <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Dirección fiscal</span>
+                      <input defaultValue={p.direccion ?? ""} onBlur={(e) => e.target.value !== (p.direccion ?? "") && guardarFiscal(p.codigo, { direccion: e.target.value.trim() || null })} className={inputCls} placeholder="Calle, nº, CP, ciudad" />
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Objetivos de facturación */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="mb-1 text-xs font-bold uppercase tracking-wider text-zinc-500">Objetivos de facturación mensual</p>
+            <p className="mb-3 text-xs text-zinc-600">Se ven en el Dashboard como barra de progreso del mes. 0 = sin objetivo.</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Online €/mes</span>
+                <input inputMode="decimal" defaultValue={cfg.objetivo_online ?? 0} onBlur={(e) => guardarCfg("objetivo_online", e.target.value, "Objetivo mensual de facturación online")} className={inputCls} />
+              </label>
+              <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Presencial (GYM) €/mes</span>
+                <input inputMode="decimal" defaultValue={cfg.objetivo_presencial ?? 0} onBlur={(e) => guardarCfg("objetivo_presencial", e.target.value, "Objetivo mensual de facturación del gym")} className={inputCls} />
+              </label>
+            </div>
+          </div>
+
+          {/* Parámetros del negocio */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="mb-1 text-xs font-bold uppercase tracking-wider text-zinc-500">Parámetros del negocio</p>
+            <p className="mb-3 text-xs text-zinc-600">Afectan al Dashboard (ROI), a la hucha del Reparto y a la alarma de Finanzas.</p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Inversión total del local €</span>
+                <input inputMode="decimal" defaultValue={cfg.inversion_local_total ?? 84333.09} onBlur={(e) => guardarCfg("inversion_local_total", e.target.value, "Inversión total del local desde la apertura")} className={inputCls} />
+              </label>
+              <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">La hucha cuenta desde</span>
+                <input type="date" defaultValue={cfgTxt.hucha_desde ?? "2026-03-01"} onBlur={(e) => guardarCfgTxt("hucha_desde", e.target.value, "Fecha desde la que cuenta la hucha")} className={inputCls} />
+              </label>
+              <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Ajuste de la hucha €</span>
+                <input inputMode="decimal" defaultValue={cfg.hucha_ajuste ?? 0} onBlur={(e) => guardarCfg("hucha_ajuste", e.target.value, "Ajuste manual del saldo de la hucha")} className={inputCls} />
+              </label>
+              <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Alarma runway (meses)</span>
+                <input inputMode="decimal" defaultValue={cfg.alarma_runway_meses ?? 3} onBlur={(e) => guardarCfg("alarma_runway_meses", e.target.value, "Avisar si el runway baja de estos meses")} className={inputCls} />
+              </label>
+            </div>
+            <p className="mt-2 text-[11px] text-zinc-600">
+              El <b>ajuste de la hucha</b> sirve para cuadrarla con tu número real: si la app dice 500 € y tú
+              tienes 700 €, pon 200. Puede ser negativo.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ---------- CUENTAS ---------- */}
+      {seccion === "cuentas" && (
+        <div className="flex flex-col gap-3">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-zinc-500">Nueva cuenta</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input placeholder="Nombre (ej: Cuenta ahorro)" value={cuNombre} onChange={(e) => setCuNombre(e.target.value)} className={inputCls} />
+              <label className="flex items-center gap-2 text-sm text-zinc-300">
+                <input type="checkbox" checked={cuTransito} onChange={(e) => setCuTransito(e.target.checked)} className="h-4 w-4 accent-red-600" />
+                En tránsito (TPV/Stripe)
+              </label>
+              <button onClick={crearCuenta} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white">Añadir</button>
+            </div>
+            <p className="mt-2 text-xs text-zinc-600">
+              El saldo inicial es el dinero que había ANTES del primer apunte del libro; el saldo actual se calcula solo.
+            </p>
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
+            {cuentas.map((c) => (
+              <div key={c.id} className="flex flex-wrap items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-0">
+                <span className="min-w-32 flex-1 text-sm font-semibold text-white">
+                  {c.nombre}
+                  {c.es_transito && <span className="ml-2 text-[10px] text-zinc-500">(en tránsito)</span>}
+                </span>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-zinc-500">saldo inicial</span>
+                  <input
+                    defaultValue={Number(c.saldo_inicial)}
+                    onBlur={(e) => { const n = Number(e.target.value.replace(",", ".")); if (Number.isFinite(n) && n !== Number(c.saldo_inicial)) actualizarCuenta(c.id, { saldo_inicial: n }); }}
+                    className={`${inputCls} w-28`}
+                  />
+                  <span className="text-xs text-zinc-500">€</span>
+                </div>
+                <button
+                  onClick={() => actualizarCuenta(c.id, { activa: !c.activa })}
+                  className={`rounded-full px-3 py-1 text-xs font-bold ${c.activa ? "bg-emerald-950 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}
+                >
+                  {c.activa ? "Activa" : "Oculta"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ---------- PERSONAS ---------- */}
       {seccion === "personas" && (

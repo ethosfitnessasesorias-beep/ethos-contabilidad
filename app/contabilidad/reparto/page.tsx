@@ -52,6 +52,7 @@ export default function RepartoPage() {
   const [nominaPuesta, setNominaPuesta] = useState<Set<string>>(new Set()); // "mes-socio"
   const [pagado, setPagado] = useState<Map<string, number>>(new Map()); // "mes-persona" -> € pagados
   const [huchaDesde, setHuchaDesde] = useState("2026-03-01"); // la hucha empezó tras la obra del local
+  const [huchaAjuste, setHuchaAjuste] = useState(0); // cuadre manual con la hucha real (Ajustes → Negocio)
 
   const cargar = useCallback(async () => {
     const [r, inv, c, cue, cat] = await Promise.all([
@@ -90,9 +91,13 @@ export default function RepartoPage() {
       setNominaPuesta(set);
       setPagado(pag);
     }
-    // Fecha de inicio de la hucha (configurable con la clave hucha_desde)
-    const { data: hd } = await supabase.from("config").select("valor").eq("clave", "hucha_desde").maybeSingle();
-    if ((hd as { valor: string } | null)?.valor) setHuchaDesde((hd as { valor: string }).valor);
+    // Fecha de inicio de la hucha y ajuste manual (Ajustes → Negocio)
+    const [hd, ha] = await Promise.all([
+      supabase.from("config_texto").select("valor").eq("clave", "hucha_desde").maybeSingle(),
+      supabase.from("config").select("valor").eq("clave", "hucha_ajuste").maybeSingle(),
+    ]);
+    if ((hd.data as { valor: string } | null)?.valor) setHuchaDesde((hd.data as { valor: string }).valor);
+    setHuchaAjuste(Number((ha.data as { valor: number } | null)?.valor ?? 0));
   }, []);
 
   useEffect(() => {
@@ -157,7 +162,7 @@ export default function RepartoPage() {
   const inversionTotal = inversiones
     .filter((i) => i.mes >= huchaDesde)
     .reduce((s, i) => s + Number(i.inversion), 0);
-  const huchaSaldo = aporte20Total - inversionTotal;
+  const huchaSaldo = aporte20Total - inversionTotal + huchaAjuste;
 
   // Meses del año con las dos filas
   const meses = useMemo(() => {
@@ -244,92 +249,87 @@ export default function RepartoPage() {
         {stat("Hucha (saldo)", eurEntero(huchaSaldo), huchaSaldo < 0 ? "text-red-400" : "text-white", "20% acum. − inversión")}
       </div>
 
-      {/* Detalle por mes */}
+      {/* Detalle por mes (tabla compacta) */}
       {meses.length === 0 ? (
-        <p className="rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-8 text-center text-sm text-zinc-500">
+        <p className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-8 text-center text-sm text-zinc-500">
           Sin datos de reparto en {anyo}.
         </p>
       ) : (
-        <div className="mb-5 flex flex-col gap-2.5">
-          {[...meses].reverse().map(([mes, par]) => {
-            const inv = invDe(mes);
-            return (
-              <div key={mes} className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-black capitalize text-white">{MESLARGO(mes)}</h3>
-                  {inv > 0 && (
-                    <span className="rounded-full bg-amber-950 px-3 py-1 text-xs font-bold text-amber-400">
-                      inversión {eur(inv)} · sale de la hucha
-                    </span>
-                  )}
-                </div>
-                <div className="grid gap-2.5 sm:grid-cols-2">
-                  {(["luis", "david"] as const).map((socio) => {
-                    const f = par[socio];
-                    if (!f) return <div key={socio} />;
-                    const ben = Number(f.beneficio);
-                    const nom = nomina(ben);
-                    const huc = aHucha(ben);
-                    const clave = `${mes}-${socio}`;
-                    return (
-                      <div key={socio} className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3.5">
-                        <div className="mb-2 flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-black ${socio === "luis" ? "bg-emerald-950 text-emerald-300" : "bg-sky-950 text-sky-300"}`}>
-                              {NOMBRE[socio][0]}
-                            </span>
-                            <span className="font-black text-white">{NOMBRE[socio]}</span>
-                          </div>
-                          <button onClick={() => setAbierto(abierto === clave ? null : clave)} className="text-xs font-semibold text-zinc-500 hover:text-white">
-                            {abierto === clave ? "ocultar" : "ver cálculo"}
+        <div className="mb-5 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-zinc-900 text-left text-[10px] font-black uppercase tracking-wider text-zinc-500">
+                <th className="px-3 py-2">Mes</th>
+                <th className="px-3 py-2">Socio</th>
+                <th className="px-3 py-2 text-right">Nómina (80%)</th>
+                <th className="px-3 py-2 text-right">A hucha (20%)</th>
+                <th className="px-3 py-2 text-right">Estado</th>
+                <th className="px-2 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...meses].reverse().flatMap(([mes, par]) => {
+                const inv = invDe(mes);
+                return (["luis", "david"] as const).flatMap((socio, i) => {
+                  const f = par[socio];
+                  if (!f) return [];
+                  const ben = Number(f.beneficio);
+                  const nom = nomina(ben);
+                  const huc = aHucha(ben);
+                  const clave = `${mes}-${socio}`;
+                  const filas = [
+                    <tr key={clave} className={`border-b border-zinc-800/60 last:border-0 ${i === 0 ? "border-t border-t-zinc-700/60" : ""}`}>
+                      <td className="whitespace-nowrap px-3 py-2 capitalize text-zinc-300">
+                        {i === 0 ? MESLARGO(mes) : ""}
+                        {i === 0 && inv > 0 && (
+                          <span className="ml-2 rounded-full bg-amber-950 px-2 py-0.5 text-[10px] font-bold text-amber-400" title="Sale de la hucha">
+                            inv. {eur(inv)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-bold text-white">{NOMBRE[socio]}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-bold text-emerald-400">
+                        {eur(nom)}{ben <= 0 && <span className="ml-1 text-[10px] font-normal text-zinc-600">(sin beneficio)</span>}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right text-sky-400">{eur(huc)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right">
+                        {nom <= 0 ? (
+                          <span className="text-zinc-600">—</span>
+                        ) : nominaPuesta.has(`${mes.slice(0, 7)}-${socio}`) ? (
+                          <span className="text-[11px] font-bold text-emerald-500">✓ apuntada</span>
+                        ) : (
+                          <button onClick={() => registrarNomina(mes, socio, nom)} className="rounded-md bg-zinc-800 px-2.5 py-1 text-[11px] font-bold text-zinc-200 hover:bg-zinc-700">
+                            Apuntar
                           </button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="rounded-lg bg-emerald-950/40 px-3 py-1.5">
-                            <p className="text-[10px] font-bold uppercase text-emerald-500/80">Nómina (80%)</p>
-                            <p className="text-base font-black text-emerald-400">{eur(nom)}</p>
-                            {ben <= 0 && <p className="text-[10px] text-zinc-500">sin beneficio este mes</p>}
-                          </div>
-                          <div className="rounded-lg bg-sky-950/40 px-3 py-1.5">
-                            <p className="text-[10px] font-bold uppercase text-sky-500/80">A hucha (20%)</p>
-                            <p className="text-base font-black text-sky-400">{eur(huc)}</p>
-                          </div>
-                        </div>
-                        {nom > 0 && (
-                          nominaPuesta.has(`${mes.slice(0, 7)}-${socio}`) ? (
-                            <p className="mt-2 text-center text-[11px] font-bold text-emerald-500">✓ nómina apuntada</p>
-                          ) : (
-                            <button
-                              onClick={() => registrarNomina(mes, socio, nom)}
-                              className="mt-2 w-full rounded-lg bg-zinc-800 py-1.5 text-xs font-bold text-zinc-200 hover:bg-zinc-700"
-                            >
-                              Registrar nómina ({eur(nom)})
-                            </button>
-                          )
                         )}
-                        {abierto === clave && (
-                          <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-zinc-800 pt-2 text-xs">
-                            <dt className="text-zinc-500">Cobrado propio</dt>
-                            <dd className="text-right text-zinc-300">{eur(Number(f.cobrado_propio))}</dd>
-                            <dt className="text-zinc-500">Cobrado centro ÷2</dt>
-                            <dd className="text-right text-zinc-300">{eur(Number(f.cobrado_ethos))}</dd>
-                            <dt className="text-zinc-500">− IVA a reservar</dt>
-                            <dd className="text-right text-zinc-400">{eur(Number(f.iva_propio) + Number(f.iva_ethos))}</dd>
-                            <dt className="text-zinc-500">− Gasto (sin inversión ni nóminas)</dt>
-                            <dd className="text-right text-zinc-400">{eur(Number(f.gasto_propio) + Number(f.gasto_ethos))}</dd>
-                            <dt className="border-t border-zinc-800 pt-1 font-bold text-zinc-300">= Beneficio</dt>
-                            <dd className="border-t border-zinc-800 pt-1 text-right font-bold text-white">
-                              {ben > 0 ? eur(ben) : eur(0)}
-                            </dd>
-                          </dl>
-                        )}
-                      </div>
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <button onClick={() => setAbierto(abierto === clave ? null : clave)} className="text-[11px] font-semibold text-zinc-500 hover:text-white">
+                          {abierto === clave ? "cerrar" : "cálculo"}
+                        </button>
+                      </td>
+                    </tr>,
+                  ];
+                  if (abierto === clave) {
+                    filas.push(
+                      <tr key={`${clave}-det`} className="border-b border-zinc-800/60 bg-zinc-950/60">
+                        <td colSpan={6} className="px-4 py-2">
+                          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
+                            <span className="text-zinc-500">Cobrado propio <b className="text-zinc-300">{eur(Number(f.cobrado_propio))}</b></span>
+                            <span className="text-zinc-500">Cobrado centro ÷2 <b className="text-zinc-300">{eur(Number(f.cobrado_ethos))}</b></span>
+                            <span className="text-zinc-500">− IVA a reservar <b className="text-zinc-400">{eur(Number(f.iva_propio) + Number(f.iva_ethos))}</b></span>
+                            <span className="text-zinc-500">− Gasto (sin inversión ni nóminas) <b className="text-zinc-400">{eur(Number(f.gasto_propio) + Number(f.gasto_ethos))}</b></span>
+                            <span className="text-zinc-400">= Beneficio <b className="text-white">{eur(Math.max(0, ben))}</b></span>
+                          </div>
+                        </td>
+                      </tr>
                     );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+                  }
+                  return filas;
+                });
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -407,7 +407,7 @@ export default function RepartoPage() {
           <h3 className="text-sm font-black text-white">Hucha de la empresa</h3>
           <span className={`text-xl font-black ${huchaSaldo < 0 ? "text-red-400" : "text-white"}`}>{eur(huchaSaldo)}</span>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <div className="rounded-lg bg-zinc-950/60 px-3 py-2">
             <p className="text-zinc-500">20% acumulado</p>
             <p className="font-bold text-sky-400">{eur(aporte20Total)}</p>
@@ -417,6 +417,12 @@ export default function RepartoPage() {
             <p className="font-bold text-red-400">−{eur(inversionTotal)}</p>
           </div>
           <div className="rounded-lg bg-zinc-950/60 px-3 py-2">
+            <p className="text-zinc-500">Ajuste manual</p>
+            <p className={`font-bold ${huchaAjuste < 0 ? "text-red-400" : huchaAjuste > 0 ? "text-emerald-400" : "text-zinc-500"}`}>
+              {huchaAjuste === 0 ? "—" : eur(huchaAjuste)}
+            </p>
+          </div>
+          <div className="rounded-lg bg-zinc-950/60 px-3 py-2">
             <p className="text-zinc-500">Saldo</p>
             <p className={`font-bold ${huchaSaldo < 0 ? "text-red-400" : "text-emerald-400"}`}>{eur(huchaSaldo)}</p>
           </div>
@@ -424,6 +430,7 @@ export default function RepartoPage() {
         <p className="mt-2 text-xs text-zinc-500">
           La hucha cuenta desde {new Date(huchaDesde + "T00:00:00").toLocaleDateString("es-ES", { month: "long", year: "numeric" })}:
           la obra del local de antes es inversión inicial (se sigue en el Dashboard), no sale de la hucha.
+          Si tu hucha real no cuadra con esta, pon la diferencia en <b>Ajustes → Negocio → Ajuste de la hucha</b>.
         </p>
       </div>
 

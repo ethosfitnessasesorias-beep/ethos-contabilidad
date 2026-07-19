@@ -44,6 +44,7 @@ export default function Dashboard() {
   const [gastosCanal, setGastosCanal] = useState<{ online: number; presencial: number }>({ online: 0, presencial: 0 });
   const [beneficios, setBeneficios] = useState<Beneficio[]>([]);
   const [inversionTotal, setInversionTotal] = useState(INVERSION_LOCAL);
+  const [objetivos, setObjetivos] = useState<{ online: number; presencial: number }>({ online: 0, presencial: 0 });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -68,7 +69,7 @@ export default function Dashboard() {
         supabase.from("cobros").select("fecha, importe").gte("fecha", desde6),
         supabase.from("gastos").select("canal, total, categorias!inner(nombre)").gte("fecha", `${mesActual}-01`),
         supabase.from("v_reparto_beneficios").select("mes, socio, beneficio").order("mes"),
-        supabase.from("config").select("valor").eq("clave", "inversion_local_total").maybeSingle(),
+        supabase.from("config").select("clave, valor").in("clave", ["inversion_local_total", "objetivo_online", "objetivo_presencial"]),
       ]);
       if (n.error) { setError(n.error.message.includes("v_dashboard_negocio") ? "Falta ejecutar supabase/crm.sql en el SQL Editor." : n.error.message); }
       setNeg((n.data as NegocioFila[]) ?? []);
@@ -87,8 +88,10 @@ export default function Dashboard() {
       }
       setGastosCanal(gc);
       setBeneficios((ben.data as Beneficio[]) ?? []);
-      const invCfg = Number((cfg.data as { valor: string } | null)?.valor);
-      if (Number.isFinite(invCfg) && invCfg > 0) setInversionTotal(invCfg);
+      const claves: Record<string, number> = {};
+      for (const x of (cfg.data as { clave: string; valor: number }[]) ?? []) claves[x.clave] = Number(x.valor);
+      if (claves.inversion_local_total > 0) setInversionTotal(claves.inversion_local_total);
+      setObjetivos({ online: claves.objetivo_online ?? 0, presencial: claves.objetivo_presencial ?? 0 });
 
       const meses: string[] = [];
       for (let i = 5; i >= 0; i--) meses.push(ym(-i));
@@ -176,6 +179,7 @@ export default function Dashboard() {
             const fact = Number(d?.facturado ?? 0);
             const cobr = Number(d?.cobrado ?? 0);
             const neto = fact - gasto;
+            const objetivo = objetivos[canal];
             return (
               <div key={canal} className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
                 <div className="mb-2 flex items-center gap-2">
@@ -197,6 +201,16 @@ export default function Dashboard() {
                     <p className="text-sm font-black text-red-400">{eur0(gasto)}</p>
                   </div>
                 </div>
+                {objetivo > 0 && (
+                  <div className="mt-2">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                      <div className={`h-full rounded-full ${fact >= objetivo ? "bg-emerald-500" : color}`} style={{ width: `${Math.min(100, (fact / objetivo) * 100)}%` }} />
+                    </div>
+                    <p className="mt-1 text-[10px] text-zinc-600">
+                      objetivo {eur0(objetivo)} · {Math.round((fact / objetivo) * 100)}%{fact >= objetivo ? " ✓ conseguido" : ""}
+                    </p>
+                  </div>
+                )}
               </div>
             );
           })}
