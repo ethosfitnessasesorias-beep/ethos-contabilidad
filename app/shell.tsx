@@ -37,6 +37,7 @@ const GRUPOS: { titulo: string; items: ItemNav[] }[] = [
       { href: "/pipeline", etiqueta: "Pipeline", icono: ic("M3 6h18|M7 12h10|M11 18h6") },
       { href: "/actividades", etiqueta: "Actividades", icono: ic("M20 7h-9|M14 17H5|M17 17a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M7 7a3 3 0 1 0 0 .01") },
       { href: "/contenido", etiqueta: "Contenido", icono: ic("M15 10l4.55-2.28A1 1 0 0 1 21 8.62v6.76a1 1 0 0 1-1.45.9L15 14|M3 6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z") },
+      { href: "/contenido/calendario", etiqueta: "Calendario", icono: ic("M8 2v4|M16 2v4|M3 10h18|M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z") },
     ],
   },
   {
@@ -61,7 +62,9 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
   const router = useRouter();
   const [abierta, setAbierta] = useState(false);
 
-  const activo = (href: string) => (href === "/" ? ruta === "/" : ruta.startsWith(href));
+  // "/contenido" no debe iluminarse cuando estás en "/contenido/calendario"
+  const activo = (href: string) =>
+    href === "/" || href === "/contenido" ? ruta === href : ruta.startsWith(href);
 
   const sidebar = (
     <div className="flex h-full flex-col">
