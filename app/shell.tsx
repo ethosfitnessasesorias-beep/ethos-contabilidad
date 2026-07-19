@@ -50,7 +50,8 @@ const GRUPOS: { titulo: string; items: ItemNav[] }[] = [
     titulo: "Análisis",
     items: [
       { href: "/reportes", etiqueta: "Reportes", icono: ic("M4 20V10|M12 20V4|M20 20v-6") },
-      { href: "/inbox", etiqueta: "Inbox", icono: ic("M22 12h-6l-2 3h-4l-2-3H2|M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z") },
+      { href: "/kpis", etiqueta: "KPIs", icono: ic("M3 3v18h18|M7 14l4-4 3 3 5-6") },
+      { href: "/notas", etiqueta: "Notas", icono: ic("M12 20h9|M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z|M4 8h6") },
     ],
   },
 ];
