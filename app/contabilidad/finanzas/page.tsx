@@ -54,10 +54,10 @@ const NOMBRES: Record<string, string> = {
 
 function Tarjeta({ titulo, valor, detalle, alarma, children }: { titulo: string; valor: string; detalle?: string; alarma?: boolean; children?: React.ReactNode }) {
   return (
-    <div className={`rounded-xl border p-3 ${alarma ? "border-red-700 bg-red-950" : "border-zinc-800 bg-zinc-900/40"}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{titulo}</p>
-      <p className={`mt-0.5 text-lg font-black ${alarma ? "text-red-300" : "text-white"}`}>{valor}</p>
-      {detalle && <p className="mt-0.5 text-[11px] leading-tight text-zinc-600">{detalle}</p>}
+    <div className={`rounded-lg border px-3 py-2 ${alarma ? "border-red-700 bg-red-950" : "border-zinc-800 bg-zinc-900/40"}`}>
+      <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">{titulo}</p>
+      <p className={`text-base font-black ${alarma ? "text-red-300" : "text-white"}`}>{valor}</p>
+      {detalle && <p className="text-[10px] leading-tight text-zinc-600">{detalle}</p>}
       {children}
     </div>
   );
@@ -106,27 +106,19 @@ export default function FinanzasPage() {
   return (
     <div className="flex flex-col gap-6">
       {/* KPIs */}
-      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-        <div className="col-span-2 lg:col-span-1">
-          <Tarjeta titulo="Caja libre" valor={eur(kpis.caja_libre)} detalle="Tuyo y usable (ya restados impuestos y hucha)">
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-zinc-800 pt-2 text-[11px]">
-              <span><span className="font-black text-white">{eur(efectivoLibre)}</span> <span className="text-zinc-500">efectivo libre</span></span>
-              <span><span className={`font-black ${bancoLibre < 0 ? "text-red-400" : "text-white"}`}>{eur(bancoLibre)}</span> <span className="text-zinc-500">banco libre</span></span>
-            </div>
-          </Tarjeta>
-        </div>
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <Tarjeta titulo="Caja libre" valor={eur(kpis.caja_libre)} detalle="usable ya restados impuestos y hucha">
+          <p className="text-[10px] text-zinc-500">
+            <b className="text-zinc-300">{eur(efectivoLibre)}</b> efectivo · <b className={bancoLibre < 0 ? "text-red-400" : "text-zinc-300"}>{eur(bancoLibre)}</b> banco
+          </p>
+        </Tarjeta>
         <Tarjeta
           titulo="Runway"
           valor={kpis.runway_meses === null ? "—" : `${kpis.runway_meses} meses`}
-          detalle={`Sin ingresar nada, pagando ${eur(kpis.gasto_fijo_mensual)}/mes de fijos`}
+          detalle={`fijos ${eur(kpis.gasto_fijo_mensual)}/mes`}
           alarma={runwayAlarma}
         />
-        <Tarjeta
-          titulo="Fijos por MRR"
-          valor={kpis.cobertura_fijos === null ? "—" : `${Math.round(Number(kpis.cobertura_fijos) * 100)}%`}
-          detalle={`MRR ${eur(kpis.mrr)}`}
-        />
-        <Tarjeta titulo="Hucha real" valor={eur(kpis.hucha_actual)} detalle={`Reservado (impuestos + hucha) ${eur(reservado)}`} />
+        <Tarjeta titulo="Reservado" valor={eur(reservado)} detalle="impuestos + hucha (no tocar)" />
         <Tarjeta titulo="% efectivo" valor={kpis.pct_efectivo === null ? "—" : `${kpis.pct_efectivo}%`} detalle="tiende a 0" />
       </div>
 

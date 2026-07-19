@@ -61,13 +61,25 @@ function vecesEnMes(r: Recurrente, primerDiaMes: Date): number {
   return veces;
 }
 
+// Normaliza un concepto para comparar: minúsculas, sin tildes ni espacios raros
+const norm = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+// ¿Son el mismo concepto? Igual o uno contenido en el otro ("alquiler" ~ "alquiler local nave")
+const parecidos = (a: string, b: string) => a === b || (a.length > 3 && b.length > 3 && (a.includes(b) || b.includes(a)));
+
 // Sugerencias de recurrentes desde los datos reales del libro:
 // - un gasto por cada CONCEPTO fijo de los últimos ~2 meses (última cuantía)
 // - un ingreso con el MRR de las suscripciones (facturas recurrentes)
+// Respeta lo borrado a mano (tesoreria_ignorados) y no duplica parecidos.
 async function calcularSugerencias(existentes: { concepto: string }[]): Promise<
   { concepto: string; tipo: "ingreso" | "gasto"; importe: number; dia_mes: number; cada_meses: number }[]
 > {
-  const ya = new Set(existentes.map((r) => r.concepto.trim().toLowerCase()));
+  const { data: ign } = await supabase.from("tesoreria_ignorados").select("concepto");
+  const yaLista = [
+    ...existentes.map((r) => norm(r.concepto)),
+    ...((ign as { concepto: string }[]) ?? []).map((x) => norm(x.concepto)),
+  ];
+  const ya = { has: (k: string) => yaLista.some((e) => parecidos(e, k)) };
   const desde = new Date();
   desde.setDate(desde.getDate() - 70);
   const desdeISO = desde.toISOString().slice(0, 10);
@@ -85,7 +97,7 @@ async function calcularSugerencias(existentes: { concepto: string }[]): Promise<
   for (const g of (gs.data ?? []) as unknown as { concepto: string; total: number; fecha: string; es_fijo: boolean | null; categorias: { es_fijo: boolean; nombre: string } }[]) {
     if (!g.es_fijo && !g.categorias?.es_fijo) continue;
     if (/mina/i.test(g.categorias?.nombre ?? "") || /^(n[óo]mina|pago )/i.test(g.concepto)) continue; // nóminas/pagos de reparto no
-    const k = g.concepto.trim().toLowerCase();
+    const k = norm(g.concepto);
     porConcepto.set(k, { concepto: g.concepto.trim(), total: Number(g.total), dia: Math.min(28, new Date(g.fecha + "T00:00:00").getDate()) });
   }
   for (const [k, v] of porConcepto) {
@@ -99,7 +111,7 @@ async function calcularSugerencias(existentes: { concepto: string }[]): Promise<
     .filter((c) => c.facturas?.es_recurrente || /grupal|cuota|suscri|mensualidad|acceso libre/i.test(c.facturas?.categorias?.nombre ?? ""))
     .reduce((s, c) => s + Number(c.importe), 0);
   const ETIQ_MRR = "Suscripciones (grupales y cuotas)";
-  if (mrr > 0 && !ya.has(ETIQ_MRR.toLowerCase()) && !ya.has("domiciliaciones (mrr)")) {
+  if (mrr > 0 && !ya.has(norm(ETIQ_MRR)) && !ya.has(norm("Domiciliaciones (MRR)"))) {
     nuevos.push({ concepto: ETIQ_MRR, tipo: "ingreso", importe: Math.round(mrr / 2.3), dia_mes: 1, cada_meses: 1 });
   }
   return nuevos;
@@ -244,8 +256,11 @@ export default function Tesoreria() {
   }
 
   async function borrar(id: number) {
+    // Recuerda el concepto borrado para que la sincronización no lo re-cree
+    const r = recurrentes.find((x) => x.id === id);
+    if (r) await supabase.from("tesoreria_ignorados").upsert({ concepto: r.concepto.trim() });
     await supabase.from("tesoreria_recurrentes").delete().eq("id", id);
-    cargar();
+    setRecurrentes((prev) => prev.filter((x) => x.id !== id));
   }
 
   // Resincroniza a mano (misma lógica que la sincronización automática)
@@ -370,21 +385,19 @@ export default function Tesoreria() {
       </div>
 
       {/* Nómina e inversión: variables, no entran como gasto fijo */}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Nómina media (últ. 3 meses)</p>
-          <p className="mt-1 text-2xl font-black text-emerald-400">{eur(nominaMedia)}</p>
-          <p className="mt-1 text-xs text-zinc-600">
-            Es el 80% del beneficio, variable. No se incluye en la previsión de arriba: solo se
-            retira lo que hay, así el saldo nunca se fuerza a negativo.
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Nómina media (últ. 3 meses)</p>
+          <p className="text-base font-black text-emerald-400">{eur(nominaMedia)}</p>
+          <p className="text-[10px] leading-snug text-zinc-600">
+            80% del beneficio, variable. No entra en la previsión: solo se retira lo que hay.
           </p>
         </div>
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Inversión media (últ. 3 meses)</p>
-          <p className="mt-1 text-2xl font-black text-amber-400">{eur(inversionMedia)}</p>
-          <p className="mt-1 text-xs text-zinc-600">
-            Material, máquinas, obra… Sale de la hucha (el 20% ahorrado), no de los fijos. Es
-            discrecional: solo cuando hay ahorro suficiente.
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Inversión media (últ. 3 meses)</p>
+          <p className="text-base font-black text-amber-400">{eur(inversionMedia)}</p>
+          <p className="text-[10px] leading-snug text-zinc-600">
+            Material, máquinas, obra… Sale de la hucha, no de los fijos; solo cuando hay ahorro.
           </p>
         </div>
       </div>

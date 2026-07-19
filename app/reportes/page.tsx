@@ -209,9 +209,9 @@ export default function Reportes() {
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-amber-500" /> Inversión</span>
             </div>
           </div>
-          <div className="flex items-end gap-2" style={{ height: 150 }}>
+          <div className="flex items-stretch gap-2" style={{ height: 150 }}>
             {MESES.map((m, i) => (
-              <div key={m} className="flex flex-1 flex-col items-center gap-1">
+              <div key={m} className="flex h-full flex-1 flex-col items-center gap-1">
                 <div className="flex w-full flex-1 items-end justify-center gap-0.5">
                   <div className="w-1/2 max-w-5 rounded-t bg-emerald-500" style={{ height: `${(pivotIng.total[i] / maxChart) * 100}%` }} title={`Ingresos ${eur0(pivotIng.total[i])}`} />
                   <div className="flex w-1/2 max-w-5 flex-col justify-end" style={{ height: "100%" }}>

@@ -255,7 +255,7 @@ export default function ImportarPage() {
     <div>
       <div className="mb-4">
         <h2 className="text-xl font-black text-white">Importar extracto del banco</h2>
-        <p className="mt-0.5 text-sm text-zinc-500">
+        <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
           Sube el CSV del banco, cuadra las columnas y crea gastos y cobros de golpe. Detecta posibles duplicados.
         </p>
       </div>

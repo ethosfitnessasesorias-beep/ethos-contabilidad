@@ -296,9 +296,9 @@ export default function Dashboard() {
                 <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-500" /> Cobrado</span>
               </div>
             </div>
-            <div className="flex items-end gap-3" style={{ height: 150 }}>
+            <div className="flex items-stretch gap-3" style={{ height: 150 }}>
               {evo.map((e) => (
-                <div key={e.mes} className="flex flex-1 flex-col items-center gap-1">
+                <div key={e.mes} className="flex h-full flex-1 flex-col items-center gap-1">
                   <div className="flex w-full flex-1 items-end justify-center gap-1">
                     <div className="w-1/2 max-w-5 rounded-t bg-zinc-600" style={{ height: `${(e.facturado / maxEvo) * 100}%` }} title={`Facturado ${eur0(e.facturado)}`} />
                     <div className="w-1/2 max-w-5 rounded-t bg-emerald-500" style={{ height: `${(e.cobrado / maxEvo) * 100}%` }} title={`Cobrado ${eur0(e.cobrado)}`} />

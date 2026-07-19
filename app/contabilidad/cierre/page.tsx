@@ -143,7 +143,7 @@ export default function CierrePage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-black text-white">Cierre de mes</h2>
-          <p className="mt-0.5 text-sm text-zinc-500">Repasa todo lo del mes en una pantalla, en orden.</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">Repasa todo lo del mes en una pantalla, en orden.</p>
         </div>
         <input
           type="month"

@@ -155,10 +155,10 @@ export default function RepartoPage() {
   const totalColab = colabAnyo.reduce((s, c) => s + Math.max(0, c.aPagar - c.pagado), 0);
 
   const stat = (etiqueta: string, valor: string, color: string, sub?: string) => (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{etiqueta}</p>
-      <p className={`mt-0.5 text-lg font-black ${color}`}>{valor}</p>
-      {sub && <p className="mt-0.5 text-[11px] text-zinc-600">{sub}</p>}
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+      <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">{etiqueta}</p>
+      <p className={`text-base font-black ${color}`}>{valor}</p>
+      {sub && <p className="text-[10px] leading-tight text-zinc-600">{sub}</p>}
     </div>
   );
 
@@ -167,7 +167,7 @@ export default function RepartoPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-black text-white">Reparto de beneficios</h2>
-          <p className="mt-0.5 text-sm text-zinc-500">
+          <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
             Nómina = 80% del beneficio · 20% a la hucha. Sobre lo cobrado, sin contar nóminas ni inversión.
           </p>
         </div>
@@ -207,19 +207,19 @@ export default function RepartoPage() {
         <div className="mb-5 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-800 text-left text-[10px] font-black uppercase tracking-wider text-zinc-500">
-                <th className="px-5 py-3">Socio</th>
-                <th className="px-5 py-3 text-right">Nómina (80%)</th>
-                <th className="px-5 py-3 text-right">A hucha (20%)</th>
-                <th className="px-5 py-3 text-center">Pagado</th>
-                <th className="px-4 py-3"></th>
+              <tr className="border-b border-zinc-800 text-left text-[9px] font-black uppercase tracking-widest text-zinc-600">
+                <th className="px-4 py-2">Socio</th>
+                <th className="px-4 py-2 text-right">Nómina (80%)</th>
+                <th className="px-4 py-2 text-right">A hucha (20%)</th>
+                <th className="px-4 py-2 text-center">Pagado</th>
+                <th className="px-3 py-2"></th>
               </tr>
             </thead>
             <tbody>
               {[...meses].reverse().flatMap(([mes, par]) => {
                 const cabecera = (
-                  <tr key={`${mes}-h`} className="border-b border-zinc-800/60 bg-zinc-900/80">
-                    <td colSpan={5} className="px-5 py-2 text-[11px] font-black uppercase tracking-widest text-zinc-400">
+                  <tr key={`${mes}-h`} className="border-y border-zinc-800/70 bg-gradient-to-r from-zinc-900 to-zinc-900/30">
+                    <td colSpan={5} className="px-4 py-1.5 text-[10px] font-black uppercase tracking-[0.15em] text-zinc-500">
                       <span className="capitalize">{MESLARGO(mes)}</span>
                     </td>
                   </tr>
@@ -233,39 +233,39 @@ export default function RepartoPage() {
                   const clave = `${mes}-${socio}`;
                   const pagadoTick = pagados.has(`${mes.slice(0, 7)}-${socio}`);
                   const filas = [
-                    <tr key={clave} className="border-b border-zinc-800/40 last:border-0 hover:bg-zinc-900/40">
-                      <td className="px-5 py-2.5">
-                        <span className="flex items-center gap-2.5">
-                          <span className={`grid h-7 w-7 place-items-center rounded-full text-[11px] font-black ${socio === "luis" ? "bg-emerald-950 text-emerald-300" : "bg-sky-950 text-sky-300"}`}>
+                    <tr key={clave} className="border-b border-zinc-800/30 last:border-0 hover:bg-zinc-900/40">
+                      <td className="px-4 py-2">
+                        <span className="flex items-center gap-2">
+                          <span className={`grid h-5 w-5 place-items-center rounded-full text-[9px] font-black ${socio === "luis" ? "bg-emerald-950 text-emerald-300" : "bg-sky-950 text-sky-300"}`}>
                             {NOMBRE[socio][0]}
                           </span>
-                          <span className="font-bold text-white">{NOMBRE[socio]}</span>
+                          <span className="text-[13px] font-semibold text-zinc-200">{NOMBRE[socio]}</span>
                         </span>
                       </td>
-                      <td className="whitespace-nowrap px-5 py-2.5 text-right text-[15px] font-black tabular-nums text-emerald-400">
+                      <td className="whitespace-nowrap px-4 py-2 text-right text-[13px] font-bold tabular-nums text-emerald-400">
                         {eur(nom)}
-                        {ben <= 0 && <p className="text-[10px] font-normal text-zinc-600">sin beneficio</p>}
+                        {ben <= 0 && <span className="ml-1.5 text-[9px] font-normal text-zinc-600">sin beneficio</span>}
                       </td>
-                      <td className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums text-sky-400">{eur(huc)}</td>
-                      <td className="px-5 py-2.5 text-center">
+                      <td className="whitespace-nowrap px-4 py-2 text-right text-[12px] tabular-nums text-sky-400/90">{eur(huc)}</td>
+                      <td className="px-4 py-2 text-center">
                         {nom <= 0 ? (
                           <span className="text-zinc-700">—</span>
                         ) : (
                           <button
                             onClick={() => togglePagado(mes, socio)}
                             title={pagadoTick ? "Quitar el pagado" : "Marcar como pagado"}
-                            className={`rounded-full px-3 py-1 text-[11px] font-black tracking-wide ${
+                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold tracking-wide ${
                               pagadoTick
-                                ? "bg-emerald-600/20 text-emerald-400 ring-1 ring-emerald-700"
-                                : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                                ? "bg-emerald-600/15 text-emerald-400 ring-1 ring-emerald-800/60"
+                                : "bg-zinc-800/80 text-zinc-500 hover:text-zinc-300"
                             }`}
                           >
-                            {pagadoTick ? "✓ PAGADO" : "pendiente"}
+                            {pagadoTick ? "✓ pagado" : "pendiente"}
                           </button>
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <button onClick={() => setAbierto(abierto === clave ? null : clave)} className="text-[11px] font-semibold text-zinc-600 hover:text-white">
+                      <td className="px-3 py-2 text-right">
+                        <button onClick={() => setAbierto(abierto === clave ? null : clave)} className="text-[10px] font-semibold text-zinc-600 hover:text-white">
                           {abierto === clave ? "cerrar" : "cálculo"}
                         </button>
                       </td>
@@ -273,9 +273,9 @@ export default function RepartoPage() {
                   ];
                   if (abierto === clave) {
                     filas.push(
-                      <tr key={`${clave}-det`} className="border-b border-zinc-800/40 bg-zinc-950/60">
-                        <td colSpan={5} className="px-5 py-2.5">
-                          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
+                      <tr key={`${clave}-det`} className="border-b border-zinc-800/30 bg-zinc-950/60">
+                        <td colSpan={5} className="px-4 py-2">
+                          <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px]">
                             <span className="text-zinc-500">Cobrado propio <b className="text-zinc-300">{eur(Number(f.cobrado_propio))}</b></span>
                             <span className="text-zinc-500">Cobrado centro ÷2 <b className="text-zinc-300">{eur(Number(f.cobrado_ethos))}</b></span>
                             <span className="text-zinc-500">− IVA a reservar <b className="text-zinc-400">{eur(Number(f.iva_propio) + Number(f.iva_ethos))}</b></span>
