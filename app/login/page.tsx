@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -31,6 +32,7 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center bg-zinc-950 px-6">
       <div className="w-full max-w-sm">
+        <Image src="/logo.png" alt="Ethos" width={80} height={80} className="mx-auto mb-4 h-20 w-20 rounded-2xl shadow-lg shadow-red-950/40" priority />
         <h1 className="mb-1 text-center text-3xl font-black tracking-tight text-white">
           ETHOS
         </h1>

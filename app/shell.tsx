@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -69,9 +70,7 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2.5 px-5 py-5">
-        <span className="grid h-8 w-8 place-items-center rounded-lg bg-red-600 text-sm font-black text-white">
-          E
-        </span>
+        <Image src="/logo.png" alt="Ethos" width={32} height={32} className="h-8 w-8 rounded-lg" priority />
         <span className="font-black tracking-tight text-white">Ethos Fitness</span>
       </div>
 
