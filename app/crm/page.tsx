@@ -6,8 +6,20 @@ import { supabase } from "@/lib/supabase";
 import { useSesion } from "@/lib/useSesion";
 import { Shell } from "../shell";
 import Modal from "@/components/Modal";
-import { ATRIBUCIONES } from "@/lib/tipos";
+import { ATRIBUCIONES, METODO_POR_CUENTA, type MetodoPago } from "@/lib/tipos";
 import { eur } from "@/lib/formato";
+
+interface FacSaldo {
+  id: number;
+  concepto: string;
+  fecha_emision: string;
+  total: number;
+  cobrado: number;
+  pendiente: number;
+  condonado: number;
+}
+interface CobroRow { id: number; factura_id: number; fecha: string; importe: number }
+interface CuentaMin { id: number; codigo: string; nombre: string }
 
 interface Cli {
   id: number;
@@ -69,6 +81,13 @@ export default function CrmPage() {
   const [f, setF] = useState<Partial<Cli>>({});
   const [saldos, setSaldos] = useState<Map<number, { cobrado: number; pendiente: number }>>(new Map());
   const [error, setError] = useState<string | null>(null);
+
+  // Editor de dinero (pagado/deuda) de un cliente
+  const [dineroCli, setDineroCli] = useState<{ cli: Cli; facturas: FacSaldo[]; cobros: CobroRow[] } | null>(null);
+  const [cuentas, setCuentas] = useState<CuentaMin[]>([]);
+  const [cuentaCobro, setCuentaCobro] = useState("banco");
+  const [fechaCobro, setFechaCobro] = useState(new Date().toISOString().slice(0, 10));
+  const [verCobrosDe, setVerCobrosDe] = useState<number | null>(null);
 
   const cargar = useCallback(async () => {
     const { data, error } = await supabase.from("clientes").select("*").order("fecha_inicio", { ascending: false, nullsFirst: false });
@@ -138,6 +157,72 @@ export default function CrmPage() {
     setCli((prev) => prev.map((x) => (x.id === c.id ? { ...x, canal } : x)));
     const { error } = await supabase.from("clientes").update({ canal }).eq("id", c.id);
     if (error) { setError(error.message); cargar(); }
+  }
+
+  // ---------- Editor de dinero: las casillas Pagado/Deuda salen de las
+  // facturas y cobros; aquí se cobran, se perdonan o se corrigen. ----------
+  async function abrirDinero(c: Cli) {
+    setError(null);
+    const [f, cu] = await Promise.all([
+      supabase
+        .from("v_facturas_saldo")
+        .select("id, concepto, fecha_emision, total, cobrado, pendiente, condonado")
+        .eq("cliente_id", c.id)
+        .order("fecha_emision", { ascending: false }),
+      cuentas.length
+        ? Promise.resolve({ data: cuentas, error: null })
+        : supabase.from("cuentas").select("id, codigo, nombre").eq("activa", true).order("id"),
+    ]);
+    if (f.error) return setError(f.error.message);
+    if (!cuentas.length && cu.data) setCuentas(cu.data as CuentaMin[]);
+    const facs = (f.data as FacSaldo[]) ?? [];
+    let cobs: CobroRow[] = [];
+    if (facs.length) {
+      const { data } = await supabase
+        .from("cobros")
+        .select("id, factura_id, fecha, importe")
+        .in("factura_id", facs.map((x) => x.id))
+        .order("fecha", { ascending: false });
+      cobs = (data as CobroRow[]) ?? [];
+    }
+    setVerCobrosDe(null);
+    setDineroCli({ cli: c, facturas: facs, cobros: cobs });
+  }
+
+  async function refrescarDinero() {
+    if (dineroCli) await abrirDinero(dineroCli.cli);
+    cargar();
+  }
+
+  async function cobrarFactura(f: FacSaldo) {
+    const cuenta = cuentas.find((x) => x.codigo === cuentaCobro) ?? cuentas[0];
+    if (!cuenta) return setError("No hay cuentas activas.");
+    const { error } = await supabase.from("cobros").insert({
+      factura_id: f.id,
+      fecha: fechaCobro,
+      importe: Math.round(Number(f.pendiente) * 100) / 100,
+      cuenta_id: cuenta.id,
+      metodo: (METODO_POR_CUENTA[cuenta.codigo] ?? "transferencia") as MetodoPago,
+    });
+    if (error) return setError(error.message);
+    refrescarDinero();
+  }
+
+  async function perdonarFactura(f: FacSaldo) {
+    if (!confirm(`¿Perdonar los ${eur(Number(f.pendiente))} pendientes de "${f.concepto}"?\n\nNo entra dinero en caja: la deuda se apaga (p. ej. si en realidad nunca se va a cobrar o la factura estaba mal).`)) return;
+    const { error } = await supabase
+      .from("facturas")
+      .update({ condonado: Math.round((Number(f.condonado) + Number(f.pendiente)) * 100) / 100 })
+      .eq("id", f.id);
+    if (error) return setError(error.message);
+    refrescarDinero();
+  }
+
+  async function borrarCobro(co: CobroRow) {
+    if (!confirm(`¿Borrar el cobro de ${eur(Number(co.importe))} del ${new Date(co.fecha).toLocaleDateString("es-ES")}?\n\nÚsalo si se apuntó por error: el dinero saldrá del saldo de la cuenta y volverá a contar como deuda.`)) return;
+    const { error } = await supabase.from("cobros").delete().eq("id", co.id);
+    if (error) return setError(error.message);
+    refrescarDinero();
   }
 
   async function toggleSeg(c: Cli, campo: keyof Cli) {
@@ -357,8 +442,18 @@ export default function CrmPage() {
                     <td className="px-3 py-2.5 text-zinc-400">{c.tipo_plan ?? "—"}</td>
                     <td className="px-3 py-2.5 text-zinc-300">{tiempo}</td>
                     <td className="px-3 py-2.5 text-zinc-300">{compra}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-emerald-400">{sd.cobrado > 0.01 ? eur(sd.cobrado) : "—"}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5">{sd.pendiente > 0.01 ? <span className="rounded-full bg-amber-950 px-2.5 py-0.5 text-[11px] font-bold text-amber-400">{eur(sd.pendiente)}</span> : <span className="text-zinc-600">—</span>}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5">
+                      <button onClick={() => abrirDinero(c)} title="Ver y corregir cobros" className="font-semibold text-emerald-400 hover:underline">
+                        {sd.cobrado > 0.01 ? eur(sd.cobrado) : <span className="text-zinc-600">—</span>}
+                      </button>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5">
+                      <button onClick={() => abrirDinero(c)} title="Ver y corregir cobros">
+                        {sd.pendiente > 0.01
+                          ? <span className="rounded-full bg-amber-950 px-2.5 py-0.5 text-[11px] font-bold text-amber-400 hover:bg-amber-900">{eur(sd.pendiente)}</span>
+                          : <span className="text-zinc-600">—</span>}
+                      </button>
+                    </td>
                     {SEG.map((s) => (
                       <td key={String(s.campo)} className="px-2 py-2.5 text-center">
                         <button
@@ -420,6 +515,103 @@ export default function CrmPage() {
               <button onClick={borrar} title="Borrar permanentemente" className="rounded-xl border border-red-900 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-950">Borrar</button>
             </div>
           </div>
+        </Modal>
+
+        {/* Editor de dinero: cobros y deuda del cliente */}
+        <Modal
+          abierto={!!dineroCli}
+          onCerrar={() => setDineroCli(null)}
+          titulo={dineroCli ? `Dinero de ${dineroCli.cli.nombre} ${dineroCli.cli.apellidos ?? ""}` : ""}
+          ancho="max-w-2xl"
+        >
+          {dineroCli && (() => {
+            const tFact = dineroCli.facturas.reduce((s, f) => s + Number(f.total), 0);
+            const tCob = dineroCli.facturas.reduce((s, f) => s + Number(f.cobrado), 0);
+            const tPend = dineroCli.facturas.reduce((s, f) => s + Math.max(0, Number(f.pendiente)), 0);
+            const tCond = dineroCli.facturas.reduce((s, f) => s + Number(f.condonado), 0);
+            return (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 rounded-xl bg-zinc-950/60 px-3 py-2 text-[13px]">
+                  <span className="text-zinc-500">Facturado <b className="text-white">{eur(tFact)}</b></span>
+                  <span className="text-zinc-500">Pagado <b className="text-emerald-400">{eur(tCob)}</b></span>
+                  <span className="text-zinc-500">Deuda <b className={tPend > 0.01 ? "text-amber-400" : "text-zinc-400"}>{eur(tPend)}</b></span>
+                  {tCond > 0.01 && <span className="text-zinc-500">Perdonado <b className="text-zinc-400">{eur(tCond)}</b></span>}
+                </div>
+
+                {tPend > 0.01 && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                    Al cobrar, apuntar en
+                    <select value={cuentaCobro} onChange={(e) => setCuentaCobro(e.target.value)} className="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white outline-none">
+                      {cuentas.map((c) => <option key={c.codigo} value={c.codigo}>{c.nombre.split(" (")[0]}</option>)}
+                    </select>
+                    con fecha
+                    <input type="date" value={fechaCobro} onChange={(e) => setFechaCobro(e.target.value)} className="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white outline-none" />
+                  </div>
+                )}
+
+                {dineroCli.facturas.length === 0 ? (
+                  <p className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-6 text-center text-sm text-zinc-600">
+                    Este cliente no tiene facturas. El pagado y la deuda salen de sus facturas y cobros:
+                    crea una desde Contabilidad → Facturas y aparecerá aquí.
+                  </p>
+                ) : (
+                  <div className="max-h-80 overflow-y-auto rounded-xl border border-zinc-800">
+                    {dineroCli.facturas.map((f) => {
+                      const pend = Number(f.pendiente);
+                      const cobs = dineroCli.cobros.filter((c) => c.factura_id === f.id);
+                      return (
+                        <div key={f.id} className="border-b border-zinc-800/60 px-3 py-2 last:border-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-[13px] font-semibold text-white">{f.concepto}</p>
+                              <p className="text-[11px] text-zinc-500">
+                                {new Date(f.fecha_emision).toLocaleDateString("es-ES")} · total {eur(Number(f.total))} · pagado {eur(Number(f.cobrado))}
+                                {Number(f.condonado) > 0.01 && <> · perdonado {eur(Number(f.condonado))}</>}
+                                {cobs.length > 0 && (
+                                  <button onClick={() => setVerCobrosDe(verCobrosDe === f.id ? null : f.id)} className="ml-2 text-zinc-400 underline hover:text-white">
+                                    {cobs.length} cobro{cobs.length === 1 ? "" : "s"} {verCobrosDe === f.id ? "▴" : "▾"}
+                                  </button>
+                                )}
+                              </p>
+                            </div>
+                            {pend > 0.01 ? (
+                              <span className="flex shrink-0 items-center gap-1.5">
+                                <span className="rounded-full bg-amber-950 px-2 py-0.5 text-[11px] font-bold text-amber-400">debe {eur(pend)}</span>
+                                <button onClick={() => cobrarFactura(f)} className="rounded-lg bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-emerald-600">
+                                  Cobrar
+                                </button>
+                                <button onClick={() => perdonarFactura(f)} title="Apagar la deuda sin cobrarla" className="rounded-lg bg-zinc-800 px-2.5 py-1 text-[11px] font-bold text-zinc-400 hover:text-zinc-200">
+                                  Perdonar
+                                </button>
+                              </span>
+                            ) : (
+                              <span className="shrink-0 text-[11px] font-bold text-emerald-500">✓ al día</span>
+                            )}
+                          </div>
+                          {verCobrosDe === f.id && cobs.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1.5 border-t border-zinc-800/60 pt-1.5">
+                              {cobs.map((co) => (
+                                <span key={co.id} className="flex items-center gap-1 rounded-md bg-zinc-900 px-2 py-1 text-[11px] text-zinc-300">
+                                  {new Date(co.fecha).toLocaleDateString("es-ES")} · <b className={Number(co.importe) < 0 ? "text-red-400" : "text-emerald-400"}>{eur(Number(co.importe))}</b>
+                                  <button onClick={() => borrarCobro(co)} title="Borrar este cobro (se apuntó por error)" className="ml-1 font-bold text-zinc-600 hover:text-red-400">✕</button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <p className="text-[10px] leading-snug text-zinc-600">
+                  Las casillas Pagado y Deuda se calculan solas con las facturas y cobros: <b>Cobrar</b> apunta el
+                  cobro en la cuenta elegida, <b>Perdonar</b> apaga la deuda sin mover dinero, y la ✕ de un cobro
+                  lo borra si se apuntó por error. Todo cuadra automáticamente con el Libro y Finanzas.
+                </p>
+              </div>
+            );
+          })()}
         </Modal>
       </div>
     </Shell>
