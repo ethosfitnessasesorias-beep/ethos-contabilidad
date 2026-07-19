@@ -67,6 +67,7 @@ export default function FinanzasPage() {
   const [kpis, setKpis] = useState<Kpis | null>(null);
   const [saldos, setSaldos] = useState<Saldo[]>([]);
   const [morosos, setMorosos] = useState<Moroso[]>([]);
+  const [telefonos, setTelefonos] = useState<Map<number, string>>(new Map());
   const [reparto, setReparto] = useState<RepartoFila[]>([]);
   const [mesReparto, setMesReparto] = useState(new Date().toISOString().slice(0, 7));
   const [alarma, setAlarma] = useState(3);
@@ -81,8 +82,21 @@ export default function FinanzasPage() {
       ]);
       if (k.data) setKpis(k.data as Kpis);
       setSaldos((s.data as Saldo[]) ?? []);
-      setMorosos((m.data as Moroso[]) ?? []);
+      const lista = (m.data as Moroso[]) ?? [];
+      setMorosos(lista);
       if (cfg.data) setAlarma(Number(cfg.data.valor));
+      // Teléfonos de los morosos para reclamar por WhatsApp
+      if (lista.length) {
+        const { data: tels } = await supabase
+          .from("facturas")
+          .select("id, clientes(nombre, telefono)")
+          .in("id", lista.map((x) => x.id));
+        const map = new Map<number, string>();
+        for (const t of (tels as unknown as { id: number; clientes: { telefono: string | null } | null }[]) ?? []) {
+          if (t.clientes?.telefono) map.set(t.id, t.clientes.telefono);
+        }
+        setTelefonos(map);
+      }
     })();
   }, []);
 
@@ -193,24 +207,38 @@ export default function FinanzasPage() {
           </p>
         ) : (
           <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
-            {morosos.map((m) => (
-              <Link
-                key={m.id}
-                href={`/facturas/${m.id}`}
-                className="flex items-center justify-between gap-3 border-b border-zinc-800 px-3 py-2 last:border-0 hover:bg-zinc-900"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-semibold text-white">{m.cliente ?? m.concepto}</p>
-                  <p className="truncate text-[11px] text-zinc-500">
-                    Factura · {m.concepto} · {new Date(m.fecha_emision).toLocaleDateString("es-ES")}
-                  </p>
+            {morosos.map((m) => {
+              const tel = telefonos.get(m.id);
+              const telLimpio = tel ? tel.replace(/\D/g, "") : null;
+              const waTel = telLimpio ? (telLimpio.length === 9 ? `34${telLimpio}` : telLimpio) : null;
+              const msg = `¡Hola ${(m.cliente ?? "").split(" ")[0]}! Somos Ethos Fitness 💪 Nos consta pendiente el pago de "${m.concepto}" (${eur(Number(m.pendiente))}). ¿Puedes revisarlo cuando tengas un momento? ¡Gracias!`;
+              return (
+                <div key={m.id} className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 last:border-0 hover:bg-zinc-900">
+                  <Link href={`/facturas/${m.id}`} className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-semibold text-white">{m.cliente ?? m.concepto}</p>
+                      <p className="truncate text-[11px] text-zinc-500">
+                        Factura · {m.concepto} · {new Date(m.fecha_emision).toLocaleDateString("es-ES")}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[13px] font-bold text-amber-400">{eur(Number(m.pendiente))}</span>
+                  </Link>
+                  {waTel ? (
+                    <a
+                      href={`https://wa.me/${waTel}?text=${encodeURIComponent(msg)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Reclamar por WhatsApp"
+                      className="shrink-0 rounded-lg bg-emerald-950 px-2.5 py-1.5 text-[11px] font-bold text-emerald-400 hover:bg-emerald-900"
+                    >
+                      WhatsApp
+                    </a>
+                  ) : (
+                    <span className="shrink-0 text-[10px] text-zinc-700" title="Sin teléfono en el CRM">sin tel.</span>
+                  )}
                 </div>
-                <span className="flex shrink-0 items-center gap-2">
-                  <span className="text-[13px] font-bold text-amber-400">{eur(Number(m.pendiente))}</span>
-                  <span className="text-[11px] text-zinc-600">editar ›</span>
-                </span>
-              </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

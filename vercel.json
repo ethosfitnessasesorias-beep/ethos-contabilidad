@@ -1,0 +1,6 @@
+{
+  "crons": [
+    { "path": "/api/cron-impagos/a21f9c3a4183238fffd9e742aab51940", "schedule": "0 8 * * 1" },
+    { "path": "/api/cron-resumen/a21f9c3a4183238fffd9e742aab51940", "schedule": "0 7 1 * *" }
+  ]
+}

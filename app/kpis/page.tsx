@@ -53,6 +53,9 @@ export default function KpisPage() {
     altas: Record<Negocio, number[]>; bajas: Record<Negocio, number[]>; activos: Record<Negocio, number>;
   } | null>(null);
   const [cajaLibre, setCajaLibre] = useState(0);
+  const [objetivos, setObjetivos] = useState<Record<string, number>>({}); // "negocio:metrica" -> objetivo anual
+  const [clientesRaw, setClientesRaw] = useState<{ id: number; canal: string | null; fecha_inicio: string | null; fecha_baja: string | null }[]>([]);
+  const [cobradoCliente, setCobradoCliente] = useState<Map<number, number>>(new Map());
   const [sueldo, setSueldo] = useState("1200");
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -69,19 +72,30 @@ export default function KpisPage() {
     const mesDe = (f: string) => new Date(f + "T00:00:00").getMonth();
     const vacio = (): Record<Negocio, number[]> => ({ online: Array(12).fill(0), gym: Array(12).fill(0) });
 
-    const [kv, kd, fac, cob, gas, cli, k] = await Promise.all([
+    const [kv, kd, fac, cob, gas, cli, k, obj, sal] = await Promise.all([
       supabase.from("kpi_valores").select("*").gte("mes", desde).lt("mes", hasta),
       supabase.from("kpi_diario").select("*").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("facturas").select("fecha_emision, total, canal, computa_reparto").gte("fecha_emision", desde).lt("fecha_emision", hasta),
       supabase.from("cobros").select("fecha, importe, facturas!inner(canal, computa_reparto)").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("gastos").select("fecha, total, canal, categorias!inner(nombre)").gte("fecha", desde).lt("fecha", hasta),
-      supabase.from("clientes").select("canal, fecha_inicio, fecha_baja"),
+      supabase.from("clientes").select("id, canal, fecha_inicio, fecha_baja"),
       supabase.from("v_kpis").select("caja_libre").single(),
+      supabase.from("kpi_objetivos").select("*").eq("anyo", anyo),
+      supabase.from("v_facturas_saldo").select("cliente_id, cobrado"),
     ]);
     if (kv.error) return setError(kv.error.message.includes("kpi_valores") ? "Falta la migración kpis_notas.sql." : kv.error.message);
     setManuales((kv.data as KpiValor[]) ?? []);
     setDiario((kd.data as Diario[]) ?? []);
     if (k.data) setCajaLibre(Number((k.data as { caja_libre: number }).caja_libre));
+    const objs: Record<string, number> = {};
+    for (const o of (obj.data as { negocio: string; metrica: string; valor: number }[]) ?? []) objs[`${o.negocio}:${o.metrica}`] = Number(o.valor);
+    setObjetivos(objs);
+    setClientesRaw((cli.data as { id: number; canal: string | null; fecha_inicio: string | null; fecha_baja: string | null }[]) ?? []);
+    const cc = new Map<number, number>();
+    for (const s of (sal.data as { cliente_id: number | null; cobrado: number }[]) ?? []) {
+      if (s.cliente_id) cc.set(s.cliente_id, (cc.get(s.cliente_id) ?? 0) + Number(s.cobrado));
+    }
+    setCobradoCliente(cc);
 
     const fact = vacio(), cobrado = vacio(), gasto = vacio(), altas = vacio(), bajas = vacio();
     const activos: Record<Negocio, number> = { online: 0, gym: 0 };
@@ -153,6 +167,19 @@ export default function KpisPage() {
     cargar();
   }
 
+  async function guardarObjetivo(metrica: string, texto: string) {
+    const v = texto.trim();
+    if (v === "") {
+      await supabase.from("kpi_objetivos").delete().eq("anyo", anyo).eq("negocio", negocio).eq("metrica", metrica);
+    } else {
+      const num = Number(v.replace(",", "."));
+      if (!Number.isFinite(num)) return setError("Número no válido.");
+      const { error } = await supabase.from("kpi_objetivos").upsert({ anyo, negocio, metrica, valor: num });
+      if (error) return setError(error.message);
+    }
+    cargar();
+  }
+
   const valorManual = useCallback(
     (metrica: string, mesIdx: number): number | null => {
       const mes = `${anyo}-${String(mesIdx + 1).padStart(2, "0")}-01`;
@@ -175,6 +202,56 @@ export default function KpisPage() {
     return out;
   }, [diario, negocio]);
 
+  // ---------- LTV y cohortes ----------
+  const hoy = new Date();
+  const canalDeCli = (c: string | null): Negocio => (c === "online" ? "online" : "gym");
+  const mesesEntre = (a: string, b: Date | string) => {
+    const d1 = new Date(a + "T00:00:00");
+    const d2 = typeof b === "string" ? new Date(b + "T00:00:00") : b;
+    return Math.max(0, (d2.getTime() - d1.getTime()) / (30.44 * 86400000));
+  };
+
+  const ltv = useMemo(() => {
+    const cls = clientesRaw.filter((c) => canalDeCli(c.canal) === negocio);
+    const conPago = cls.map((c) => cobradoCliente.get(c.id) ?? 0).filter((v) => v > 0.01);
+    const ltvMedio = conPago.length ? conPago.reduce((s, x) => s + x, 0) / conPago.length : 0;
+    const permanencias = cls.filter((c) => c.fecha_inicio).map((c) => mesesEntre(c.fecha_inicio!, c.fecha_baja ?? hoy));
+    const permMedia = permanencias.length ? permanencias.reduce((s, x) => s + x, 0) / permanencias.length : 0;
+    const porMes = permMedia > 0 ? ltvMedio / permMedia : 0;
+    return { ltvMedio, permMedia, porMes, n: conPago.length };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientesRaw, cobradoCliente, negocio]);
+
+  const invAnuncios = MESES.reduce((s, _, i) => s + (valorManual("inversion_anuncios", i) ?? 0), 0);
+  const altasAnyo = (auto?.altas[negocio] ?? []).reduce((s, x) => s + x, 0);
+  const cac = altasAnyo > 0 ? invAnuncios / altasAnyo : 0;
+
+  const cohortes = useMemo(() => {
+    // Últimos 12 meses con altas: % de clientes que siguen k meses después
+    const cls = clientesRaw.filter((c) => canalDeCli(c.canal) === negocio && c.fecha_inicio);
+    const grupos = new Map<string, { total: number; bajas: { mesesHastaBaja: number }[] }>();
+    for (const c of cls) {
+      const mesAlta = c.fecha_inicio!.slice(0, 7);
+      const g = grupos.get(mesAlta) ?? { total: 0, bajas: [] };
+      g.total++;
+      if (c.fecha_baja) g.bajas.push({ mesesHastaBaja: mesesEntre(c.fecha_inicio!, c.fecha_baja) });
+      grupos.set(mesAlta, g);
+    }
+    const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`;
+    const lista = [...grupos.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(-12);
+    return lista.map(([mesAlta, g]) => {
+      const edadMeses = Math.floor(mesesEntre(`${mesAlta}-01`, hoy));
+      const filas: (number | null)[] = [];
+      for (let k = 0; k <= 11; k++) {
+        if (k > edadMeses) { filas.push(null); continue; }
+        const vivos = g.total - g.bajas.filter((b) => b.mesesHastaBaja <= k).length;
+        filas.push(g.total > 0 ? vivos / g.total : 0);
+      }
+      return { mesAlta, total: g.total, ret: filas };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientesRaw, negocio]);
+
   if (sesionOk === null) {
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
   }
@@ -184,19 +261,49 @@ export default function KpisPage() {
       <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-1.5 text-left">{extra ?? "Métrica"}</th>
       {MESES.map((m) => <th key={m} className="min-w-12 px-2 py-1.5 text-right">{m}</th>)}
       <th className="min-w-14 px-3 py-1.5 text-right text-zinc-400">Total</th>
+      <th className="min-w-16 border-l border-zinc-800 px-2 py-1.5 text-right text-zinc-500">Objetivo</th>
     </tr>
   );
   const suma = (a: number[]) => a.reduce((s, x) => s + x, 0);
 
-  const filaAuto = (etiqueta: string, vals: number[], cls = "text-zinc-300", fmt: (x: number) => string = n0, totalUltimo = false) => (
-    <tr key={etiqueta} className="border-b border-zinc-800/40 last:border-0 hover:bg-zinc-900/40">
-      <td className="sticky left-0 z-10 whitespace-nowrap bg-zinc-950/95 px-3 py-1 text-zinc-400">{etiqueta}</td>
-      {vals.map((v, i) => <Fragment key={i}>{celdaNum(v, cls, fmt)}</Fragment>)}
-      <td className={`px-3 py-1 text-right font-bold tabular-nums ${cls}`}>
-        {totalUltimo ? fmt([...vals].reverse().find((v) => Math.abs(v) > 0.005) ?? 0) : fmt(suma(vals))}
+  // Celda de objetivo anual: editable + semáforo contra el total conseguido
+  const celdaObjetivo = (metrica: string | null, conseguido: number) => {
+    if (!metrica) return <td className="border-l border-zinc-800 px-2 py-1 text-right text-zinc-800">·</td>;
+    const obj = objetivos[`${negocio}:${metrica}`];
+    const ratio = obj && obj > 0 ? conseguido / obj : null;
+    return (
+      <td className="border-l border-zinc-800 px-1 py-0.5">
+        <span className="flex items-center justify-end gap-1">
+          {ratio !== null && (
+            <span
+              title={`${Math.round(ratio * 100)}% del objetivo`}
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${ratio >= 1 ? "bg-emerald-500" : ratio >= 0.7 ? "bg-amber-500" : "bg-red-500"}`}
+            />
+          )}
+          <input
+            key={`obj-${negocio}-${anyo}-${metrica}`}
+            defaultValue={obj ?? ""}
+            onBlur={(e) => { const t = e.target.value.trim(); if (String(obj ?? "") === t) return; guardarObjetivo(metrica, t); }}
+            inputMode="decimal"
+            placeholder="·"
+            className="w-14 rounded border-0 bg-transparent px-1 py-0.5 text-right text-xs tabular-nums text-zinc-500 outline-none placeholder:text-zinc-800 focus:bg-zinc-800 focus:text-zinc-200"
+          />
+        </span>
       </td>
-    </tr>
-  );
+    );
+  };
+
+  const filaAuto = (etiqueta: string, vals: number[], cls = "text-zinc-300", fmt: (x: number) => string = n0, totalUltimo = false, metricaObj: string | null = null) => {
+    const total = totalUltimo ? [...vals].reverse().find((v) => Math.abs(v) > 0.005) ?? 0 : suma(vals);
+    return (
+      <tr key={etiqueta} className="border-b border-zinc-800/40 last:border-0 hover:bg-zinc-900/40">
+        <td className="sticky left-0 z-10 whitespace-nowrap bg-zinc-950/95 px-3 py-1 text-zinc-400">{etiqueta}</td>
+        {vals.map((v, i) => <Fragment key={i}>{celdaNum(v, cls, fmt)}</Fragment>)}
+        <td className={`px-3 py-1 text-right font-bold tabular-nums ${cls}`}>{fmt(total)}</td>
+        {celdaObjetivo(metricaObj, total)}
+      </tr>
+    );
+  };
 
   const a = auto;
   const fact = a?.fact[negocio] ?? Array(12).fill(0);
@@ -256,12 +363,12 @@ export default function KpisPage() {
             <table className="w-full text-xs">
               <thead>{cabecera()}</thead>
               <tbody>
-                {filaAuto("Facturación €", fact, "text-zinc-200")}
-                {filaAuto("Cash collected €", cobr, "text-emerald-400")}
+                {filaAuto("Facturación €", fact, "text-zinc-200", n0, false, "auto_facturacion")}
+                {filaAuto("Cash collected €", cobr, "text-emerald-400", n0, false, "auto_cobrado")}
                 {filaAuto("Gastos € (sin nóminas)", gas, "text-red-400")}
-                {filaAuto("Beneficio €", beneficio, "text-white")}
+                {filaAuto("Beneficio €", beneficio, "text-white", n0, false, "auto_beneficio")}
                 {filaAuto("Margen", margen, "text-zinc-400", pct, true)}
-                {filaAuto("Altas clientes", a?.altas[negocio] ?? [], "text-emerald-400")}
+                {filaAuto("Altas clientes", a?.altas[negocio] ?? [], "text-emerald-400", n0, false, "auto_altas")}
                 {filaAuto("Bajas clientes", a?.bajas[negocio] ?? [], "text-red-400")}
               </tbody>
             </table>
@@ -269,6 +376,44 @@ export default function KpisPage() {
           <p className="mt-1 text-[10px] text-zinc-600">
             Activos ahora mismo: <b className="text-zinc-400">{a?.activos[negocio] ?? 0}</b>. Sale del CRM y el libro: no hay que apuntar nada.
           </p>
+        </section>
+
+        {/* VALOR DEL CLIENTE (LTV) */}
+        <section className="mb-5">
+          <h2 className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-amber-500">
+            Valor del cliente · automático (todo el histórico)
+          </h2>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+              <p className="text-[9px] font-bold uppercase text-zinc-500">LTV medio</p>
+              <p className="text-base font-black text-white">{n0(ltv.ltvMedio)} €</p>
+              <p className="text-[10px] leading-tight text-zinc-600">cobrado por cliente ({ltv.n} con pagos)</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+              <p className="text-[9px] font-bold uppercase text-zinc-500">Permanencia media</p>
+              <p className="text-base font-black text-white">{n2(ltv.permMedia)} meses</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+              <p className="text-[9px] font-bold uppercase text-zinc-500">Ingreso por cliente</p>
+              <p className="text-base font-black text-white">{n0(ltv.porMes)} €/mes</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
+              <p className="text-[9px] font-bold uppercase text-zinc-500">CAC · {anyo}</p>
+              <p className="text-base font-black text-white">{altasAnyo > 0 && invAnuncios > 0 ? `${n0(cac)} €` : "—"}</p>
+              <p className="text-[10px] leading-tight text-zinc-600">
+                {invAnuncios > 0 ? `${n0(invAnuncios)} € anuncios ÷ ${altasAnyo} altas` : "apunta la inversión en anuncios"}
+              </p>
+            </div>
+            <div className="col-span-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2 lg:col-span-1">
+              <p className="text-[9px] font-bold uppercase text-zinc-500">LTV : CAC</p>
+              <p className={`text-base font-black ${cac > 0 ? (ltv.ltvMedio / cac >= 3 ? "text-emerald-400" : "text-amber-400") : "text-white"}`}>
+                {cac > 0 ? `${n2(ltv.ltvMedio / cac)}x` : "—"}
+              </p>
+              <p className="text-[10px] leading-tight text-zinc-600">
+                puedes gastar hasta ≈{n0(ltv.ltvMedio / 3)} € por alta (⅓ del LTV)
+              </p>
+            </div>
+          </div>
         </section>
 
         {/* TRÁFICO (manual) */}
@@ -298,13 +443,16 @@ export default function KpisPage() {
                         </td>
                       );
                     })}
-                    <td className="px-3 py-0.5 text-right font-bold tabular-nums text-zinc-300">
-                      {(() => {
-                        const vals = MESES.map((_, i) => valorManual(m.clave, i) ?? 0);
-                        const t = /totales|activos/.test(m.clave) ? [...vals].reverse().find((x) => x !== 0) ?? 0 : suma(vals);
-                        return t === 0 ? "" : n0(t);
-                      })()}
-                    </td>
+                    {(() => {
+                      const vals = MESES.map((_, i) => valorManual(m.clave, i) ?? 0);
+                      const t = /totales|activos/.test(m.clave) ? [...vals].reverse().find((x) => x !== 0) ?? 0 : suma(vals);
+                      return (
+                        <>
+                          <td className="px-3 py-0.5 text-right font-bold tabular-nums text-zinc-300">{t === 0 ? "" : n0(t)}</td>
+                          {celdaObjetivo(m.clave, t)}
+                        </>
+                      );
+                    })()}
                   </tr>
                 ))}
                 {/* Derivadas */}
@@ -362,18 +510,72 @@ export default function KpisPage() {
             <table className="w-full text-xs">
               <thead>{cabecera("Funnel")}</thead>
               <tbody>
-                {filaAuto("Bienvenidas", funnelMes.bienvenidas, "text-zinc-300")}
+                {filaAuto("Bienvenidas", funnelMes.bienvenidas, "text-zinc-300", n0, false, "funnel_bienvenidas")}
                 {filaAuto("Agendas bienvenidas", funnelMes.agendas_bienvenidas, "text-zinc-300")}
                 {filaAuto("% agendas bienv.", funnelMes.bienvenidas.map((v, i) => (v > 0 ? funnelMes.agendas_bienvenidas[i] / v : 0)), "text-zinc-500", pct, true)}
-                {filaAuto("Inbounds", funnelMes.inbounds, "text-zinc-300")}
+                {filaAuto("Inbounds", funnelMes.inbounds, "text-zinc-300", n0, false, "funnel_inbounds")}
                 {filaAuto("Agendas inbounds", funnelMes.agendas_inbounds, "text-zinc-300")}
                 {filaAuto("% agendas inb.", funnelMes.inbounds.map((v, i) => (v > 0 ? funnelMes.agendas_inbounds[i] / v : 0)), "text-zinc-500", pct, true)}
-                {filaAuto("Agendas totales", funnelMes.agendas_bienvenidas.map((v, i) => v + funnelMes.agendas_inbounds[i]), "text-white")}
-                {filaAuto("Cierres", funnelMes.cierres, "text-emerald-400")}
+                {filaAuto("Agendas totales", funnelMes.agendas_bienvenidas.map((v, i) => v + funnelMes.agendas_inbounds[i]), "text-white", n0, false, "funnel_agendas")}
+                {filaAuto("Cierres", funnelMes.cierres, "text-emerald-400", n0, false, "funnel_cierres")}
                 {filaAuto("% cierre", funnelMes.agendas_bienvenidas.map((v, i) => { const ag = v + funnelMes.agendas_inbounds[i]; return ag > 0 ? funnelMes.cierres[i] / ag : 0; }), "text-emerald-500", pct, true)}
               </tbody>
             </table>
           </div>
+        </section>
+
+        {/* COHORTES DE RETENCIÓN */}
+        <section className="mb-5">
+          <h2 className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-rose-400">
+            Retención por cohortes · automático
+          </h2>
+          {cohortes.length === 0 ? (
+            <p className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-6 text-center text-sm text-zinc-600">
+              Sin clientes con fecha de inicio en este negocio.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
+                    <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-1.5 text-left">Alta en</th>
+                    <th className="px-2 py-1.5 text-right">Clientes</th>
+                    {Array.from({ length: 12 }, (_, k) => <th key={k} className="min-w-11 px-2 py-1.5 text-right">+{k}m</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cohortes.map((c) => (
+                    <tr key={c.mesAlta} className="border-b border-zinc-800/40 last:border-0">
+                      <td className="sticky left-0 z-10 whitespace-nowrap bg-zinc-950/95 px-3 py-1 capitalize text-zinc-400">
+                        {new Date(c.mesAlta + "-01T00:00:00").toLocaleDateString("es-ES", { month: "short", year: "2-digit" })}
+                      </td>
+                      <td className="px-2 py-1 text-right font-bold tabular-nums text-zinc-300">{c.total}</td>
+                      {c.ret.map((r, k) =>
+                        r === null ? (
+                          <td key={k} className="px-1 py-1" />
+                        ) : (
+                          <td key={k} className="px-1 py-1">
+                            <span
+                              className="block rounded px-1 py-0.5 text-center text-[10px] font-bold tabular-nums"
+                              style={{
+                                backgroundColor: `rgba(16, 185, 129, ${(0.08 + r * 0.5).toFixed(2)})`,
+                                color: r >= 0.5 ? "#d1fae5" : "#fca5a5",
+                              }}
+                            >
+                              {Math.round(r * 100)}
+                            </span>
+                          </td>
+                        )
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="mt-1 text-[10px] text-zinc-600">
+            % de la cohorte que sigue activa k meses después de su alta. Si una promo trae clientes que se caen al 2º mes, se ve aquí.
+          </p>
         </section>
 
         {/* CONTRATACIÓN (solo GYM) */}
