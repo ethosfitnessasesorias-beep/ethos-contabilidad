@@ -44,12 +44,13 @@ interface EdIngreso {
   tipo: "ingreso"; id: number; facturaId: number | null;
   fecha: string; importe: string; cuenta_id: number;
   concepto: string; canal: string; categoria_id: number | "";
+  atribucion: string; es_recurrente: boolean; computa_reparto: boolean;
 }
 interface EdGasto {
   tipo: "gasto"; id: number;
   fecha: string; concepto: string; proveedor: string;
   categoria_id: number | ""; cuenta_id: number; canal: string; imputado_a: string;
-  base: string; iva_pct: string; deducible: boolean; tiene_factura: boolean;
+  base: string; iva_pct: string; deducible: boolean; tiene_factura: boolean; es_fijo: boolean;
 }
 interface EdTraspaso {
   tipo: "traspaso"; id: number;
@@ -214,29 +215,33 @@ export default function LibroPage() {
     if (m.tipo === "ingreso") {
       const { data, error } = await supabase
         .from("cobros")
-        .select("id, fecha, importe, cuenta_id, factura_id, facturas(id, concepto, canal, categoria_id)")
+        .select("id, fecha, importe, cuenta_id, factura_id, facturas(id, concepto, canal, categoria_id, atribucion, es_recurrente, computa_reparto)")
         .eq("id", id)
         .single();
       if (error || !data) return setEdError(error?.message ?? "No encontrado");
-      const c = data as unknown as { id: number; fecha: string; importe: number; cuenta_id: number; factura_id: number | null; facturas: { id: number; concepto: string; canal: string | null; categoria_id: number | null } | null };
+      const c = data as unknown as { id: number; fecha: string; importe: number; cuenta_id: number; factura_id: number | null; facturas: { id: number; concepto: string; canal: string | null; categoria_id: number | null; atribucion: string | null; es_recurrente: boolean | null; computa_reparto: boolean | null } | null };
       setEd({
         tipo: "ingreso", id: c.id, facturaId: c.facturas?.id ?? c.factura_id,
         fecha: c.fecha, importe: String(c.importe), cuenta_id: c.cuenta_id,
         concepto: c.facturas?.concepto ?? "", canal: c.facturas?.canal ?? "",
         categoria_id: c.facturas?.categoria_id ?? "",
+        atribucion: c.facturas?.atribucion ?? "ethos",
+        es_recurrente: c.facturas?.es_recurrente ?? false,
+        computa_reparto: c.facturas?.computa_reparto ?? true,
       });
     } else if (m.tipo === "gasto") {
       const { data, error } = await supabase
         .from("gastos")
-        .select("id, fecha, concepto, proveedor, categoria_id, cuenta_id, canal, imputado_a, base, iva_pct, deducible, tiene_factura")
+        .select("id, fecha, concepto, proveedor, categoria_id, cuenta_id, canal, imputado_a, base, iva_pct, deducible, tiene_factura, es_fijo")
         .eq("id", id)
         .single();
       if (error || !data) return setEdError(error?.message ?? "No encontrado");
-      const g = data as { id: number; fecha: string; concepto: string; proveedor: string | null; categoria_id: number; cuenta_id: number; canal: string | null; imputado_a: string; base: number; iva_pct: number; deducible: boolean; tiene_factura: boolean };
+      const g = data as { id: number; fecha: string; concepto: string; proveedor: string | null; categoria_id: number; cuenta_id: number; canal: string | null; imputado_a: string; base: number; iva_pct: number; deducible: boolean; tiene_factura: boolean; es_fijo: boolean | null };
       setEd({
         tipo: "gasto", id: g.id, fecha: g.fecha, concepto: g.concepto, proveedor: g.proveedor ?? "",
         categoria_id: g.categoria_id, cuenta_id: g.cuenta_id, canal: g.canal ?? "", imputado_a: g.imputado_a,
         base: String(g.base), iva_pct: String(g.iva_pct), deducible: g.deducible, tiene_factura: g.tiene_factura,
+        es_fijo: g.es_fijo ?? false,
       });
     } else {
       const { data, error } = await supabase
@@ -266,7 +271,11 @@ export default function LibroPage() {
       if (ed.facturaId) {
         const u2 = await supabase
           .from("facturas")
-          .update({ concepto: ed.concepto, canal: ed.canal || null, ...(ed.categoria_id ? { categoria_id: ed.categoria_id } : {}) })
+          .update({
+            concepto: ed.concepto, canal: ed.canal || null,
+            atribucion: ed.atribucion, es_recurrente: ed.es_recurrente, computa_reparto: ed.computa_reparto,
+            ...(ed.categoria_id ? { categoria_id: ed.categoria_id } : {}),
+          })
           .eq("id", ed.facturaId);
         if (u2.error) return setEdError(u2.error.message);
       }
@@ -283,7 +292,7 @@ export default function LibroPage() {
           cuenta_id: ed.cuenta_id, canal: ed.canal || null, imputado_a: ed.imputado_a,
           base, iva_pct: iva,
           iva_soportado: deducible ? Math.round(base * iva * 100) / 100 : 0,
-          deducible, tiene_factura: ed.tiene_factura,
+          deducible, tiene_factura: ed.tiene_factura, es_fijo: ed.es_fijo,
         })
         .eq("id", ed.id);
       if (u.error) return setEdError(u.error.message);
@@ -603,7 +612,7 @@ export default function LibroPage() {
                     </select>
                   </label>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 sm:grid-cols-3">
                   <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Categoría</span>
                     <select value={ed.categoria_id} onChange={(e) => setEd({ ...ed, categoria_id: Number(e.target.value) })} className={`${inputCls} appearance-none`}>
                       {categorias.filter((c) => c.tipo === "ingreso").map((c) => <option key={c.id} value={c.id}>{c.grupo} · {c.nombre}</option>)}
@@ -614,8 +623,23 @@ export default function LibroPage() {
                       <option value="">—</option><option value="online">Online</option><option value="presencial">GYM</option>
                     </select>
                   </label>
+                  <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">De quién es</span>
+                    <select value={ed.atribucion} onChange={(e) => setEd({ ...ed, atribucion: e.target.value })} className={`${inputCls} appearance-none`}>
+                      {ATRIBUCIONES.map((a) => <option key={a.valor} value={a.valor}>{a.etiqueta}</option>)}
+                    </select>
+                  </label>
                 </div>
-                <p className="text-[11px] text-zinc-600">El concepto, la categoría y el canal se cambian en la factura del cobro (afecta a todos sus cobros).</p>
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="checkbox" checked={ed.es_recurrente} onChange={(e) => setEd({ ...ed, es_recurrente: e.target.checked })} className="h-4 w-4 accent-red-600" />
+                    Recurrente (suscripción/cuota)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input type="checkbox" checked={ed.computa_reparto} onChange={(e) => setEd({ ...ed, computa_reparto: e.target.checked })} className="h-4 w-4 accent-red-600" />
+                    Cuenta para el reparto <span className="text-[11px] text-zinc-600">(desmarca aportaciones de capital)</span>
+                  </label>
+                </div>
+                <p className="text-[11px] text-zinc-600">Concepto, categoría, canal, dueño y las casillas se cambian en la factura del cobro (afecta a todos sus cobros).</p>
               </>
             )}
 
@@ -677,6 +701,10 @@ export default function LibroPage() {
                     Deducible
                   </label>
                 </div>
+                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                  <input type="checkbox" checked={ed.es_fijo} onChange={(e) => setEd({ ...ed, es_fijo: e.target.checked })} className="h-4 w-4 accent-red-600" />
+                  Gasto fijo (recurrente) <span className="text-[11px] text-zinc-600">— entra solo en la previsión de Tesorería</span>
+                </label>
               </>
             )}
 

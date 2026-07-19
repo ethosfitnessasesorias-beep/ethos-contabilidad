@@ -47,20 +47,16 @@ export default function RepartoPage() {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [abierto, setAbierto] = useState<string | null>(null);
-  const [cuentaBanco, setCuentaBanco] = useState<number | null>(null);
-  const [nominaCatId, setNominaCatId] = useState<number | null>(null);
-  const [nominaPuesta, setNominaPuesta] = useState<Set<string>>(new Set()); // "mes-socio"
-  const [pagado, setPagado] = useState<Map<string, number>>(new Map()); // "mes-persona" -> € pagados
+  const [pagados, setPagados] = useState<Set<string>>(new Set()); // "YYYY-MM-persona" con tick de pagado
   const [huchaDesde, setHuchaDesde] = useState("2026-03-01"); // la hucha empezó tras la obra del local
   const [huchaAjuste, setHuchaAjuste] = useState(0); // cuadre manual con la hucha real (Ajustes → Negocio)
 
   const cargar = useCallback(async () => {
-    const [r, inv, c, cue, cat] = await Promise.all([
+    const [r, inv, c, rp] = await Promise.all([
       supabase.from("v_reparto_beneficios").select("*").order("mes"),
       supabase.from("v_inversion_mensual").select("*").order("mes"),
       supabase.from("v_pagos_colaboradores").select("*").order("mes"),
-      supabase.from("cuentas").select("id, codigo").eq("activa", true),
-      supabase.from("categorias").select("id, nombre").ilike("nombre", "%mina%").limit(1),
+      supabase.from("reparto_pagos").select("mes, persona"),
     ]);
     if (r.error) {
       setDisponible(false);
@@ -71,26 +67,9 @@ export default function RepartoPage() {
     setFilas((r.data as FilaReparto[]) ?? []);
     setInversiones((inv.data as FilaInversion[]) ?? []);
     setColab((c.data as FilaColab[]) ?? []);
-    const banco = (cue.data as { id: number; codigo: string }[])?.find((x) => x.codigo === "banco");
-    setCuentaBanco(banco?.id ?? (cue.data as { id: number }[])?.[0]?.id ?? null);
-    const nomCat = (cat.data as { id: number }[])?.[0]?.id ?? null;
-    setNominaCatId(nomCat);
-    // Meses/personas con nómina o pago ya apuntado (y cuánto)
-    if (nomCat) {
-      const { data: g } = await supabase
-        .from("gastos")
-        .select("fecha, imputado_a, base")
-        .eq("categoria_id", nomCat);
-      const set = new Set<string>();
-      const pag = new Map<string, number>();
-      for (const x of (g as { fecha: string; imputado_a: string; base: number }[]) ?? []) {
-        const k = `${x.fecha.slice(0, 7)}-${x.imputado_a}`;
-        set.add(k);
-        pag.set(k, (pag.get(k) ?? 0) + Number(x.base));
-      }
-      setNominaPuesta(set);
-      setPagado(pag);
-    }
+    const set = new Set<string>();
+    for (const x of (rp.data as { mes: string; persona: string }[]) ?? []) set.add(`${x.mes.slice(0, 7)}-${x.persona}`);
+    setPagados(set);
     // Fecha de inicio de la hucha y ajuste manual (Ajustes → Negocio)
     const [hd, ha] = await Promise.all([
       supabase.from("config_texto").select("valor").eq("clave", "hucha_desde").maybeSingle(),
@@ -108,50 +87,20 @@ export default function RepartoPage() {
   const nomina = (b: number) => Math.max(0, b * 0.8);
   const aHucha = (b: number) => Math.max(0, b * 0.2);
 
-  // Registra la nómina del mes como gasto en la categoría Nóminas (imputado al socio)
-  async function registrarNomina(mes: string, socio: string, importe: number) {
-    if (!nominaCatId || importe <= 0) return;
-    const nombreSocio = NOMBRE[socio] ?? socio;
-    const { error } = await supabase.from("gastos").insert({
-      fecha: `${mes.slice(0, 7)}-28`,
-      concepto: `Nómina ${nombreSocio} ${MESLARGO(mes)}`,
-      categoria_id: nominaCatId,
-      cuenta_id: cuentaBanco,
-      imputado_a: socio,
-      base: Math.round(importe * 100) / 100,
-      iva_pct: 0,
-      irpf_pct: 0,
-      deducible: false,
-      tiene_factura: false,
-      es_fijo: false,
-    });
-    if (error) return setError(error.message);
-    setOk(`Nómina de ${nombreSocio} apuntada ✓`);
-    setTimeout(() => setOk(null), 3000);
-    cargar();
-  }
-
-  // Registra el pago de un mes a un colaborador (Alex/empleado). Va a la
-  // categoría Nóminas para que no compute como gasto del negocio.
-  async function registrarPagoColab(mes: string, colaborador: string, nombre: string, importe: number) {
-    if (!nominaCatId || importe <= 0) return;
-    const { error } = await supabase.from("gastos").insert({
-      fecha: `${mes.slice(0, 7)}-28`,
-      concepto: `Pago ${nombre} ${MESLARGO(mes)}`,
-      categoria_id: nominaCatId,
-      cuenta_id: cuentaBanco,
-      imputado_a: colaborador,
-      base: Math.round(importe * 100) / 100,
-      iva_pct: 0,
-      irpf_pct: 0,
-      deducible: false,
-      tiene_factura: false,
-      es_fijo: false,
-    });
-    if (error) return setError(error.message);
-    setOk(`Pago a ${nombre} apuntado ✓`);
-    setTimeout(() => setOk(null), 3000);
-    cargar();
+  // Tick de PAGADO por mes y persona. NO escribe nada en el libro:
+  // el pago real (efectivo/transferencia) se apunta a mano si se quiere.
+  async function togglePagado(mes: string, persona: string) {
+    const k = `${mes.slice(0, 7)}-${persona}`;
+    const mesISO = `${mes.slice(0, 7)}-01`;
+    if (pagados.has(k)) {
+      const { error } = await supabase.from("reparto_pagos").delete().eq("mes", mesISO).eq("persona", persona);
+      if (error) return setError(error.message);
+      setPagados((prev) => { const s = new Set(prev); s.delete(k); return s; });
+    } else {
+      const { error } = await supabase.from("reparto_pagos").insert({ mes: mesISO, persona });
+      if (error) return setError(error.message);
+      setPagados((prev) => new Set(prev).add(k));
+    }
   }
 
   // Hucha: empezó tras la obra del local (huchaDesde). La obra de antes es
@@ -197,12 +146,12 @@ export default function RepartoPage() {
       acc.aPagar += Number(c.a_pagar);
       acc.aEthos += Number(c.a_ethos);
       acc.base += Number(c.base_cobrada);
-      acc.pagado += pagado.get(`${c.mes.slice(0, 7)}-${c.colaborador}`) ?? 0;
+      acc.pagado += pagados.has(`${c.mes.slice(0, 7)}-${c.colaborador}`) ? Number(c.a_pagar) : 0;
       acc.meses.push(c);
       m.set(c.colaborador, acc);
     }
     return [...m.values()].sort((a, b) => b.aPagar - a.aPagar);
-  }, [colab, anyo, pagado]);
+  }, [colab, anyo, pagados]);
   const totalColab = colabAnyo.reduce((s, c) => s + Math.max(0, c.aPagar - c.pagado), 0);
 
   const stat = (etiqueta: string, valor: string, color: string, sub?: string) => (
@@ -258,53 +207,65 @@ export default function RepartoPage() {
         <div className="mb-5 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-900 text-left text-[10px] font-black uppercase tracking-wider text-zinc-500">
-                <th className="px-3 py-2">Mes</th>
-                <th className="px-3 py-2">Socio</th>
-                <th className="px-3 py-2 text-right">Nómina (80%)</th>
-                <th className="px-3 py-2 text-right">A hucha (20%)</th>
-                <th className="px-3 py-2 text-right">Estado</th>
-                <th className="px-2 py-2"></th>
+              <tr className="border-b border-zinc-800 text-left text-[10px] font-black uppercase tracking-wider text-zinc-500">
+                <th className="px-5 py-3">Socio</th>
+                <th className="px-5 py-3 text-right">Nómina (80%)</th>
+                <th className="px-5 py-3 text-right">A hucha (20%)</th>
+                <th className="px-5 py-3 text-center">Pagado</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {[...meses].reverse().flatMap(([mes, par]) => {
-                const inv = invDe(mes);
-                return (["luis", "david"] as const).flatMap((socio, i) => {
+                const cabecera = (
+                  <tr key={`${mes}-h`} className="border-b border-zinc-800/60 bg-zinc-900/80">
+                    <td colSpan={5} className="px-5 py-2 text-[11px] font-black uppercase tracking-widest text-zinc-400">
+                      <span className="capitalize">{MESLARGO(mes)}</span>
+                    </td>
+                  </tr>
+                );
+                const filasSocios = (["luis", "david"] as const).flatMap((socio) => {
                   const f = par[socio];
                   if (!f) return [];
                   const ben = Number(f.beneficio);
                   const nom = nomina(ben);
                   const huc = aHucha(ben);
                   const clave = `${mes}-${socio}`;
+                  const pagadoTick = pagados.has(`${mes.slice(0, 7)}-${socio}`);
                   const filas = [
-                    <tr key={clave} className={`border-b border-zinc-800/60 last:border-0 ${i === 0 ? "border-t border-t-zinc-700/60" : ""}`}>
-                      <td className="whitespace-nowrap px-3 py-2 capitalize text-zinc-300">
-                        {i === 0 ? MESLARGO(mes) : ""}
-                        {i === 0 && inv > 0 && (
-                          <span className="ml-2 rounded-full bg-amber-950 px-2 py-0.5 text-[10px] font-bold text-amber-400" title="Sale de la hucha">
-                            inv. {eur(inv)}
+                    <tr key={clave} className="border-b border-zinc-800/40 last:border-0 hover:bg-zinc-900/40">
+                      <td className="px-5 py-2.5">
+                        <span className="flex items-center gap-2.5">
+                          <span className={`grid h-7 w-7 place-items-center rounded-full text-[11px] font-black ${socio === "luis" ? "bg-emerald-950 text-emerald-300" : "bg-sky-950 text-sky-300"}`}>
+                            {NOMBRE[socio][0]}
                           </span>
-                        )}
+                          <span className="font-bold text-white">{NOMBRE[socio]}</span>
+                        </span>
                       </td>
-                      <td className="px-3 py-2 font-bold text-white">{NOMBRE[socio]}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-right font-bold text-emerald-400">
-                        {eur(nom)}{ben <= 0 && <span className="ml-1 text-[10px] font-normal text-zinc-600">(sin beneficio)</span>}
+                      <td className="whitespace-nowrap px-5 py-2.5 text-right text-[15px] font-black tabular-nums text-emerald-400">
+                        {eur(nom)}
+                        {ben <= 0 && <p className="text-[10px] font-normal text-zinc-600">sin beneficio</p>}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-right text-sky-400">{eur(huc)}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-right">
+                      <td className="whitespace-nowrap px-5 py-2.5 text-right tabular-nums text-sky-400">{eur(huc)}</td>
+                      <td className="px-5 py-2.5 text-center">
                         {nom <= 0 ? (
-                          <span className="text-zinc-600">—</span>
-                        ) : nominaPuesta.has(`${mes.slice(0, 7)}-${socio}`) ? (
-                          <span className="text-[11px] font-bold text-emerald-500">✓ apuntada</span>
+                          <span className="text-zinc-700">—</span>
                         ) : (
-                          <button onClick={() => registrarNomina(mes, socio, nom)} className="rounded-md bg-zinc-800 px-2.5 py-1 text-[11px] font-bold text-zinc-200 hover:bg-zinc-700">
-                            Apuntar
+                          <button
+                            onClick={() => togglePagado(mes, socio)}
+                            title={pagadoTick ? "Quitar el pagado" : "Marcar como pagado"}
+                            className={`rounded-full px-3 py-1 text-[11px] font-black tracking-wide ${
+                              pagadoTick
+                                ? "bg-emerald-600/20 text-emerald-400 ring-1 ring-emerald-700"
+                                : "bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+                            }`}
+                          >
+                            {pagadoTick ? "✓ PAGADO" : "pendiente"}
                           </button>
                         )}
                       </td>
-                      <td className="px-2 py-2 text-right">
-                        <button onClick={() => setAbierto(abierto === clave ? null : clave)} className="text-[11px] font-semibold text-zinc-500 hover:text-white">
+                      <td className="px-4 py-2.5 text-right">
+                        <button onClick={() => setAbierto(abierto === clave ? null : clave)} className="text-[11px] font-semibold text-zinc-600 hover:text-white">
                           {abierto === clave ? "cerrar" : "cálculo"}
                         </button>
                       </td>
@@ -312,8 +273,8 @@ export default function RepartoPage() {
                   ];
                   if (abierto === clave) {
                     filas.push(
-                      <tr key={`${clave}-det`} className="border-b border-zinc-800/60 bg-zinc-950/60">
-                        <td colSpan={6} className="px-4 py-2">
+                      <tr key={`${clave}-det`} className="border-b border-zinc-800/40 bg-zinc-950/60">
+                        <td colSpan={5} className="px-5 py-2.5">
                           <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
                             <span className="text-zinc-500">Cobrado propio <b className="text-zinc-300">{eur(Number(f.cobrado_propio))}</b></span>
                             <span className="text-zinc-500">Cobrado centro ÷2 <b className="text-zinc-300">{eur(Number(f.cobrado_ethos))}</b></span>
@@ -327,6 +288,7 @@ export default function RepartoPage() {
                   }
                   return filas;
                 });
+                return [cabecera, ...filasSocios];
               })}
             </tbody>
           </table>
@@ -377,19 +339,17 @@ export default function RepartoPage() {
                       .slice()
                       .sort((a, b) => (a.mes < b.mes ? -1 : 1))
                       .map((m) => {
-                        const hecho = nominaPuesta.has(`${m.mes.slice(0, 7)}-${c.codigo}`);
-                        return hecho ? (
-                          <span key={m.mes} className="rounded-md bg-emerald-950 px-2 py-1 text-[11px] font-bold text-emerald-400" title="Pago apuntado">
-                            <span className="capitalize">{MESCORTO(m.mes)}</span> ✓ {eur(Number(m.a_pagar))}
-                          </span>
-                        ) : (
+                        const hecho = pagados.has(`${m.mes.slice(0, 7)}-${c.codigo}`);
+                        return (
                           <button
                             key={m.mes}
-                            onClick={() => registrarPagoColab(m.mes, c.codigo, c.nombre, Number(m.a_pagar))}
-                            title="Apuntar este pago"
-                            className="rounded-md bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-700"
+                            onClick={() => togglePagado(m.mes, c.codigo)}
+                            title={hecho ? "Quitar el pagado" : "Marcar como pagado"}
+                            className={`rounded-md px-2 py-1 text-[11px] font-bold ${
+                              hecho ? "bg-emerald-600/20 text-emerald-400 ring-1 ring-emerald-800" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                            }`}
                           >
-                            <span className="capitalize text-zinc-500">{MESCORTO(m.mes)}</span> {eur(Number(m.a_pagar))} · pagar
+                            <span className="capitalize">{MESCORTO(m.mes)}</span> {eur(Number(m.a_pagar))}{hecho ? " ✓" : ""}
                           </button>
                         );
                       })}

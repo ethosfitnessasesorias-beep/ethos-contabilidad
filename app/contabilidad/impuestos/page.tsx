@@ -229,9 +229,9 @@ export default function ImpuestosPage() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-xl text-sm text-zinc-400">
-          Lo que declara cada autónomo por trimestre. <b>David</b> declara sus clientes; <b>Luis</b> lo
-          suyo + todo lo del centro (a su nombre). Solo cuenta lo <b>deducible / con factura</b>. Apunta lo pagado en “Pagado real”.
+        <p className="flex-1 text-[11px] leading-snug text-zinc-500">
+          Lo que declara cada autónomo por trimestre. <b className="text-zinc-400">David</b> declara sus clientes; <b className="text-zinc-400">Luis</b> lo
+          suyo + todo lo del centro (a su nombre). Solo cuenta lo <b className="text-zinc-400">deducible / con factura</b>. Apunta lo pagado en “Pagado real”.
         </p>
         <select
           value={anyo}
@@ -367,12 +367,10 @@ export default function ImpuestosPage() {
         })}
       </div>
 
-      <div className="mt-4 rounded-xl bg-amber-950 px-4 py-3 text-xs text-amber-300">
-        Estimación para reservar dinero, no una liquidación oficial. El modelo 130 real es acumulado
-        anual y resta pagos y retenciones previas (aquí ya se descuentan las retenciones de clientes).
-        El IVA negativo se compensa en los trimestres siguientes. David declara sus clientes; Luis
-        declara lo suyo + todo lo del centro. Cuadra los definitivos con el gestor y apunta lo pagado.
-      </div>
+      <p className="mt-4 text-[10px] leading-snug text-zinc-600">
+        Estimación para reservar dinero, no una liquidación oficial. El modelo 130 real es acumulado anual y resta pagos y retenciones previas
+        (aquí ya se descuentan las retenciones de clientes). El IVA negativo se compensa en los trimestres siguientes. Cuadra los definitivos con el gestor y apunta lo pagado.
+      </p>
     </div>
   );
 }

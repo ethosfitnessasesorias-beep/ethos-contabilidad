@@ -77,7 +77,7 @@ async function calcularSugerencias(existentes: { concepto: string }[]): Promise<
       .select("concepto, total, fecha, es_fijo, categorias!inner(es_fijo, nombre)")
       .gte("fecha", desdeISO)
       .order("fecha"),
-    supabase.from("cobros").select("importe, fecha, facturas!inner(es_recurrente)").gte("fecha", desdeISO),
+    supabase.from("cobros").select("importe, fecha, facturas!inner(es_recurrente, categorias(nombre))").gte("fecha", desdeISO),
   ]);
   const nuevos: { concepto: string; tipo: "ingreso" | "gasto"; importe: number; dia_mes: number; cada_meses: number }[] = [];
   // Último importe visto por concepto fijo (el orden por fecha deja el más reciente)
@@ -92,9 +92,11 @@ async function calcularSugerencias(existentes: { concepto: string }[]): Promise<
     if (ya.has(k)) continue;
     nuevos.push({ concepto: v.concepto, tipo: "gasto", importe: Math.round(v.total * 100) / 100, dia_mes: v.dia, cada_meses: 1 });
   }
-  // MRR: media mensual de cobros de facturas marcadas recurrentes (grupales, cuotas…)
-  const mrr = ((domic.data ?? []) as unknown as { importe: number; facturas: { es_recurrente: boolean } }[])
-    .filter((c) => c.facturas?.es_recurrente)
+  // MRR: media mensual de cobros recurrentes. Cuenta como recurrente lo
+  // marcado en la factura Y lo que por categoría es suscripción (grupales,
+  // cuotas, mensualidades…), aunque nadie lo haya marcado.
+  const mrr = ((domic.data ?? []) as unknown as { importe: number; facturas: { es_recurrente: boolean; categorias: { nombre: string } | null } }[])
+    .filter((c) => c.facturas?.es_recurrente || /grupal|cuota|suscri|mensualidad|acceso libre/i.test(c.facturas?.categorias?.nombre ?? ""))
     .reduce((s, c) => s + Number(c.importe), 0);
   const ETIQ_MRR = "Suscripciones (grupales y cuotas)";
   if (mrr > 0 && !ya.has(ETIQ_MRR.toLowerCase()) && !ya.has("domiciliaciones (mrr)")) {
@@ -109,6 +111,7 @@ export default function Tesoreria() {
   const [nominaMedia, setNominaMedia] = useState(0);
   const [inversionMedia, setInversionMedia] = useState(0);
   const [fijosPend, setFijosPend] = useState<GastoFijo[]>([]);
+  const [verFijos, setVerFijos] = useState(false);
   const [apuntando, setApuntando] = useState(false);
   const [ok, setOk] = useState<string | null>(null);
   const [meses, setMeses] = useState(6);
@@ -288,34 +291,37 @@ export default function Tesoreria() {
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
       {ok && <p className="mb-3 rounded-xl bg-emerald-950 px-4 py-2 text-sm text-emerald-300">{ok}</p>}
 
-      {/* Gastos fijos por apuntar este mes */}
+      {/* Gastos fijos por apuntar este mes (desplegable) */}
       {fijosPend.length > 0 && (
-        <div className="mb-4 rounded-2xl border border-amber-900 bg-amber-950/20 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-black text-white">Gastos fijos de este mes</h2>
-              <p className="text-xs text-zinc-400">
-                {fijosPend.length} gastos fijos del mes pasado aún sin apuntar este mes (≈ {eur(totalFijos)}).
-              </p>
-            </div>
+        <div className="mb-4 rounded-xl border border-amber-900 bg-amber-950/20 px-4 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <button onClick={() => setVerFijos(!verFijos)} className="flex items-center gap-2 text-left">
+              <span className="text-sm font-black text-white">Gastos fijos de este mes</span>
+              <span className="text-xs text-zinc-400">{fijosPend.length} sin apuntar · ≈ {eur(totalFijos)}</span>
+              <span className="text-xs text-zinc-500">{verFijos ? "▴" : "▾"}</span>
+            </button>
             <button
               onClick={apuntarFijos}
               disabled={apuntando}
-              className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+              className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
             >
-              {apuntando ? "Apuntando…" : `Apuntar los ${fijosPend.length} de golpe`}
+              {apuntando ? "Apuntando…" : `Apuntar los ${fijosPend.length}`}
             </button>
           </div>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {fijosPend.map((g) => (
-              <span key={g.concepto} className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs text-zinc-300">
-                {g.concepto} <span className="text-zinc-500">{eur(g.base * (1 + Number(g.iva_pct)))}</span>
-              </span>
-            ))}
-          </div>
-          <p className="mt-2 text-[11px] text-zinc-600">
-            Copia importe, categoría, cuenta y demás del mes pasado. Revisa y edita en el Libro si algo cambió.
-          </p>
+          {verFijos && (
+            <>
+              <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-amber-900/40 pt-2.5">
+                {fijosPend.map((g) => (
+                  <span key={g.concepto} className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs text-zinc-300">
+                    {g.concepto} <span className="text-zinc-500">{eur(g.base * (1 + Number(g.iva_pct)))}</span>
+                  </span>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] text-zinc-600">
+                Copia importe, categoría, cuenta y demás del mes pasado. Revisa y edita en el Libro si algo cambió.
+              </p>
+            </>
+          )}
         </div>
       )}
 
