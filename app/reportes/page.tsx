@@ -10,6 +10,7 @@ import { Shell } from "../shell";
 
 interface FactRow { fecha_emision: string; total: number; computa_reparto: boolean | null; categorias: { grupo: string; nombre: string } | null }
 interface GastoRow { fecha: string; total: number; categorias: { grupo: string; nombre: string; es_inversion: boolean } | null }
+interface CobroRow { fecha: string; importe: number; facturas: { computa_reparto: boolean | null } | null }
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
@@ -27,6 +28,7 @@ export default function Reportes() {
   const [anyo, setAnyo] = useState(new Date().getFullYear());
   const [ing, setIng] = useState<FactRow[]>([]);
   const [gas, setGas] = useState<GastoRow[]>([]);
+  const [cob, setCob] = useState<CobroRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,15 +36,27 @@ export default function Reportes() {
     (async () => {
       const desde = `${anyo}-01-01`;
       const hasta = `${anyo + 1}-01-01`;
-      const [f, g] = await Promise.all([
+      const [f, g, c] = await Promise.all([
         supabase.from("facturas").select("fecha_emision, total, computa_reparto, categorias(grupo, nombre)").gte("fecha_emision", desde).lt("fecha_emision", hasta),
         supabase.from("gastos").select("fecha, total, categorias(grupo, nombre, es_inversion)").gte("fecha", desde).lt("fecha", hasta),
+        supabase.from("cobros").select("fecha, importe, facturas!inner(computa_reparto)").gte("fecha", desde).lt("fecha", hasta),
       ]);
       if (f.error) return setError(f.error.message);
       setIng((f.data as unknown as FactRow[]) ?? []);
       setGas((g.data as unknown as GastoRow[]) ?? []);
+      setCob((c.data as unknown as CobroRow[]) ?? []);
     })();
   }, [sesionOk, anyo]);
+
+  // Cash collected por mes (cobros reales; la facturación es dinero futuro)
+  const cash = useMemo(() => {
+    const total = Array(12).fill(0);
+    for (const c of cob) {
+      if (c.facturas?.computa_reparto === false) continue;
+      total[new Date(c.fecha + "T00:00:00").getMonth()] += Number(c.importe);
+    }
+    return total;
+  }, [cob]);
 
   // Ingresos: subcategoría × mes (las aportaciones de capital no computan)
   const pivotIng = useMemo(() => {
@@ -138,9 +152,22 @@ export default function Reportes() {
                   </tr>
                 ))}
                 <tr className="border-t border-zinc-700 bg-emerald-950/30 font-black">
-                  <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 text-emerald-400">TOTAL INGRESOS</td>
+                  <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 text-emerald-400">FACTURADO (compromisos)</td>
                   {pivotIng.total.map((v, i) => <Fragment key={i}>{celda(v, "text-emerald-400 font-black")}</Fragment>)}
                   <td className="px-3 py-1.5 text-right tabular-nums text-emerald-400">{n0(suma(pivotIng.total))}</td>
+                </tr>
+                <tr className="bg-emerald-950/10 font-bold">
+                  <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 text-emerald-300">CASH COLLECTED (cobrado real)</td>
+                  {cash.map((v, i) => <Fragment key={i}>{celda(v, "text-emerald-300 font-bold")}</Fragment>)}
+                  <td className="px-3 py-1.5 text-right tabular-nums text-emerald-300">{n0(suma(cash))}</td>
+                </tr>
+                <tr className="border-t border-zinc-800/60 text-zinc-500">
+                  <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1">diferencia (+ por cobrar / − cobros de meses previos)</td>
+                  {pivotIng.total.map((v, i) => {
+                    const d = v - cash[i];
+                    return <Fragment key={i}>{celda(d, d > 0.5 ? "text-amber-500/90" : "text-zinc-500")}</Fragment>;
+                  })}
+                  <td className="px-3 py-1 text-right tabular-nums text-amber-500/90">{n0(suma(pivotIng.total) - suma(cash))}</td>
                 </tr>
               </tbody>
             </table>
