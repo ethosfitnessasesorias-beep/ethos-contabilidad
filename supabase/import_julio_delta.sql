@@ -1,0 +1,34 @@
+BEGIN;
+-- La semana 01-05 en efectivo ya existia (232.90): se actualiza a 325.80
+UPDATE facturas SET base = 325.8 WHERE id = 156;
+UPDATE cobros SET importe = 325.8 WHERE factura_id = 156;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (NULL, 23, 'ethos', '2026-07-13', 'ENTRENOS GRUPALES Ventas EFECTIVO del 13 al 19 de JULIO', 85, 0, 0, 'presencial', true) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-13', 85, 2, 'efectivo' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (NULL, 23, 'ethos', '2026-07-13', 'ENTRENOS GRUPALES Ventas DOMICILIADO del 13 al 19 de JULIO', 169.71, 0.21, 0, 'presencial', true) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-13', 205.35, 4, 'stripe' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (NULL, 23, 'ethos', '2026-07-13', 'ENTRENOS GRUPALES Ventas TPV del 13 al 19 de JULIO', 68.26, 0.21, 0, 'presencial', true) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-13', 82.6, 1, 'transferencia' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (NULL, 25, 'ethos', '2026-07-31', 'MERCH FISICO JULIO TPV O BIZUM', 10, 0, 0, 'presencial', false) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-31', 10, 1, 'transferencia' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (NULL, 25, 'ethos', '2026-07-31', 'AGUAS JULIO EFECTIVO', 3, 0, 0, 'presencial', false) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-31', 3, 2, 'efectivo' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (NULL, 27, 'ethos', '2026-07-31', 'HSN JULIO Comisiones', 50.2, 0.21, 0.07, 'presencial', false) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-31', 57.23, 1, 'transferencia' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (160, 28, 'david', '2026-07-17', 'Ingreso', 300, 0, 0, 'presencial', false) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-01', 300, 2, 'efectivo' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (51, 28, 'luis', '2026-07-14', 'Ingreso', 70, 0, 0, 'presencial', false) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-01', 70, 2, 'efectivo' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (NULL, 28, 'luis', '2026-07-17', 'Adri Garcia 1 AÑO', 991.65, 0.21, 0, 'presencial', false) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-17', 1199.9, 1, 'transferencia' FROM f;
+WITH f AS (INSERT INTO facturas (cliente_id, categoria_id, atribucion, fecha_emision, concepto, base, iva_pct, irpf_pct, canal, es_recurrente) VALUES (127, 28, 'david', '2026-07-13', 'Ingreso', 50, 0, 0, 'presencial', false) RETURNING id) INSERT INTO cobros (factura_id, fecha, importe, cuenta_id, metodo) SELECT id, '2026-07-13', 50, 1, 'transferencia' FROM f;
+-- Las comisiones de fin de mes ya existian con importe anterior: se actualizan
+UPDATE gastos SET base = 53.57, iva_soportado = 11.25
+  WHERE concepto = 'Comisiones CAIXA TPV JULIO' AND fecha = '2026-07-31';
+UPDATE gastos SET base = 5.21, iva_soportado = 1.09
+  WHERE concepto = 'Comisiones STRIPE BEMADBOX JULIO' AND fecha = '2026-07-31';
+INSERT INTO gastos (fecha, concepto, proveedor, categoria_id, cuenta_id, imputado_a, base, iva_pct, iva_soportado, deducible, tiene_factura, canal, es_fijo) VALUES ('2026-07-11', 'Capcut', 'Apple', 8, 1, 'ethos', 10, 0, 0, false, false, 'presencial', true);
+INSERT INTO gastos (fecha, concepto, proveedor, categoria_id, cuenta_id, imputado_a, base, iva_pct, iva_soportado, deducible, tiene_factura, canal, es_fijo) VALUES ('2026-07-14', 'BemadBox', 'BemadBox', 8, 1, 'ethos', 50.18, 0.21, 10.54, true, true, 'presencial', true);
+INSERT INTO gastos (fecha, concepto, proveedor, categoria_id, cuenta_id, imputado_a, base, iva_pct, iva_soportado, deducible, tiene_factura, canal, es_fijo) VALUES ('2026-07-14', 'CLAUDE PRO', 'CLAUDE', 8, 1, 'ethos', 88.82, 0, 0, false, false, 'online', true);
+INSERT INTO gastos (fecha, concepto, proveedor, categoria_id, cuenta_id, imputado_a, base, iva_pct, iva_soportado, deducible, tiene_factura, canal, es_fijo) VALUES ('2026-07-16', 'NI IDEA', 'Spar', 12, 1, 'ethos', 2.64, 0.21, 0.55, true, true, 'presencial', false);
+INSERT INTO gastos (fecha, concepto, proveedor, categoria_id, cuenta_id, imputado_a, base, iva_pct, iva_soportado, deducible, tiene_factura, canal, es_fijo) VALUES ('2026-07-16', 'NI IDEA', 'Spar', 12, 1, 'ethos', 4.95, 0.21, 1.04, true, true, 'presencial', false);
+INSERT INTO gastos (fecha, concepto, proveedor, categoria_id, cuenta_id, imputado_a, base, iva_pct, iva_soportado, deducible, tiene_factura, canal, es_fijo) VALUES ('2026-07-16', 'Capcut 1 AÑO', 'Apple', 8, 1, 'ethos', 79.99, 0, 0, false, false, 'presencial', true);
+-- Devolucion a cliente sin factura registrada: salida no deducible en "Otros"
+INSERT INTO categorias (tipo, grupo, nombre, es_fijo, es_inversion, es_online)
+  SELECT 'gasto', 'Operativo', 'Otros', false, false, false
+  WHERE NOT EXISTS (SELECT 1 FROM categorias WHERE tipo = 'gasto' AND nombre = 'Otros');
+INSERT INTO gastos (fecha, concepto, categoria_id, cuenta_id, imputado_a, base, iva_pct, iva_soportado, deducible, tiene_factura, canal, es_fijo)
+  VALUES ('2026-07-08', 'DEVOLUCION BEA', (SELECT id FROM categorias WHERE tipo = 'gasto' AND nombre = 'Otros' LIMIT 1), 1, 'ethos', 80, 0, 0, false, false, 'presencial', false);
+INSERT INTO traspasos (fecha, cuenta_origen_id, cuenta_destino_id, importe, motivo) VALUES ('2026-07-17', 4, 1, 145.14, 'LULU Y JUANITP');
+UPDATE gastos SET canal = 'online' WHERE concepto ILIKE '%claude%';
+COMMIT;
