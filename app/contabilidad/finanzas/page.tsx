@@ -16,6 +16,7 @@ interface Kpis {
   cobertura_fijos: number | null;
   mrr: number;
   pct_efectivo: number | null;
+  cobrado_mes: number;
 }
 interface Saldo {
   codigo: string;
@@ -68,6 +69,7 @@ export default function FinanzasPage() {
   const [saldos, setSaldos] = useState<Saldo[]>([]);
   const [morosos, setMorosos] = useState<Moroso[]>([]);
   const [telefonos, setTelefonos] = useState<Map<number, string>>(new Map());
+  const [cobradoMesCuenta, setCobradoMesCuenta] = useState<Map<string, number>>(new Map());
   const [salud, setSalud] = useState<{
     huchaSaldo: number;
     benMeses: { mes: string; total: number }[];
@@ -105,6 +107,22 @@ export default function FinanzasPage() {
         }
         setTelefonos(map);
       }
+
+      // Cobros del mes en curso por cuenta (dinero comprometido: nómina y gastos del mes)
+      const inicioMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+      const [cuentasIds, cobrosMes] = await Promise.all([
+        supabase.from("cuentas").select("id, codigo"),
+        supabase.from("cobros").select("importe, cuenta_id, facturas!inner(computa_reparto)").gte("fecha", inicioMes),
+      ]);
+      const codigoDe = new Map<number, string>();
+      for (const c of (cuentasIds.data as { id: number; codigo: string }[]) ?? []) codigoDe.set(c.id, c.codigo);
+      const porCuenta = new Map<string, number>();
+      for (const co of (cobrosMes.data as unknown as { importe: number; cuenta_id: number; facturas: { computa_reparto: boolean | null } }[]) ?? []) {
+        if (co.facturas?.computa_reparto === false) continue;
+        const cod = codigoDe.get(co.cuenta_id);
+        if (cod) porCuenta.set(cod, (porCuenta.get(cod) ?? 0) + Number(co.importe));
+      }
+      setCobradoMesCuenta(porCuenta);
 
       // Datos para reinversión y salud financiera
       const hoy = new Date();
@@ -155,8 +173,8 @@ export default function FinanzasPage() {
 
   const saldoDe = (codigo: string) => Number(saldos.find((s) => s.codigo === codigo)?.saldo ?? 0);
   const reservado = Number(kpis.iva_pendiente) + Number(kpis.irpf_pendiente) + Number(kpis.hucha_actual);
-  const efectivoLibre = saldoDe("caja");
-  const bancoLibre = saldoDe("banco") - reservado;
+  const efectivoLibre = saldoDe("caja") - (cobradoMesCuenta.get("caja") ?? 0);
+  const bancoLibre = saldoDe("banco") - reservado - (cobradoMesCuenta.get("banco") ?? 0);
 
   // ---------- ¿Cuánto puedo reinvertir? ----------
   const colchonMeses = Math.max(3, alarma);
@@ -210,9 +228,12 @@ export default function FinanzasPage() {
     <div className="flex flex-col gap-6">
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        <Tarjeta titulo="Caja libre" valor={eur(kpis.caja_libre)} detalle="usable ya restados impuestos y hucha">
+        <Tarjeta titulo="Dinero usable" valor={eur(kpis.caja_libre)} detalle="sin impuestos, hucha ni lo cobrado este mes">
           <p className="text-[10px] text-zinc-500">
             <b className="text-zinc-300">{eur(efectivoLibre)}</b> efectivo · <b className={bancoLibre < 0 ? "text-red-400" : "text-zinc-300"}>{eur(bancoLibre)}</b> banco
+          </p>
+          <p className="text-[10px] text-zinc-600">
+            cobrado este mes: <b className="text-amber-400/90">{eur(kpis.cobrado_mes)}</b> → apartado para nóminas y gastos del mes
           </p>
         </Tarjeta>
         <Tarjeta
