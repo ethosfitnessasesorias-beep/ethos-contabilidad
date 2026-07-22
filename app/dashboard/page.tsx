@@ -42,7 +42,7 @@ export default function Dashboard() {
   const [acts, setActs] = useState<Actividad[]>([]);
   const [clientes, setClientes] = useState<Cli[]>([]);
   const [pendiente, setPendiente] = useState(0);
-  const [evo, setEvo] = useState<{ mes: string; facturado: number; cobrado: number }[]>([]);
+  const [evo, setEvo] = useState<{ mes: string; facturado: number; cobrado: number; gastos: number }[]>([]);
   const [gastosCanal, setGastosCanal] = useState<{ online: number; presencial: number }>({ online: 0, presencial: 0 });
   const [beneficios, setBeneficios] = useState<Beneficio[]>([]);
   const [cobradoMesCuenta, setCobradoMesCuenta] = useState<Map<string, number>>(new Map());
@@ -60,7 +60,7 @@ export default function Dashboard() {
       const mesActual = ym(0);
       const desde6 = `${ym(-5)}-01`;
 
-      const [n, s, k, r, a, cli, sal, fact, cob, gm, ben, cfg, cu, cmes] = await Promise.all([
+      const [n, s, k, r, a, cli, sal, fact, cob, gm, ben, cfg, cu, cmes, g6] = await Promise.all([
         supabase.from("v_dashboard_negocio").select("*"),
         supabase.from("v_saldo_cuentas").select("codigo, nombre, es_transito, saldo").order("id"),
         supabase.from("v_kpis").select("*").single(),
@@ -68,13 +68,14 @@ export default function Dashboard() {
         supabase.from("actividades").select("id, titulo, cuando").eq("hecha", false).gte("cuando", new Date().toISOString()).order("cuando").limit(6),
         supabase.from("clientes").select("fecha_inicio, fecha_baja, estado"),
         supabase.from("v_facturas_saldo").select("pendiente"),
-        supabase.from("facturas").select("fecha_emision, base").gte("fecha_emision", desde6),
-        supabase.from("cobros").select("fecha, importe").gte("fecha", desde6),
+        supabase.from("facturas").select("fecha_emision, total, computa_reparto").gte("fecha_emision", desde6),
+        supabase.from("cobros").select("fecha, importe, facturas!inner(computa_reparto)").gte("fecha", desde6),
         supabase.from("gastos").select("canal, total, categorias!inner(nombre)").gte("fecha", `${mesActual}-01`),
         supabase.from("v_reparto_beneficios").select("mes, socio, beneficio").order("mes"),
         supabase.from("config").select("clave, valor").in("clave", ["inversion_local_total", "objetivo_online", "objetivo_presencial"]),
         supabase.from("cuentas").select("id, codigo"),
         supabase.from("cobros").select("importe, cuenta_id, facturas!inner(computa_reparto)").gte("fecha", `${mesActual}-01`),
+        supabase.from("gastos").select("fecha, total, categorias!inner(nombre)").gte("fecha", desde6),
       ]);
       if (n.error) { setError(n.error.message.includes("v_dashboard_negocio") ? "Falta ejecutar supabase/crm.sql en el SQL Editor." : n.error.message); }
       setNeg((n.data as NegocioFila[]) ?? []);
@@ -111,10 +112,23 @@ export default function Dashboard() {
 
       const meses: string[] = [];
       for (let i = 5; i >= 0; i--) meses.push(ym(-i));
-      const fm = new Map<string, number>(), cm = new Map<string, number>();
-      for (const f of (fact.data as { fecha_emision: string; base: number }[]) ?? []) { const m = f.fecha_emision.slice(0, 7); fm.set(m, (fm.get(m) ?? 0) + Number(f.base)); }
-      for (const c of (cob.data as { fecha: string; importe: number }[]) ?? []) { const m = c.fecha.slice(0, 7); cm.set(m, (cm.get(m) ?? 0) + Number(c.importe)); }
-      setEvo(meses.map((m) => ({ mes: m, facturado: fm.get(m) ?? 0, cobrado: cm.get(m) ?? 0 })));
+      const fm = new Map<string, number>(), cm = new Map<string, number>(), gm6 = new Map<string, number>();
+      for (const f of (fact.data as { fecha_emision: string; total: number; computa_reparto: boolean | null }[]) ?? []) {
+        if (f.computa_reparto === false) continue; // aportaciones de capital fuera
+        const m = f.fecha_emision.slice(0, 7);
+        fm.set(m, (fm.get(m) ?? 0) + Number(f.total));
+      }
+      for (const c of (cob.data as unknown as { fecha: string; importe: number; facturas: { computa_reparto: boolean | null } }[]) ?? []) {
+        if (c.facturas?.computa_reparto === false) continue;
+        const m = c.fecha.slice(0, 7);
+        cm.set(m, (cm.get(m) ?? 0) + Number(c.importe));
+      }
+      for (const g of (g6.data as unknown as { fecha: string; total: number; categorias: { nombre: string } }[]) ?? []) {
+        if (/mina/i.test(g.categorias?.nombre ?? "")) continue; // nóminas = reparto, no gasto
+        const m = g.fecha.slice(0, 7);
+        gm6.set(m, (gm6.get(m) ?? 0) + Number(g.total));
+      }
+      setEvo(meses.map((m) => ({ mes: m, facturado: fm.get(m) ?? 0, cobrado: cm.get(m) ?? 0, gastos: gm6.get(m) ?? 0 })));
     })();
   }, [sesionOk]);
 
@@ -140,7 +154,7 @@ export default function Dashboard() {
   const leads = clientes.filter((c) => !c.fecha_baja && c.estado === "lead").length;
   const altasMes = clientes.filter((c) => c.fecha_inicio?.slice(0, 7) === mesActualISO).length;
   const bajasMes = clientes.filter((c) => c.fecha_baja?.slice(0, 7) === mesActualISO).length;
-  const maxEvo = Math.max(1, ...evo.flatMap((e) => [e.facturado, e.cobrado]));
+  const maxEvo = Math.max(1, ...evo.flatMap((e) => [e.facturado, e.cobrado, e.gastos]));
   const mesTexto = new Date().toLocaleDateString("es-ES", { month: "long", year: "numeric" });
   const runwayAlarma = kpis?.runway_meses != null && Number(kpis.runway_meses) < 3;
 
@@ -354,19 +368,21 @@ export default function Dashboard() {
         {/* Evolución + próximos eventos */}
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 lg:col-span-2">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-black uppercase tracking-wide text-zinc-400">Evolución (6 meses)</h2>
               <div className="flex gap-3 text-[11px]">
-                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-zinc-500" /> Facturado</span>
-                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-500" /> Cobrado</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-zinc-500" /> Facturación</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-emerald-500" /> Cash collected</span>
+                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-red-500" /> Gastos</span>
               </div>
             </div>
             <div className="flex items-stretch gap-3" style={{ height: 150 }}>
               {evo.map((e) => (
                 <div key={e.mes} className="flex h-full flex-1 flex-col items-center gap-1">
-                  <div className="flex w-full flex-1 items-end justify-center gap-1">
-                    <div className="w-1/2 max-w-5 rounded-t bg-zinc-600" style={{ height: `${(e.facturado / maxEvo) * 100}%` }} title={`Facturado ${eur0(e.facturado)}`} />
-                    <div className="w-1/2 max-w-5 rounded-t bg-emerald-500" style={{ height: `${(e.cobrado / maxEvo) * 100}%` }} title={`Cobrado ${eur0(e.cobrado)}`} />
+                  <div className="flex w-full flex-1 items-end justify-center gap-0.5">
+                    <div className="w-1/3 max-w-4 rounded-t bg-zinc-600" style={{ height: `${(e.facturado / maxEvo) * 100}%` }} title={`Facturación ${eur0(e.facturado)}`} />
+                    <div className="w-1/3 max-w-4 rounded-t bg-emerald-500" style={{ height: `${(e.cobrado / maxEvo) * 100}%` }} title={`Cash collected ${eur0(e.cobrado)}`} />
+                    <div className="w-1/3 max-w-4 rounded-t bg-red-500" style={{ height: `${(e.gastos / maxEvo) * 100}%` }} title={`Gastos ${eur0(e.gastos)}`} />
                   </div>
                   <span className="text-[10px] capitalize text-zinc-500">{new Date(e.mes + "-01T00:00:00").toLocaleDateString("es-ES", { month: "short" })}</span>
                 </div>
