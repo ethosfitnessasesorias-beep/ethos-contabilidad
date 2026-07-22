@@ -8,7 +8,7 @@ import { type Canal } from "@/lib/tipos";
 
 interface NegocioFila { canal: Canal; facturado: number; cobrado: number }
 interface Saldo { codigo: string; nombre: string; es_transito: boolean; saldo: number }
-interface Kpis { caja_libre: number; iva_pendiente: number; irpf_pendiente: number; hucha_actual: number; runway_meses: number | null; gasto_fijo_mensual: number }
+interface Kpis { caja_libre: number; iva_pendiente: number; irpf_pendiente: number; hucha_actual: number; runway_meses: number | null; gasto_fijo_mensual: number; cobrado_mes: number }
 interface Reparto { atribucion: string; balance: number; a_entrenador: number }
 interface Actividad { id: number; titulo: string; cuando: string }
 interface Cli { fecha_inicio: string | null; fecha_baja: string | null; estado: string | null }
@@ -20,6 +20,8 @@ const INVERSION_LOCAL = 84333.09;
 
 const eur0 = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n || 0);
+const eur2 = (n: number) =>
+  new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 2 }).format(n || 0);
 
 function Kpi({ label, valor, color = "text-white", sub, alarma }: { label: string; valor: string; color?: string; sub?: string; alarma?: boolean }) {
   return (
@@ -43,6 +45,7 @@ export default function Dashboard() {
   const [evo, setEvo] = useState<{ mes: string; facturado: number; cobrado: number }[]>([]);
   const [gastosCanal, setGastosCanal] = useState<{ online: number; presencial: number }>({ online: 0, presencial: 0 });
   const [beneficios, setBeneficios] = useState<Beneficio[]>([]);
+  const [cobradoMesCuenta, setCobradoMesCuenta] = useState<Map<string, number>>(new Map());
   const [inversionTotal, setInversionTotal] = useState(INVERSION_LOCAL);
   const [objetivos, setObjetivos] = useState<{ online: number; presencial: number }>({ online: 0, presencial: 0 });
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +60,7 @@ export default function Dashboard() {
       const mesActual = ym(0);
       const desde6 = `${ym(-5)}-01`;
 
-      const [n, s, k, r, a, cli, sal, fact, cob, gm, ben, cfg] = await Promise.all([
+      const [n, s, k, r, a, cli, sal, fact, cob, gm, ben, cfg, cu, cmes] = await Promise.all([
         supabase.from("v_dashboard_negocio").select("*"),
         supabase.from("v_saldo_cuentas").select("codigo, nombre, es_transito, saldo").order("id"),
         supabase.from("v_kpis").select("*").single(),
@@ -70,6 +73,8 @@ export default function Dashboard() {
         supabase.from("gastos").select("canal, total, categorias!inner(nombre)").gte("fecha", `${mesActual}-01`),
         supabase.from("v_reparto_beneficios").select("mes, socio, beneficio").order("mes"),
         supabase.from("config").select("clave, valor").in("clave", ["inversion_local_total", "objetivo_online", "objetivo_presencial"]),
+        supabase.from("cuentas").select("id, codigo"),
+        supabase.from("cobros").select("importe, cuenta_id, facturas!inner(computa_reparto)").gte("fecha", `${mesActual}-01`),
       ]);
       if (n.error) { setError(n.error.message.includes("v_dashboard_negocio") ? "Falta ejecutar supabase/crm.sql en el SQL Editor." : n.error.message); }
       setNeg((n.data as NegocioFila[]) ?? []);
@@ -88,6 +93,17 @@ export default function Dashboard() {
       }
       setGastosCanal(gc);
       setBeneficios((ben.data as Beneficio[]) ?? []);
+
+      // Cobros del mes por cuenta: dinero comprometido (nóminas y gastos del mes)
+      const codigoDe = new Map<number, string>();
+      for (const c of (cu.data as { id: number; codigo: string }[]) ?? []) codigoDe.set(c.id, c.codigo);
+      const porCuenta = new Map<string, number>();
+      for (const co of (cmes.data as unknown as { importe: number; cuenta_id: number; facturas: { computa_reparto: boolean | null } }[]) ?? []) {
+        if (co.facturas?.computa_reparto === false) continue;
+        const cod = codigoDe.get(co.cuenta_id);
+        if (cod) porCuenta.set(cod, (porCuenta.get(cod) ?? 0) + Number(co.importe));
+      }
+      setCobradoMesCuenta(porCuenta);
       const claves: Record<string, number> = {};
       for (const x of (cfg.data as { clave: string; valor: number }[]) ?? []) claves[x.clave] = Number(x.valor);
       if (claves.inversion_local_total > 0) setInversionTotal(claves.inversion_local_total);
@@ -107,8 +123,13 @@ export default function Dashboard() {
   const saldoDe = (c: string) => Number(saldos.find((x) => x.codigo === c)?.saldo ?? 0);
   const retenido = kpis ? Number(kpis.iva_pendiente) + Number(kpis.irpf_pendiente) + Number(kpis.hucha_actual) : 0;
   const transito = saldos.filter((s) => s.es_transito).reduce((t, s) => t + Number(s.saldo), 0);
-  const efectivoLibre = saldoDe("caja");
-  const bancoLibre = saldoDe("banco") - retenido;
+  // Usable = saldo − apartado. Apartado: lo cobrado este mes (sale la nómina y
+  // los gastos del mes) y, en banco, también impuestos + hucha.
+  const cobMes = (c: string) => cobradoMesCuenta.get(c) ?? 0;
+  const efectivoApartado = Math.min(saldoDe("caja"), cobMes("caja"));
+  const efectivoLibre = saldoDe("caja") - efectivoApartado;
+  const bancoApartado = Math.min(saldoDe("banco"), retenido + cobMes("banco"));
+  const bancoLibre = saldoDe("banco") - bancoApartado;
   const facturadoMes = neg.reduce((t, x) => t + Number(x.facturado), 0);
   const cobradoMes = neg.reduce((t, x) => t + Number(x.cobrado), 0);
   const socios = reparto.filter((r) => r.atribucion === "luis" || r.atribucion === "david");
@@ -161,11 +182,55 @@ export default function Dashboard() {
 
         {/* Dinero disponible */}
         <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-zinc-600">Dinero disponible</p>
-        <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-          <Kpi label="Caja libre (usable)" valor={eur0(kpis?.caja_libre ?? 0)} sub={`Efectivo ${eur0(efectivoLibre)} · Banco ${eur0(bancoLibre)}`} />
-          <Kpi label="Retenido" valor={eur0(retenido)} color="text-amber-400" sub="impuestos + hucha (no tocar)" />
-          <Kpi label="En tránsito" valor={eur0(transito)} color="text-zinc-300" sub="TPV/Stripe sin liquidar" />
+        <div className="mb-2.5 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <Kpi label="Dinero usable" valor={eur2(kpis?.caja_libre ?? 0)} color="text-emerald-400" sub="sin impuestos, hucha ni lo cobrado este mes" />
+          <Kpi label="Cobrado este mes (apartado)" valor={eur2(Number(kpis?.cobrado_mes ?? 0))} color="text-amber-400" sub="de aquí salen nóminas y gastos del mes" />
+          <Kpi label="Retenido" valor={eur2(retenido)} color="text-amber-400" sub="impuestos + hucha (no tocar)" />
           <Kpi label="Runway" valor={kpis?.runway_meses == null ? "—" : `${kpis.runway_meses} meses`} alarma={runwayAlarma} sub={`fijos ${eur0(kpis?.gasto_fijo_mensual ?? 0)}/mes`} />
+        </div>
+
+        {/* Desglose usable / apartado por cuenta, al céntimo */}
+        <div className="mb-4 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
+                <th className="px-3 py-1.5 text-left">Cuenta</th>
+                <th className="px-3 py-1.5 text-right">Saldo total</th>
+                <th className="px-3 py-1.5 text-right text-emerald-500">Usable</th>
+                <th className="px-3 py-1.5 text-right text-amber-500">Apartado (no usable)</th>
+                <th className="hidden px-3 py-1.5 text-left sm:table-cell">Por qué está apartado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-zinc-800/50">
+                <td className="px-3 py-1.5 font-bold text-white">Banco</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-zinc-200">{eur2(saldoDe("banco"))}</td>
+                <td className="px-3 py-1.5 text-right font-bold tabular-nums text-emerald-400">{eur2(bancoLibre)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-amber-400">{eur2(bancoApartado)}</td>
+                <td className="hidden px-3 py-1.5 text-[10px] text-zinc-500 sm:table-cell">
+                  impuestos + hucha {eur2(retenido)} · cobrado este mes {eur2(cobMes("banco"))}
+                </td>
+              </tr>
+              <tr className="border-b border-zinc-800/50">
+                <td className="px-3 py-1.5 font-bold text-white">Efectivo</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-zinc-200">{eur2(saldoDe("caja"))}</td>
+                <td className="px-3 py-1.5 text-right font-bold tabular-nums text-emerald-400">{eur2(efectivoLibre)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-amber-400">{eur2(efectivoApartado)}</td>
+                <td className="hidden px-3 py-1.5 text-[10px] text-zinc-500 sm:table-cell">
+                  cobrado en efectivo este mes
+                </td>
+              </tr>
+              <tr>
+                <td className="px-3 py-1.5 font-bold text-white">Stripe / TPV</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-zinc-200">{eur2(transito)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-zinc-600">—</td>
+                <td className="px-3 py-1.5 text-right tabular-nums text-amber-400">{eur2(transito)}</td>
+                <td className="hidden px-3 py-1.5 text-[10px] text-zinc-500 sm:table-cell">
+                  en tránsito: no es usable hasta pasarlo al banco
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         {/* Negocio del mes, por canal */}
