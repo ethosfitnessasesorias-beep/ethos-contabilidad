@@ -49,8 +49,29 @@ interface Cli {
   descuento_eur: number;
   domiciliado: boolean;
   cuota_desde: string | null;
+  cuota_periodicidad: string;
 }
-interface CuotaCat { id: number; nombre: string; importe: number; activa: boolean; periodicidad: string }
+interface CuotaCat {
+  id: number;
+  nombre: string;
+  activa: boolean;
+  precio_mensual: number | null;
+  precio_trimestral: number | null;
+  precio_semestral: number | null;
+  precio_anual: number | null;
+}
+const MODALIDADES = [
+  { valor: "mensual", etiqueta: "Mensual", campo: "precio_mensual" },
+  { valor: "trimestral", etiqueta: "Trimestral", campo: "precio_trimestral" },
+  { valor: "semestral", etiqueta: "Semestral", campo: "precio_semestral" },
+  { valor: "anual", etiqueta: "Anual", campo: "precio_anual" },
+] as const;
+const precioDe = (q: CuotaCat | undefined, modalidad: string): number | null => {
+  if (!q) return null;
+  const m = MODALIDADES.find((x) => x.valor === modalidad) ?? MODALIDADES[0];
+  const v = q[m.campo];
+  return v === null || v === undefined ? null : Number(v);
+};
 
 const MESES_PERIODO: Record<string, number> = { mensual: 1, trimestral: 3, semestral: 6, anual: 12 };
 // Próximo mes en que le toca factura según su ciclo (desde + múltiplos del periodo)
@@ -117,7 +138,7 @@ export default function CrmPage() {
       return;
     }
     setCli((data as Cli[]) ?? []);
-    const { data: qs } = await supabase.from("cuotas").select("id, nombre, importe, activa, periodicidad").order("importe");
+    const { data: qs } = await supabase.from("cuotas").select("id, nombre, activa, precio_mensual, precio_trimestral, precio_semestral, precio_anual").order("nombre");
     setCuotasCat((qs as CuotaCat[]) ?? []);
     const { data: sal } = await supabase.from("v_facturas_saldo").select("cliente_id, cobrado, pendiente");
     const m = new Map<number, { cobrado: number; pendiente: number }>();
@@ -148,7 +169,7 @@ export default function CrmPage() {
       nombre: "", entrenador: "ethos", estado: "cliente", canal: null,
       fecha_inicio: new Date().toISOString().slice(0, 10),
       descuento_pct: 0, descuento_eur: 0, domiciliado: false, cuota_id: null,
-      cuota_desde: new Date().toISOString().slice(0, 10),
+      cuota_desde: new Date().toISOString().slice(0, 10), cuota_periodicidad: "mensual",
     });
   }
   async function guardarEditar() {
@@ -169,6 +190,7 @@ export default function CrmPage() {
     datos.descuento_eur = Number(f.descuento_eur) || 0;
     datos.domiciliado = !!f.domiciliado;
     datos.cuota_desde = f.cuota_desde || null;
+    datos.cuota_periodicidad = (f.cuota_periodicidad as string) || "mensual";
     if (creando) {
       if (!String(datos.nombre ?? "").trim()) return setError("Pon al menos el nombre.");
       datos.entrenador = (datos.entrenador as string) || "ethos";
@@ -572,15 +594,28 @@ export default function CrmPage() {
             {/* Cuota del centro (remesa de domiciliados) */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
               <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-sky-400">Cuota del centro</p>
-              <div className="grid gap-3 sm:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-5">
                 <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-[10px] font-bold uppercase text-zinc-500">Plan</span>
                   <select value={f.cuota_id ?? ""} onChange={(e) => setF({ ...f, cuota_id: Number(e.target.value) || null })} className={`${inputCls} appearance-none`}>
                     <option value="">Sin cuota</option>
                     {cuotasCat.filter((q) => q.activa || q.id === f.cuota_id).map((q) => (
-                      <option key={q.id} value={q.id}>
-                        {q.nombre} · {Number(q.importe).toFixed(2).replace(".", ",")} € {({ mensual: "/mes", trimestral: "/trimestre", semestral: "/semestre", anual: "/año" } as Record<string, string>)[q.periodicidad] ?? ""}
-                      </option>
+                      <option key={q.id} value={q.id}>{q.nombre}</option>
                     ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Modalidad</span>
+                  <select
+                    value={(f.cuota_periodicidad as string) ?? "mensual"}
+                    onChange={(e) => setF({ ...f, cuota_periodicidad: e.target.value })}
+                    className={`${inputCls} appearance-none`}
+                  >
+                    {(() => {
+                      const q = cuotasCat.find((x) => x.id === f.cuota_id);
+                      return MODALIDADES.filter((m) => !q || q[m.campo] !== null || m.valor === f.cuota_periodicidad).map((m) => {
+                        const p = precioDe(q, m.valor);
+                        return <option key={m.valor} value={m.valor}>{m.etiqueta}{p !== null ? ` · ${p.toFixed(2).replace(".", ",")} €` : ""}</option>;
+                      });
+                    })()}
                   </select>
                 </label>
                 <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Descuento %</span>
@@ -602,9 +637,14 @@ export default function CrmPage() {
               {(() => {
                 const q = cuotasCat.find((x) => x.id === f.cuota_id);
                 if (!q) return null;
-                const precio = Math.max(0, Math.round((Number(q.importe) * (1 - (Number(f.descuento_pct) || 0) / 100) - (Number(f.descuento_eur) || 0)) * 100) / 100);
-                const periodo = MESES_PERIODO[q.periodicidad] ?? 1;
-                const prox = proximaFactura(f.cuota_desde ?? f.fecha_inicio, q.periodicidad);
+                const modalidad = (f.cuota_periodicidad as string) || "mensual";
+                const base = precioDe(q, modalidad);
+                if (base === null) {
+                  return <p className="mt-2 rounded-lg bg-amber-950/60 px-3 py-1.5 text-[11px] text-amber-300">Este plan no tiene precio {modalidad}: ponlo en Ajustes → Cuotas o elige otra modalidad.</p>;
+                }
+                const precio = Math.max(0, Math.round((base * (1 - (Number(f.descuento_pct) || 0) / 100) - (Number(f.descuento_eur) || 0)) * 100) / 100);
+                const periodo = MESES_PERIODO[modalidad] ?? 1;
+                const prox = proximaFactura(f.cuota_desde ?? f.fecha_inicio, modalidad);
                 return (
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-zinc-900/70 px-3 py-1.5">
                     <span className="text-[11px] text-zinc-500">

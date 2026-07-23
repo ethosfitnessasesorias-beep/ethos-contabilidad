@@ -26,17 +26,19 @@ interface Cuenta {
 interface Cuota {
   id: number;
   nombre: string;
-  importe: number;
   iva_pct: number;
   activa: boolean;
-  periodicidad: "mensual" | "trimestral" | "semestral" | "anual";
+  precio_mensual: number | null;
+  precio_trimestral: number | null;
+  precio_semestral: number | null;
+  precio_anual: number | null;
 }
-const PERIODOS: { valor: Cuota["periodicidad"]; etiqueta: string; sufijo: string }[] = [
-  { valor: "mensual", etiqueta: "Mensual", sufijo: "€/mes" },
-  { valor: "trimestral", etiqueta: "Trimestral", sufijo: "€/trimestre" },
-  { valor: "semestral", etiqueta: "Semestral", sufijo: "€/semestre" },
-  { valor: "anual", etiqueta: "Anual", sufijo: "€/año" },
-];
+const PRECIOS_CUOTA = [
+  { campo: "precio_mensual", etiqueta: "Mensual" },
+  { campo: "precio_trimestral", etiqueta: "Trimestral" },
+  { campo: "precio_semestral", etiqueta: "Semestral" },
+  { campo: "precio_anual", etiqueta: "Anual" },
+] as const;
 interface Categoria {
   id: number;
   tipo: "gasto" | "ingreso";
@@ -171,14 +173,24 @@ export default function Ajustes() {
 
   // ---------- Cuotas (planes del gym) ----------
   const [qNombre, setQNombre] = useState("");
-  const [qImporte, setQImporte] = useState("");
-  const [qPeriodo, setQPeriodo] = useState<Cuota["periodicidad"]>("mensual");
+  const [qPrecios, setQPrecios] = useState<Record<string, string>>({ precio_mensual: "", precio_trimestral: "", precio_semestral: "", precio_anual: "" });
   async function crearCuota() {
-    const imp = Number(qImporte.replace(",", "."));
-    if (!qNombre.trim() || !Number.isFinite(imp) || imp <= 0) return setError("Pon nombre e importe de la cuota.");
-    const { error } = await supabase.from("cuotas").insert({ nombre: qNombre.trim(), importe: Math.round(imp * 100) / 100, periodicidad: qPeriodo });
+    if (!qNombre.trim()) return setError("Pon el nombre de la cuota.");
+    const datos: Record<string, unknown> = { nombre: qNombre.trim() };
+    let alguno = false;
+    for (const p of PRECIOS_CUOTA) {
+      const v = qPrecios[p.campo].trim();
+      if (v === "") { datos[p.campo] = null; continue; }
+      const n = Number(v.replace(",", "."));
+      if (!Number.isFinite(n) || n <= 0) return setError(`Precio ${p.etiqueta.toLowerCase()} no válido.`);
+      datos[p.campo] = Math.round(n * 100) / 100;
+      alguno = true;
+    }
+    if (!alguno) return setError("Pon al menos un precio (mensual, trimestral, semestral o anual).");
+    const { error } = await supabase.from("cuotas").insert(datos);
     if (error) return setError(error.message);
-    setQNombre(""); setQImporte(""); setQPeriodo("mensual");
+    setQNombre("");
+    setQPrecios({ precio_mensual: "", precio_trimestral: "", precio_semestral: "", precio_anual: "" });
     avisar("Cuota creada ✓");
     cargar();
   }
@@ -394,16 +406,24 @@ export default function Ajustes() {
             <p className="mb-3 text-[11px] leading-snug text-zinc-600">
               Precio final con IVA incluido. Los descuentos se ponen en cada cliente (CRM → editar), no aquí.
             </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <input placeholder="Nombre (ej: Grupal estándar)" value={qNombre} onChange={(e) => setQNombre(e.target.value)} className={inputCls} />
-              <select value={qPeriodo} onChange={(e) => setQPeriodo(e.target.value as Cuota["periodicidad"])} className={`${inputCls} appearance-none`}>
-                {PERIODOS.map((p) => <option key={p.valor} value={p.valor}>{p.etiqueta}</option>)}
-              </select>
-              <div className="flex items-center gap-1">
-                <input placeholder="39,90" inputMode="decimal" value={qImporte} onChange={(e) => setQImporte(e.target.value)} className={`${inputCls} w-24 text-right`} />
-                <span className="text-sm text-zinc-500">{PERIODOS.find((p) => p.valor === qPeriodo)?.sufijo}</span>
+            <div className="flex flex-col gap-2">
+              <input placeholder="Nombre (ej: Grupal estándar)" value={qNombre} onChange={(e) => setQNombre(e.target.value)} className={`${inputCls} sm:max-w-xs`} />
+              <div className="flex flex-wrap items-end gap-2">
+                {PRECIOS_CUOTA.map((p) => (
+                  <label key={p.campo} className="flex flex-col gap-1">
+                    <span className="text-[10px] font-bold uppercase text-zinc-500">{p.etiqueta}</span>
+                    <input
+                      placeholder="—"
+                      inputMode="decimal"
+                      value={qPrecios[p.campo]}
+                      onChange={(e) => setQPrecios({ ...qPrecios, [p.campo]: e.target.value })}
+                      className={`${inputCls} w-24 text-right`}
+                    />
+                  </label>
+                ))}
+                <button onClick={crearCuota} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white">Añadir</button>
               </div>
-              <button onClick={crearCuota} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white">Añadir</button>
+              <p className="text-[10px] text-zinc-600">Deja vacías las modalidades que ese plan no ofrezca. La modalidad de cada socio se elige en su ficha del CRM.</p>
             </div>
           </div>
           <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
@@ -412,22 +432,28 @@ export default function Ajustes() {
             )}
             {cuotas.map((qx) => (
               <div key={qx.id} className="flex flex-wrap items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-0">
-                <span className="min-w-32 flex-1 text-sm font-semibold text-white">{qx.nombre}</span>
-                <select
-                  value={qx.periodicidad}
-                  onChange={(e) => actualizarCuota(qx.id, { periodicidad: e.target.value as Cuota["periodicidad"] })}
-                  className={`${inputCls} appearance-none`}
-                >
-                  {PERIODOS.map((p) => <option key={p.valor} value={p.valor}>{p.etiqueta}</option>)}
-                </select>
-                <div className="flex items-center gap-1">
-                  <input
-                    defaultValue={Number(qx.importe)}
-                    onBlur={(e) => { const n = Number(e.target.value.replace(",", ".")); if (Number.isFinite(n) && n > 0 && n !== Number(qx.importe)) actualizarCuota(qx.id, { importe: Math.round(n * 100) / 100 }); }}
-                    className={`${inputCls} w-24 text-right`}
-                  />
-                  <span className="text-xs text-zinc-500">{PERIODOS.find((p) => p.valor === qx.periodicidad)?.sufijo} con IVA</span>
-                </div>
+                <span className="min-w-28 flex-1 text-sm font-semibold text-white">{qx.nombre}</span>
+                {PRECIOS_CUOTA.map((p) => {
+                  const val = qx[p.campo];
+                  return (
+                    <label key={p.campo} className="flex items-center gap-1">
+                      <span className="text-[9px] font-bold uppercase text-zinc-600">{p.etiqueta.slice(0, 4)}.</span>
+                      <input
+                        defaultValue={val === null ? "" : Number(val)}
+                        placeholder="—"
+                        inputMode="decimal"
+                        onBlur={(e) => {
+                          const t = e.target.value.trim();
+                          const nuevo = t === "" ? null : Math.round(Number(t.replace(",", ".")) * 100) / 100;
+                          if (t !== "" && (!Number.isFinite(nuevo!) || nuevo! <= 0)) return;
+                          if ((val === null && nuevo === null) || (val !== null && nuevo !== null && Math.abs(Number(val) - nuevo) < 0.005)) return;
+                          actualizarCuota(qx.id, { [p.campo]: nuevo } as Partial<Cuota>);
+                        }}
+                        className={`${inputCls} w-20 text-right`}
+                      />
+                    </label>
+                  );
+                })}
                 <span className="text-[11px] text-zinc-600">IVA {Math.round(Number(qx.iva_pct) * 100)}%</span>
                 <button
                   onClick={() => actualizarCuota(qx.id, { activa: !qx.activa })}
