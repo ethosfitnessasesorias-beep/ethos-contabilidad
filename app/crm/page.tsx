@@ -48,8 +48,22 @@ interface Cli {
   descuento_pct: number;
   descuento_eur: number;
   domiciliado: boolean;
+  cuota_desde: string | null;
 }
-interface CuotaCat { id: number; nombre: string; importe: number; activa: boolean }
+interface CuotaCat { id: number; nombre: string; importe: number; activa: boolean; periodicidad: string }
+
+const MESES_PERIODO: Record<string, number> = { mensual: 1, trimestral: 3, semestral: 6, anual: 12 };
+// Próximo mes en que le toca factura según su ciclo (desde + múltiplos del periodo)
+function proximaFactura(desde: string | null | undefined, periodicidad: string): Date {
+  const periodo = MESES_PERIODO[periodicidad] ?? 1;
+  const base = desde ? new Date(desde + "T00:00:00") : new Date();
+  const ancla = new Date(base.getFullYear(), base.getMonth(), 1);
+  const ahora = new Date();
+  const mesActual = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
+  const diff = (mesActual.getFullYear() - ancla.getFullYear()) * 12 + (mesActual.getMonth() - ancla.getMonth());
+  const k = diff < 0 ? 0 : Math.ceil(diff / periodo) * periodo;
+  return new Date(ancla.getFullYear(), ancla.getMonth() + k, 1);
+}
 
 const NOMBRE: Record<string, string> = {
   ethos: "Ethos", luis: "Luis", david: "David", alex_esteban: "Alex E.", alex_guerrero: "Alex G.",
@@ -103,7 +117,7 @@ export default function CrmPage() {
       return;
     }
     setCli((data as Cli[]) ?? []);
-    const { data: qs } = await supabase.from("cuotas").select("id, nombre, importe, activa").order("importe");
+    const { data: qs } = await supabase.from("cuotas").select("id, nombre, importe, activa, periodicidad").order("importe");
     setCuotasCat((qs as CuotaCat[]) ?? []);
     const { data: sal } = await supabase.from("v_facturas_saldo").select("cliente_id, cobrado, pendiente");
     const m = new Map<number, { cobrado: number; pendiente: number }>();
@@ -134,6 +148,7 @@ export default function CrmPage() {
       nombre: "", entrenador: "ethos", estado: "cliente", canal: null,
       fecha_inicio: new Date().toISOString().slice(0, 10),
       descuento_pct: 0, descuento_eur: 0, domiciliado: false, cuota_id: null,
+      cuota_desde: new Date().toISOString().slice(0, 10),
     });
   }
   async function guardarEditar() {
@@ -153,6 +168,7 @@ export default function CrmPage() {
     datos.descuento_pct = Number(f.descuento_pct) || 0;
     datos.descuento_eur = Number(f.descuento_eur) || 0;
     datos.domiciliado = !!f.domiciliado;
+    datos.cuota_desde = f.cuota_desde || null;
     if (creando) {
       if (!String(datos.nombre ?? "").trim()) return setError("Pon al menos el nombre.");
       datos.entrenador = (datos.entrenador as string) || "ethos";
@@ -561,7 +577,9 @@ export default function CrmPage() {
                   <select value={f.cuota_id ?? ""} onChange={(e) => setF({ ...f, cuota_id: Number(e.target.value) || null })} className={`${inputCls} appearance-none`}>
                     <option value="">Sin cuota</option>
                     {cuotasCat.filter((q) => q.activa || q.id === f.cuota_id).map((q) => (
-                      <option key={q.id} value={q.id}>{q.nombre} · {Number(q.importe).toFixed(2).replace(".", ",")} €</option>
+                      <option key={q.id} value={q.id}>
+                        {q.nombre} · {Number(q.importe).toFixed(2).replace(".", ",")} € {({ mensual: "/mes", trimestral: "/trimestre", semestral: "/semestre", anual: "/año" } as Record<string, string>)[q.periodicidad] ?? ""}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -572,18 +590,32 @@ export default function CrmPage() {
                   <input inputMode="decimal" value={f.descuento_eur ?? 0} onChange={(e) => setF({ ...f, descuento_eur: Number(e.target.value.replace(",", ".")) || 0 })} className={inputCls} />
                 </label>
               </div>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <label className="flex items-center gap-2 text-sm text-zinc-300">
-                  <input type="checkbox" checked={!!f.domiciliado} onChange={(e) => setF({ ...f, domiciliado: e.target.checked })} className="h-4 w-4 accent-red-600" />
-                  Domiciliado <span className="text-[10px] text-zinc-600">(entra en la remesa mensual)</span>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Empieza a contar</span>
+                  <input type="date" value={f.cuota_desde ?? ""} onChange={(e) => setF({ ...f, cuota_desde: e.target.value || null })} className={inputCls} />
                 </label>
-                {(() => {
-                  const q = cuotasCat.find((x) => x.id === f.cuota_id);
-                  if (!q) return null;
-                  const precio = Math.max(0, Math.round((Number(q.importe) * (1 - (Number(f.descuento_pct) || 0) / 100) - (Number(f.descuento_eur) || 0)) * 100) / 100);
-                  return <span className="text-sm font-black text-emerald-400">{precio.toFixed(2).replace(".", ",")} €/mes</span>;
-                })()}
+                <label className="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
+                  <input type="checkbox" checked={!!f.domiciliado} onChange={(e) => setF({ ...f, domiciliado: e.target.checked })} className="h-4 w-4 accent-red-600" />
+                  Domiciliado <span className="text-[10px] text-zinc-600">(entra en la remesa)</span>
+                </label>
               </div>
+              {(() => {
+                const q = cuotasCat.find((x) => x.id === f.cuota_id);
+                if (!q) return null;
+                const precio = Math.max(0, Math.round((Number(q.importe) * (1 - (Number(f.descuento_pct) || 0) / 100) - (Number(f.descuento_eur) || 0)) * 100) / 100);
+                const periodo = MESES_PERIODO[q.periodicidad] ?? 1;
+                const prox = proximaFactura(f.cuota_desde ?? f.fecha_inicio, q.periodicidad);
+                return (
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-zinc-900/70 px-3 py-1.5">
+                    <span className="text-[11px] text-zinc-500">
+                      Próxima factura: <b className="capitalize text-white">{prox.toLocaleDateString("es-ES", { month: "long", year: "numeric" })}</b>
+                      {periodo > 1 ? ` · luego cada ${periodo} meses` : " · cada mes"}
+                      {!f.cuota_desde && <span className="text-zinc-600"> (ciclo desde su fecha de inicio; ponla arriba si es otra)</span>}
+                    </span>
+                    <span className="text-sm font-black text-emerald-400">{precio.toFixed(2).replace(".", ",")} €</span>
+                  </div>
+                );
+              })()}
             </div>
             <div className="flex items-center gap-2 border-t border-zinc-800 pt-3">
               <button onClick={guardarEditar} className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">{creando ? "Crear cliente" : "Guardar"}</button>

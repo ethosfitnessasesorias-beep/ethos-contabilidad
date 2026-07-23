@@ -29,7 +29,14 @@ interface Cuota {
   importe: number;
   iva_pct: number;
   activa: boolean;
+  periodicidad: "mensual" | "trimestral" | "semestral" | "anual";
 }
+const PERIODOS: { valor: Cuota["periodicidad"]; etiqueta: string; sufijo: string }[] = [
+  { valor: "mensual", etiqueta: "Mensual", sufijo: "€/mes" },
+  { valor: "trimestral", etiqueta: "Trimestral", sufijo: "€/trimestre" },
+  { valor: "semestral", etiqueta: "Semestral", sufijo: "€/semestre" },
+  { valor: "anual", etiqueta: "Anual", sufijo: "€/año" },
+];
 interface Categoria {
   id: number;
   tipo: "gasto" | "ingreso";
@@ -165,12 +172,13 @@ export default function Ajustes() {
   // ---------- Cuotas (planes del gym) ----------
   const [qNombre, setQNombre] = useState("");
   const [qImporte, setQImporte] = useState("");
+  const [qPeriodo, setQPeriodo] = useState<Cuota["periodicidad"]>("mensual");
   async function crearCuota() {
     const imp = Number(qImporte.replace(",", "."));
     if (!qNombre.trim() || !Number.isFinite(imp) || imp <= 0) return setError("Pon nombre e importe de la cuota.");
-    const { error } = await supabase.from("cuotas").insert({ nombre: qNombre.trim(), importe: Math.round(imp * 100) / 100 });
+    const { error } = await supabase.from("cuotas").insert({ nombre: qNombre.trim(), importe: Math.round(imp * 100) / 100, periodicidad: qPeriodo });
     if (error) return setError(error.message);
-    setQNombre(""); setQImporte("");
+    setQNombre(""); setQImporte(""); setQPeriodo("mensual");
     avisar("Cuota creada ✓");
     cargar();
   }
@@ -388,9 +396,12 @@ export default function Ajustes() {
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <input placeholder="Nombre (ej: Grupal estándar)" value={qNombre} onChange={(e) => setQNombre(e.target.value)} className={inputCls} />
+              <select value={qPeriodo} onChange={(e) => setQPeriodo(e.target.value as Cuota["periodicidad"])} className={`${inputCls} appearance-none`}>
+                {PERIODOS.map((p) => <option key={p.valor} value={p.valor}>{p.etiqueta}</option>)}
+              </select>
               <div className="flex items-center gap-1">
                 <input placeholder="39,90" inputMode="decimal" value={qImporte} onChange={(e) => setQImporte(e.target.value)} className={`${inputCls} w-24 text-right`} />
-                <span className="text-sm text-zinc-500">€/mes</span>
+                <span className="text-sm text-zinc-500">{PERIODOS.find((p) => p.valor === qPeriodo)?.sufijo}</span>
               </div>
               <button onClick={crearCuota} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white">Añadir</button>
             </div>
@@ -402,13 +413,20 @@ export default function Ajustes() {
             {cuotas.map((qx) => (
               <div key={qx.id} className="flex flex-wrap items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-0">
                 <span className="min-w-32 flex-1 text-sm font-semibold text-white">{qx.nombre}</span>
+                <select
+                  value={qx.periodicidad}
+                  onChange={(e) => actualizarCuota(qx.id, { periodicidad: e.target.value as Cuota["periodicidad"] })}
+                  className={`${inputCls} appearance-none`}
+                >
+                  {PERIODOS.map((p) => <option key={p.valor} value={p.valor}>{p.etiqueta}</option>)}
+                </select>
                 <div className="flex items-center gap-1">
                   <input
                     defaultValue={Number(qx.importe)}
                     onBlur={(e) => { const n = Number(e.target.value.replace(",", ".")); if (Number.isFinite(n) && n > 0 && n !== Number(qx.importe)) actualizarCuota(qx.id, { importe: Math.round(n * 100) / 100 }); }}
                     className={`${inputCls} w-24 text-right`}
                   />
-                  <span className="text-xs text-zinc-500">€/mes con IVA</span>
+                  <span className="text-xs text-zinc-500">{PERIODOS.find((p) => p.valor === qx.periodicidad)?.sufijo} con IVA</span>
                 </div>
                 <span className="text-[11px] text-zinc-600">IVA {Math.round(Number(qx.iva_pct) * 100)}%</span>
                 <button
