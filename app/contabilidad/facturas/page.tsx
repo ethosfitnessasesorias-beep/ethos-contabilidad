@@ -347,8 +347,8 @@ export default function FacturasPage() {
 
   return (
     <div>
-      {/* Remesa de cuotas pendiente de aprobar */}
-      {remesa && (
+      {/* Remesa de cuotas pendiente de aprobar (solo si tiene socios) */}
+      {remesa && lineas.length > 0 && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-900 bg-sky-950/30 px-4 py-2.5">
           <span className="text-sm">
             <b className="text-sky-300">Remesa de cuotas · {new Date(remesa.mes + "T00:00:00").toLocaleDateString("es-ES", { month: "long", year: "numeric" })}</b>
@@ -400,7 +400,7 @@ export default function FacturasPage() {
         </select>
         <input placeholder="Mín €" inputMode="decimal" value={fMin} onChange={(e) => setFMin(e.target.value)} className={`${inputCls} w-20`} />
         <input placeholder="Máx €" inputMode="decimal" value={fMax} onChange={(e) => setFMax(e.target.value)} className={`${inputCls} w-20`} />
-        {!remesa && (
+        {(!remesa || lineas.length === 0) && (
           <button
             onClick={generarRemesa}
             title="Genera las facturas de los socios domiciliados con cuota (normalmente sale sola el día 1)"
@@ -414,7 +414,7 @@ export default function FacturasPage() {
             setCreando(!creando);
             setError(null);
           }}
-          className={`${remesa ? "ml-auto" : ""} rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white`}
+          className={`${remesa && lineas.length > 0 ? "ml-auto" : ""} rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white`}
         >
           {creando ? "Cancelar" : "+ Nueva factura"}
         </button>
