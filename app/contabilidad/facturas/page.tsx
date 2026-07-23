@@ -52,6 +52,16 @@ interface Saldo {
   pendiente: number;
   fecha_ultimo_cobro: string | null;
 }
+interface Remesa { id: number; mes: string; estado: string }
+interface RemesaLinea {
+  id: number;
+  cliente_id: number;
+  factura_id: number | null;
+  importe: number;
+  incluido: boolean;
+  clientes: { nombre: string; apellidos: string | null } | null;
+  facturas: { iva_pct: number; concepto: string } | null;
+}
 
 const inputCls =
   "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
@@ -75,6 +85,14 @@ export default function FacturasPage() {
   const [fMax, setFMax] = useState("");
   const [cargando, setCargando] = useState(true);
   const [ed, setEd] = useState<EdFactura | null>(null);
+
+  // Remesa de cuotas domiciliadas
+  const [remesa, setRemesa] = useState<Remesa | null>(null);
+  const [lineas, setLineas] = useState<RemesaLinea[]>([]);
+  const [verRemesa, setVerRemesa] = useState(false);
+  const [fechaCobroRem, setFechaCobroRem] = useState(new Date().toISOString().slice(0, 10));
+  const [bancoId, setBancoId] = useState<number | null>(null);
+  const [aprobando, setAprobando] = useState(false);
 
   // Catálogos para crear
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -120,6 +138,25 @@ export default function FacturasPage() {
     setCategorias((cat.data as Categoria[]) ?? []);
     setPersonas((per.data as Persona[]) ?? []);
     setCargando(false);
+
+    // Remesa pendiente (cuotas domiciliadas) + cuenta banco para los cobros
+    const [rem, cue] = await Promise.all([
+      supabase.from("remesas").select("id, mes, estado").eq("estado", "pendiente").order("mes", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("cuentas").select("id, codigo").eq("codigo", "banco").maybeSingle(),
+    ]);
+    setBancoId((cue.data as { id: number } | null)?.id ?? null);
+    const r = rem.data as Remesa | null;
+    setRemesa(r);
+    if (r) {
+      const { data: ls } = await supabase
+        .from("remesa_lineas")
+        .select("id, cliente_id, factura_id, importe, incluido, clientes(nombre, apellidos), facturas(iva_pct, concepto)")
+        .eq("remesa_id", r.id)
+        .order("id");
+      setLineas((ls as unknown as RemesaLinea[]) ?? []);
+    } else {
+      setLineas([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -217,6 +254,64 @@ export default function FacturasPage() {
     cargar();
   }
 
+  // ---------- Remesa de cuotas ----------
+  async function generarRemesa() {
+    setError(null);
+    const { data, error } = await supabase.rpc("generar_remesa");
+    if (error) return setError(error.message);
+    const res = data as { ok: boolean; error?: string };
+    if (!res.ok) return setError(res.error ?? "No se pudo generar la remesa.");
+    setVerRemesa(true);
+    cargar();
+  }
+
+  // El importe editado se reajusta al céntimo del IVA (base redondeada)
+  async function editarImporteLinea(l: RemesaLinea, texto: string) {
+    const n = Number(texto.replace(",", "."));
+    if (!Number.isFinite(n) || n < 0) return setError("Importe no válido.");
+    const iva = Number(l.facturas?.iva_pct ?? 0.21);
+    const base = Math.round((n / (1 + iva)) * 100) / 100;
+    const total = Math.round(base * (1 + iva) * 100) / 100;
+    if (Math.abs(total - Number(l.importe)) < 0.005) return;
+    if (l.factura_id) {
+      const u = await supabase.from("facturas").update({ base }).eq("id", l.factura_id);
+      if (u.error) return setError(u.error.message);
+    }
+    await supabase.from("remesa_lineas").update({ importe: total }).eq("id", l.id);
+    setLineas((prev) => prev.map((x) => (x.id === l.id ? { ...x, importe: total } : x)));
+  }
+
+  async function toggleLinea(l: RemesaLinea) {
+    await supabase.from("remesa_lineas").update({ incluido: !l.incluido }).eq("id", l.id);
+    setLineas((prev) => prev.map((x) => (x.id === l.id ? { ...x, incluido: !l.incluido } : x)));
+  }
+
+  async function quitarLinea(l: RemesaLinea) {
+    const nom = `${l.clientes?.nombre ?? ""} ${l.clientes?.apellidos ?? ""}`.trim();
+    if (!confirm(`¿Quitar a ${nom} de la remesa y borrar su factura?\n\nÚsalo si este mes NO tocaba cobrarle. Si es un impago, mejor desmárcalo: su factura quedará como deuda para reclamar.`)) return;
+    await supabase.from("remesa_lineas").delete().eq("id", l.id);
+    if (l.factura_id) await supabase.from("facturas").delete().eq("id", l.factura_id);
+    cargar();
+  }
+
+  async function aprobarRemesa() {
+    if (!remesa || !bancoId) return setError("No encuentro la cuenta del banco.");
+    const incluidas = lineas.filter((l) => l.incluido && l.factura_id);
+    if (incluidas.length === 0) return setError("No hay líneas incluidas que aprobar.");
+    const total = incluidas.reduce((s, l) => s + Number(l.importe), 0);
+    if (!confirm(`Aprobar la remesa: ${incluidas.length} socios · ${eur(total)}.\n\nSe apuntan los cobros en el banco con fecha ${new Date(fechaCobroRem).toLocaleDateString("es-ES")}. Los desmarcados quedan como deuda para reclamar.`)) return;
+    setAprobando(true);
+    const filas = incluidas.map((l) => ({
+      factura_id: l.factura_id, fecha: fechaCobroRem, importe: Number(l.importe), cuenta_id: bancoId, metodo: "domiciliado",
+    }));
+    const ins = await supabase.from("cobros").insert(filas);
+    if (ins.error) { setAprobando(false); return setError(ins.error.message); }
+    await supabase.from("remesas").update({ estado: "aprobada", aprobada_en: new Date().toISOString() }).eq("id", remesa.id);
+    setAprobando(false);
+    setVerRemesa(false);
+    cargar();
+  }
+
   const visibles = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     const min = fMin.trim() === "" ? null : Number(fMin.replace(",", "."));
@@ -252,6 +347,26 @@ export default function FacturasPage() {
 
   return (
     <div>
+      {/* Remesa de cuotas pendiente de aprobar */}
+      {remesa && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-900 bg-sky-950/30 px-4 py-2.5">
+          <span className="text-sm">
+            <b className="text-sky-300">Remesa de cuotas · {new Date(remesa.mes + "T00:00:00").toLocaleDateString("es-ES", { month: "long", year: "numeric" })}</b>
+            <span className="ml-2 text-zinc-400">
+              {lineas.filter((l) => l.incluido).length} socios · <b className="text-white">{eur(lineas.filter((l) => l.incluido).reduce((s, l) => s + Number(l.importe), 0))}</b>
+              {lineas.filter((l) => l.incluido).length > 0 && (
+                <span className="ml-1 text-[11px] text-zinc-500">
+                  · ticket medio {eur(lineas.filter((l) => l.incluido).reduce((s, l) => s + Number(l.importe), 0) / lineas.filter((l) => l.incluido).length)}
+                </span>
+              )}
+            </span>
+          </span>
+          <button onClick={() => setVerRemesa(true)} className="rounded-lg bg-sky-700 px-4 py-1.5 text-xs font-bold text-white hover:bg-sky-600">
+            Revisar y aprobar
+          </button>
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
           placeholder="Buscar por nº, cliente o concepto…"
@@ -285,12 +400,21 @@ export default function FacturasPage() {
         </select>
         <input placeholder="Mín €" inputMode="decimal" value={fMin} onChange={(e) => setFMin(e.target.value)} className={`${inputCls} w-20`} />
         <input placeholder="Máx €" inputMode="decimal" value={fMax} onChange={(e) => setFMax(e.target.value)} className={`${inputCls} w-20`} />
+        {!remesa && (
+          <button
+            onClick={generarRemesa}
+            title="Genera las facturas de los socios domiciliados con cuota (normalmente sale sola el día 1)"
+            className="ml-auto rounded-full bg-zinc-800 px-4 py-1.5 text-xs font-bold text-zinc-300 hover:bg-zinc-700"
+          >
+            ⟳ Generar remesa del mes
+          </button>
+        )}
         <button
           onClick={() => {
             setCreando(!creando);
             setError(null);
           }}
-          className="ml-auto rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white"
+          className={`${remesa ? "ml-auto" : ""} rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white`}
         >
           {creando ? "Cancelar" : "+ Nueva factura"}
         </button>
@@ -400,6 +524,57 @@ export default function FacturasPage() {
           })
         )}
       </div>
+
+      {/* Modal de revisión de la remesa */}
+      <Modal
+        abierto={verRemesa && !!remesa}
+        onCerrar={() => setVerRemesa(false)}
+        titulo={remesa ? `Remesa · ${new Date(remesa.mes + "T00:00:00").toLocaleDateString("es-ES", { month: "long", year: "numeric" })}` : ""}
+        ancho="max-w-2xl"
+      >
+        {remesa && (
+          <div className="flex flex-col gap-3">
+            <p className="text-[11px] leading-snug text-zinc-500">
+              Comprueba que el total coincide con el recibo del banco. Puedes <b>editar importes</b> (prorrateos),
+              <b> desmarcar</b> a quien no haya pagado (su factura queda como deuda para reclamar) o <b>✕ quitar</b> a quien no tocaba cobrar.
+            </p>
+            <div className="max-h-80 overflow-y-auto rounded-xl border border-zinc-800">
+              {lineas.map((l) => (
+                <div key={l.id} className={`flex items-center gap-2 border-b border-zinc-800/60 px-3 py-1.5 last:border-0 ${l.incluido ? "" : "opacity-50"}`}>
+                  <input type="checkbox" checked={l.incluido} onChange={() => toggleLinea(l)} className="h-4 w-4 shrink-0 accent-red-600" title={l.incluido ? "Desmarcar (queda como deuda)" : "Incluir en la remesa"} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-semibold text-white">{l.clientes?.nombre} {l.clientes?.apellidos ?? ""}</p>
+                    <p className="truncate text-[10px] text-zinc-600">{l.facturas?.concepto}</p>
+                  </div>
+                  <input
+                    key={`${l.id}-${l.importe}`}
+                    defaultValue={Number(l.importe).toFixed(2)}
+                    onBlur={(e) => editarImporteLinea(l, e.target.value)}
+                    inputMode="decimal"
+                    className="w-20 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-right text-xs tabular-nums text-white outline-none focus:border-red-500"
+                  />
+                  <span className="text-[10px] text-zinc-600">€</span>
+                  <button onClick={() => quitarLinea(l)} title="Quitar de la remesa (no tocaba cobrarle)" className="shrink-0 px-1 font-bold text-zinc-600 hover:text-red-400">✕</button>
+                </div>
+              ))}
+              {lineas.length === 0 && <p className="px-4 py-6 text-center text-sm text-zinc-600">Sin socios domiciliados con cuota. Asigna cuotas en el CRM.</p>}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-zinc-950/60 px-3 py-2">
+              <label className="flex items-center gap-2 text-xs text-zinc-500">
+                Fecha del cobro
+                <input type="date" value={fechaCobroRem} onChange={(e) => setFechaCobroRem(e.target.value)} className="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-white outline-none" />
+              </label>
+              <span className="text-sm">
+                <span className="text-zinc-500">{lineas.filter((l) => l.incluido).length} socios · </span>
+                <b className="text-emerald-400">{eur(lineas.filter((l) => l.incluido).reduce((s, l) => s + Number(l.importe), 0))}</b>
+              </span>
+            </div>
+            <button onClick={aprobarRemesa} disabled={aprobando} className="rounded-xl bg-emerald-700 py-2.5 text-sm font-bold text-white hover:bg-emerald-600 disabled:opacity-50">
+              {aprobando ? "Aprobando…" : "✓ Aprobar remesa (apuntar cobros en el banco)"}
+            </button>
+          </div>
+        )}
+      </Modal>
 
       {/* Modal de edición completa */}
       <Modal abierto={!!ed} onCerrar={() => setEd(null)} titulo={ed ? (ed.numero ? `Editar ${ed.numero}` : "Editar borrador") : ""} ancho="max-w-2xl">

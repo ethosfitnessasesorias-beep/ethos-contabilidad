@@ -23,6 +23,13 @@ interface Cuenta {
   saldo_inicial: number;
   activa: boolean;
 }
+interface Cuota {
+  id: number;
+  nombre: string;
+  importe: number;
+  iva_pct: number;
+  activa: boolean;
+}
 interface Categoria {
   id: number;
   tipo: "gasto" | "ingreso";
@@ -63,19 +70,20 @@ const slug = (s: string) =>
   s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 
 export default function Ajustes() {
-  const [seccion, setSeccion] = useState<"negocio" | "personas" | "categorias" | "metodos" | "impuestos" | "cuentas">("negocio");
+  const [seccion, setSeccion] = useState<"negocio" | "personas" | "categorias" | "metodos" | "impuestos" | "cuentas" | "cuotas">("negocio");
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [metodos, setMetodos] = useState<Metodo[]>([]);
   const [impuestos, setImpuestos] = useState<Impuesto[]>([]);
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
+  const [cuotas, setCuotas] = useState<Cuota[]>([]);
   const [cfg, setCfg] = useState<Record<string, number>>({});
   const [cfgTxt, setCfgTxt] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
-    const [p, c, m, i, cu, co, ct] = await Promise.all([
+    const [p, c, m, i, cu, co, ct, q] = await Promise.all([
       supabase.from("personas").select("*").order("orden"),
       supabase.from("categorias").select("*").order("tipo").order("grupo").order("nombre"),
       supabase.from("metodos_pago").select("*").order("orden"),
@@ -83,6 +91,7 @@ export default function Ajustes() {
       supabase.from("cuentas").select("id, codigo, nombre, es_transito, saldo_inicial, activa").order("id"),
       supabase.from("config").select("clave, valor"),
       supabase.from("config_texto").select("clave, valor"),
+      supabase.from("cuotas").select("*").order("importe"),
     ]);
     if (p.error) return setError(p.error.message);
     setPersonas((p.data as Persona[]) ?? []);
@@ -90,6 +99,7 @@ export default function Ajustes() {
     setMetodos((m.data as Metodo[]) ?? []);
     setImpuestos((i.data as Impuesto[]) ?? []);
     setCuentas((cu.data as Cuenta[]) ?? []);
+    setCuotas((q.data as Cuota[]) ?? []);
     const numeros: Record<string, number> = {};
     for (const x of (co.data as { clave: string; valor: number }[]) ?? []) numeros[x.clave] = Number(x.valor);
     setCfg(numeros);
@@ -148,6 +158,24 @@ export default function Ajustes() {
   }
   async function actualizarCuenta(id: number, campos: Partial<Cuenta>) {
     const { error } = await supabase.from("cuentas").update(campos).eq("id", id);
+    if (error) return setError(error.message);
+    cargar();
+  }
+
+  // ---------- Cuotas (planes del gym) ----------
+  const [qNombre, setQNombre] = useState("");
+  const [qImporte, setQImporte] = useState("");
+  async function crearCuota() {
+    const imp = Number(qImporte.replace(",", "."));
+    if (!qNombre.trim() || !Number.isFinite(imp) || imp <= 0) return setError("Pon nombre e importe de la cuota.");
+    const { error } = await supabase.from("cuotas").insert({ nombre: qNombre.trim(), importe: Math.round(imp * 100) / 100 });
+    if (error) return setError(error.message);
+    setQNombre(""); setQImporte("");
+    avisar("Cuota creada ✓");
+    cargar();
+  }
+  async function actualizarCuota(id: number, campos: Partial<Cuota>) {
+    const { error } = await supabase.from("cuotas").update(campos).eq("id", id);
     if (error) return setError(error.message);
     cargar();
   }
@@ -260,6 +288,7 @@ export default function Ajustes() {
         {(
           [
             ["negocio", "Negocio"],
+            ["cuotas", "Cuotas"],
             ["personas", "Personas y reparto"],
             ["categorias", "Categorías"],
             ["cuentas", "Cuentas"],
@@ -346,6 +375,55 @@ export default function Ajustes() {
               tienes 700 €, pon 200. Puede ser negativo.
             </p>
           </div>
+        </div>
+      )}
+
+      {/* ---------- CUOTAS ---------- */}
+      {seccion === "cuotas" && (
+        <div className="flex flex-col gap-3">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="mb-1 text-xs font-bold uppercase tracking-wider text-zinc-500">Nueva cuota (plan del centro)</p>
+            <p className="mb-3 text-[11px] leading-snug text-zinc-600">
+              Precio final con IVA incluido. Los descuentos se ponen en cada cliente (CRM → editar), no aquí.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input placeholder="Nombre (ej: Grupal estándar)" value={qNombre} onChange={(e) => setQNombre(e.target.value)} className={inputCls} />
+              <div className="flex items-center gap-1">
+                <input placeholder="39,90" inputMode="decimal" value={qImporte} onChange={(e) => setQImporte(e.target.value)} className={`${inputCls} w-24 text-right`} />
+                <span className="text-sm text-zinc-500">€/mes</span>
+              </div>
+              <button onClick={crearCuota} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white">Añadir</button>
+            </div>
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
+            {cuotas.length === 0 && (
+              <p className="px-4 py-6 text-center text-sm text-zinc-600">Sin cuotas aún. Crea los planes del centro (grupal, acceso libre…).</p>
+            )}
+            {cuotas.map((qx) => (
+              <div key={qx.id} className="flex flex-wrap items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-0">
+                <span className="min-w-32 flex-1 text-sm font-semibold text-white">{qx.nombre}</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    defaultValue={Number(qx.importe)}
+                    onBlur={(e) => { const n = Number(e.target.value.replace(",", ".")); if (Number.isFinite(n) && n > 0 && n !== Number(qx.importe)) actualizarCuota(qx.id, { importe: Math.round(n * 100) / 100 }); }}
+                    className={`${inputCls} w-24 text-right`}
+                  />
+                  <span className="text-xs text-zinc-500">€/mes con IVA</span>
+                </div>
+                <span className="text-[11px] text-zinc-600">IVA {Math.round(Number(qx.iva_pct) * 100)}%</span>
+                <button
+                  onClick={() => actualizarCuota(qx.id, { activa: !qx.activa })}
+                  className={`ml-auto rounded-full px-3 py-1 text-xs font-bold ${qx.activa ? "bg-emerald-950 text-emerald-400" : "bg-zinc-800 text-zinc-500"}`}
+                >
+                  {qx.activa ? "Activa" : "Oculta"}
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] leading-snug text-zinc-600">
+            El día 1 de cada mes se genera sola la remesa de los socios <b>domiciliados</b> con cuota (Contabilidad → Facturas
+            → revisar y aprobar). Una cuota &quot;Oculta&quot; deja de generar cargos sin perder el histórico.
+          </p>
         </div>
       )}
 

@@ -44,7 +44,12 @@ interface Cli {
   seg_marcha: boolean;
   seg_google_maps: boolean;
   seg_trustpilot: boolean;
+  cuota_id: number | null;
+  descuento_pct: number;
+  descuento_eur: number;
+  domiciliado: boolean;
 }
+interface CuotaCat { id: number; nombre: string; importe: number; activa: boolean }
 
 const NOMBRE: Record<string, string> = {
   ethos: "Ethos", luis: "Luis", david: "David", alex_esteban: "Alex E.", alex_guerrero: "Alex G.",
@@ -82,6 +87,7 @@ export default function CrmPage() {
   const [saldos, setSaldos] = useState<Map<number, { cobrado: number; pendiente: number }>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
+  const [cuotasCat, setCuotasCat] = useState<CuotaCat[]>([]);
   // Editor de dinero (pagado/deuda) de un cliente
   const [dineroCli, setDineroCli] = useState<{ cli: Cli; facturas: FacSaldo[]; cobros: CobroRow[] } | null>(null);
   const [cuentas, setCuentas] = useState<CuentaMin[]>([]);
@@ -96,6 +102,8 @@ export default function CrmPage() {
       return;
     }
     setCli((data as Cli[]) ?? []);
+    const { data: qs } = await supabase.from("cuotas").select("id, nombre, importe, activa").order("importe");
+    setCuotasCat((qs as CuotaCat[]) ?? []);
     const { data: sal } = await supabase.from("v_facturas_saldo").select("cliente_id, cobrado, pendiente");
     const m = new Map<number, { cobrado: number; pendiente: number }>();
     for (const s of (sal as { cliente_id: number | null; cobrado: number; pendiente: number }[]) ?? []) {
@@ -128,6 +136,10 @@ export default function CrmPage() {
     datos.estado = estado;
     // En toda la app la baja se detecta por fecha_baja: la mantenemos coherente con el estado.
     datos.fecha_baja = estado === "baja" ? (f.fecha_baja || hoy) : null;
+    datos.cuota_id = f.cuota_id ?? null;
+    datos.descuento_pct = Number(f.descuento_pct) || 0;
+    datos.descuento_eur = Number(f.descuento_eur) || 0;
+    datos.domiciliado = !!f.domiciliado;
     const { error } = await supabase.from("clientes").update(datos).eq("id", ed.id);
     if (error) return setError(error.message);
     setEd(null);
@@ -510,6 +522,39 @@ export default function CrmPage() {
               <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-red-400">Fecha de baja</span><input type="date" value={fEd("fecha_baja")} onChange={(e) => setF({ ...f, fecha_baja: e.target.value })} className={inputCls} /></label>
             </div>
             <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Objetivo</span><textarea rows={2} value={fEd("objetivo")} onChange={(e) => setF({ ...f, objetivo: e.target.value })} className={inputCls} /></label>
+
+            {/* Cuota del centro (remesa de domiciliados) */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-sky-400">Cuota del centro</p>
+              <div className="grid gap-3 sm:grid-cols-4">
+                <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-[10px] font-bold uppercase text-zinc-500">Plan</span>
+                  <select value={f.cuota_id ?? ""} onChange={(e) => setF({ ...f, cuota_id: Number(e.target.value) || null })} className={`${inputCls} appearance-none`}>
+                    <option value="">Sin cuota</option>
+                    {cuotasCat.filter((q) => q.activa || q.id === f.cuota_id).map((q) => (
+                      <option key={q.id} value={q.id}>{q.nombre} · {Number(q.importe).toFixed(2).replace(".", ",")} €</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Descuento %</span>
+                  <input inputMode="decimal" value={f.descuento_pct ?? 0} onChange={(e) => setF({ ...f, descuento_pct: Number(e.target.value.replace(",", ".")) || 0 })} className={inputCls} />
+                </label>
+                <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Descuento €</span>
+                  <input inputMode="decimal" value={f.descuento_eur ?? 0} onChange={(e) => setF({ ...f, descuento_eur: Number(e.target.value.replace(",", ".")) || 0 })} className={inputCls} />
+                </label>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                  <input type="checkbox" checked={!!f.domiciliado} onChange={(e) => setF({ ...f, domiciliado: e.target.checked })} className="h-4 w-4 accent-red-600" />
+                  Domiciliado <span className="text-[10px] text-zinc-600">(entra en la remesa mensual)</span>
+                </label>
+                {(() => {
+                  const q = cuotasCat.find((x) => x.id === f.cuota_id);
+                  if (!q) return null;
+                  const precio = Math.max(0, Math.round((Number(q.importe) * (1 - (Number(f.descuento_pct) || 0) / 100) - (Number(f.descuento_eur) || 0)) * 100) / 100);
+                  return <span className="text-sm font-black text-emerald-400">{precio.toFixed(2).replace(".", ",")} €/mes</span>;
+                })()}
+              </div>
+            </div>
             <div className="flex items-center gap-2 border-t border-zinc-800 pt-3">
               <button onClick={guardarEditar} className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">Guardar</button>
               <button onClick={borrar} title="Borrar permanentemente" className="rounded-xl border border-red-900 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-950">Borrar</button>
