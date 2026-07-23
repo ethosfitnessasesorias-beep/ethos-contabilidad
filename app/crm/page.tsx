@@ -83,6 +83,7 @@ export default function CrmPage() {
   const [sortKey, setSortKey] = useState<string>("inicio");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [ed, setEd] = useState<Cli | null>(null);
+  const [creando, setCreando] = useState(false);
   const [f, setF] = useState<Partial<Cli>>({});
   const [saldos, setSaldos] = useState<Map<number, { cobrado: number; pendiente: number }>>(new Map());
   const [error, setError] = useState<string | null>(null);
@@ -120,11 +121,23 @@ export default function CrmPage() {
   }, [sesionOk, cargar]);
 
   function abrirEditar(c: Cli) {
+    setCreando(false);
     setEd(c);
     setF({ ...c });
   }
+
+  // Alta manual: por si el formulario falla o el cliente no lo rellenó
+  function abrirNuevo() {
+    setEd(null);
+    setCreando(true);
+    setF({
+      nombre: "", entrenador: "ethos", estado: "cliente", canal: null,
+      fecha_inicio: new Date().toISOString().slice(0, 10),
+      descuento_pct: 0, descuento_eur: 0, domiciliado: false, cuota_id: null,
+    });
+  }
   async function guardarEditar() {
-    if (!ed) return;
+    if (!ed && !creando) return;
     const campos = [
       "nombre", "apellidos", "email", "telefono", "nif", "entrenador", "canal", "tipo_plan", "objetivo",
       "fecha_registro", "primer_contacto", "fecha_compra", "fecha_inicio", "fecha_baja",
@@ -140,9 +153,18 @@ export default function CrmPage() {
     datos.descuento_pct = Number(f.descuento_pct) || 0;
     datos.descuento_eur = Number(f.descuento_eur) || 0;
     datos.domiciliado = !!f.domiciliado;
-    const { error } = await supabase.from("clientes").update(datos).eq("id", ed.id);
-    if (error) return setError(error.message);
-    setEd(null);
+    if (creando) {
+      if (!String(datos.nombre ?? "").trim()) return setError("Pon al menos el nombre.");
+      datos.entrenador = (datos.entrenador as string) || "ethos";
+      datos.origen = "manual";
+      const { error } = await supabase.from("clientes").insert(datos);
+      if (error) return setError(error.message);
+      setCreando(false);
+    } else {
+      const { error } = await supabase.from("clientes").update(datos).eq("id", ed!.id);
+      if (error) return setError(error.message);
+      setEd(null);
+    }
     cargar();
   }
   async function borrar() {
@@ -346,9 +368,12 @@ export default function CrmPage() {
   return (
     <Shell titulo="CRM">
       <div className="px-5 py-6 md:px-8">
-        <div className="mb-5">
-          <h1 className="text-3xl font-black tracking-tight text-white">CRM</h1>
-          <p className="mt-1 text-sm text-zinc-500">Ciclo de vida, métricas y seguimiento de clientes. Se rellena solo desde el formulario.</p>
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-black tracking-tight text-white">CRM</h1>
+            <p className="mt-1 text-sm text-zinc-500">Ciclo de vida, métricas y seguimiento de clientes. Entra solo desde el formulario, o a mano.</p>
+          </div>
+          <button onClick={abrirNuevo} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">+ Nuevo cliente</button>
         </div>
 
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
@@ -487,7 +512,12 @@ export default function CrmPage() {
           </table>
         </div>
 
-        <Modal abierto={!!ed} onCerrar={() => setEd(null)} titulo={ed ? `${ed.nombre} ${ed.apellidos ?? ""}` : ""} ancho="max-w-2xl">
+        <Modal
+          abierto={!!ed || creando}
+          onCerrar={() => { setEd(null); setCreando(false); }}
+          titulo={creando ? "Nuevo cliente" : ed ? `${ed.nombre} ${ed.apellidos ?? ""}` : ""}
+          ancho="max-w-2xl"
+        >
           <div className="flex flex-col gap-3">
             <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Estado</span>
               <select value={(f.estado as string) ?? "cliente"} onChange={(e) => setF({ ...f, estado: e.target.value })} className={`${inputCls} appearance-none`}>
@@ -556,8 +586,10 @@ export default function CrmPage() {
               </div>
             </div>
             <div className="flex items-center gap-2 border-t border-zinc-800 pt-3">
-              <button onClick={guardarEditar} className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">Guardar</button>
-              <button onClick={borrar} title="Borrar permanentemente" className="rounded-xl border border-red-900 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-950">Borrar</button>
+              <button onClick={guardarEditar} className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">{creando ? "Crear cliente" : "Guardar"}</button>
+              {!creando && (
+                <button onClick={borrar} title="Borrar permanentemente" className="rounded-xl border border-red-900 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-950">Borrar</button>
+              )}
             </div>
           </div>
         </Modal>
