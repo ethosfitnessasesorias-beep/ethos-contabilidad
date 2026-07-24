@@ -44,6 +44,7 @@ interface Cli {
   seg_marcha: boolean;
   seg_google_maps: boolean;
   seg_trustpilot: boolean;
+  seg_bolsa: boolean;
   cuota_id: number | null;
   descuento_pct: number;
   descuento_eur: number;
@@ -90,6 +91,7 @@ const NOMBRE: Record<string, string> = {
   ethos: "Ethos", luis: "Luis", david: "David", alex_esteban: "Alex E.", alex_guerrero: "Alex G.",
 };
 const SEG: { campo: keyof Cli; corto: string }[] = [
+  { campo: "seg_bolsa", corto: "Bolsa" },
   { campo: "seg_cambio_fisico", corto: "Cambio físico" },
   { campo: "seg_satisfaccion", corto: "Enc. satisf." },
   { campo: "seg_marcha", corto: "Enc. marcha" },
@@ -483,7 +485,8 @@ export default function CrmPage() {
             </thead>
             <tbody>
               {ordenados.map((c) => {
-                const tiempo = esCliente(c) && c.fecha_inicio ? humano(diasEntre(c.fecha_inicio, c.fecha_baja ?? hoy)) : "—";
+                // Las bajas conservan su tiempo, congelado en la fecha de baja
+                const tiempo = c.fecha_inicio ? humano(diasEntre(c.fecha_inicio, c.fecha_baja ?? hoy)) : "—";
                 const compra = c.fecha_compra && c.primer_contacto ? humano(diasEntre(c.primer_contacto, c.fecha_compra)) : "—";
                 const sd = saldos.get(c.id) ?? { cobrado: 0, pendiente: 0 };
                 return (
