@@ -189,6 +189,14 @@ export default function KpisPage() {
     [manuales, negocio, anyo]
   );
 
+  // Ajustes manuales sobre métricas automáticas: se guardan aparte (prefijo
+  // "aj:") y prevalecen sobre el cálculo sin tocar la contabilidad.
+  const OV = (k: string) => `aj:${k}`;
+  const conAjuste = useCallback(
+    (key: string, autoVals: number[]) => autoVals.map((v, i) => valorManual(OV(key), i) ?? v),
+    [valorManual]
+  );
+
   // Funnel mensual (suma del diario)
   const funnelMes = useMemo(() => {
     const campos = ["bienvenidas", "inbounds", "agendas_bienvenidas", "agendas_inbounds", "cierres"] as const;
@@ -293,6 +301,44 @@ export default function KpisPage() {
     );
   };
 
+  // Fila automática pero EDITABLE: cada celda admite un ajuste manual (ámbar).
+  // Vaciar la celda (o escribir el valor automático) elimina el ajuste.
+  const filaEditable = (etiqueta: string, autoVals: number[], key: string, cls = "text-zinc-300", metricaObj: string | null = null) => {
+    const efectivos = autoVals.map((v, i) => valorManual(OV(key), i) ?? v);
+    const total = efectivos.reduce((s, x) => s + x, 0);
+    return (
+      <tr key={etiqueta} className="border-b border-zinc-800/40 last:border-0 hover:bg-zinc-900/40">
+        <td className="sticky left-0 z-10 whitespace-nowrap bg-zinc-950/95 px-3 py-0.5 text-zinc-400">{etiqueta}</td>
+        {autoVals.map((v, i) => {
+          const ov = valorManual(OV(key), i);
+          const mostrado = ov ?? v;
+          return (
+            <td key={i} className="px-0.5 py-0.5">
+              <input
+                key={`${negocio}-${anyo}-${key}-${i}-${ov ?? "auto"}`}
+                defaultValue={Math.abs(mostrado) < 0.005 ? "" : Math.round(mostrado * 100) / 100}
+                onBlur={(e) => {
+                  const t = e.target.value.trim().replace(",", ".");
+                  const n = t === "" ? null : Number(t);
+                  if (t !== "" && !Number.isFinite(n)) return;
+                  if ((n === null && ov === null) || (ov !== null && n !== null && Math.abs(n - ov) < 0.005)) return;
+                  const igualAuto = n !== null && Math.abs(n - v) < 0.005;
+                  guardarManual(OV(key), i, n === null || igualAuto ? "" : String(n));
+                }}
+                inputMode="decimal"
+                title={ov !== null ? `Ajuste manual (automático: ${Math.round(v * 100) / 100})` : "Editable: escribe para ajustar"}
+                className={`w-full min-w-12 rounded border-0 bg-transparent px-1 py-0.5 text-right text-xs tabular-nums outline-none placeholder:text-zinc-800 focus:bg-zinc-800 ${ov !== null ? "font-bold text-amber-300" : cls}`}
+                placeholder="·"
+              />
+            </td>
+          );
+        })}
+        <td className={`px-3 py-0.5 text-right font-bold tabular-nums ${cls}`}>{n0(total)}</td>
+        {celdaObjetivo(metricaObj, total)}
+      </tr>
+    );
+  };
+
   const filaAuto = (etiqueta: string, vals: number[], cls = "text-zinc-300", fmt: (x: number) => string = n0, totalUltimo = false, metricaObj: string | null = null) => {
     const total = totalUltimo ? [...vals].reverse().find((v) => Math.abs(v) > 0.005) ?? 0 : suma(vals);
     return (
@@ -309,8 +355,16 @@ export default function KpisPage() {
   const fact = a?.fact[negocio] ?? Array(12).fill(0);
   const cobr = a?.cobrado[negocio] ?? Array(12).fill(0);
   const gas = a?.gasto[negocio] ?? Array(12).fill(0);
-  const beneficio = fact.map((v, i) => v - gas[i]);
-  const margen = fact.map((v, i) => (v > 0 ? (v - gas[i]) / v : 0));
+  // Valores efectivos (auto + ajustes manuales); las derivadas usan estos
+  const factE = conAjuste("fact", fact);
+  const gasE = conAjuste("gastos", gas);
+  const beneficio = factE.map((v, i) => v - gasE[i]);
+  const margen = factE.map((v, i) => (v > 0 ? (v - gasE[i]) / v : 0));
+  const fBienE = conAjuste("fn_bien", funnelMes.bienvenidas);
+  const fAgBE = conAjuste("fn_agb", funnelMes.agendas_bienvenidas);
+  const fInbE = conAjuste("fn_inb", funnelMes.inbounds);
+  const fAgIE = conAjuste("fn_agi", funnelMes.agendas_inbounds);
+  const fCierE = conAjuste("fn_cier", funnelMes.cierres);
 
   // Contratación (GYM): beneficio medio de los últimos 3 meses con actividad
   const benGym = (a?.fact.gym ?? []).map((v, i) => v - (a?.gasto.gym[i] ?? 0));
@@ -363,18 +417,20 @@ export default function KpisPage() {
             <table className="w-full text-xs">
               <thead>{cabecera()}</thead>
               <tbody>
-                {filaAuto("Facturación €", fact, "text-zinc-200", n0, false, "auto_facturacion")}
-                {filaAuto("Cash collected €", cobr, "text-emerald-400", n0, false, "auto_cobrado")}
-                {filaAuto("Gastos € (sin nóminas)", gas, "text-red-400")}
+                {filaEditable("Facturación €", fact, "fact", "text-zinc-200", "auto_facturacion")}
+                {filaEditable("Cash collected €", cobr, "cobrado", "text-emerald-400", "auto_cobrado")}
+                {filaEditable("Gastos € (sin nóminas)", gas, "gastos", "text-red-400")}
                 {filaAuto("Beneficio €", beneficio, "text-white", n0, false, "auto_beneficio")}
                 {filaAuto("Margen", margen, "text-zinc-400", pct, true)}
-                {filaAuto("Altas clientes", a?.altas[negocio] ?? [], "text-emerald-400", n0, false, "auto_altas")}
-                {filaAuto("Bajas clientes", a?.bajas[negocio] ?? [], "text-red-400")}
+                {filaEditable("Altas clientes", a?.altas[negocio] ?? Array(12).fill(0), "altas", "text-emerald-400", "auto_altas")}
+                {filaEditable("Bajas clientes", a?.bajas[negocio] ?? Array(12).fill(0), "bajas", "text-red-400")}
               </tbody>
             </table>
           </div>
           <p className="mt-1 text-[10px] text-zinc-600">
-            Activos ahora mismo: <b className="text-zinc-400">{a?.activos[negocio] ?? 0}</b>. Sale del CRM y el libro: no hay que apuntar nada.
+            Activos ahora mismo: <b className="text-zinc-400">{a?.activos[negocio] ?? 0}</b>. Sale del CRM y el libro, pero
+            <b className="text-amber-500/80"> toda celda es editable</b>: un ajuste manual se marca en ámbar y prevalece;
+            vacíala (o escribe el valor original) para volver al automático. Beneficio y margen se recalculan con los ajustes.
           </p>
         </section>
 
@@ -510,15 +566,15 @@ export default function KpisPage() {
             <table className="w-full text-xs">
               <thead>{cabecera("Funnel")}</thead>
               <tbody>
-                {filaAuto("Bienvenidas", funnelMes.bienvenidas, "text-zinc-300", n0, false, "funnel_bienvenidas")}
-                {filaAuto("Agendas bienvenidas", funnelMes.agendas_bienvenidas, "text-zinc-300")}
-                {filaAuto("% agendas bienv.", funnelMes.bienvenidas.map((v, i) => (v > 0 ? funnelMes.agendas_bienvenidas[i] / v : 0)), "text-zinc-500", pct, true)}
-                {filaAuto("Inbounds", funnelMes.inbounds, "text-zinc-300", n0, false, "funnel_inbounds")}
-                {filaAuto("Agendas inbounds", funnelMes.agendas_inbounds, "text-zinc-300")}
-                {filaAuto("% agendas inb.", funnelMes.inbounds.map((v, i) => (v > 0 ? funnelMes.agendas_inbounds[i] / v : 0)), "text-zinc-500", pct, true)}
-                {filaAuto("Agendas totales", funnelMes.agendas_bienvenidas.map((v, i) => v + funnelMes.agendas_inbounds[i]), "text-white", n0, false, "funnel_agendas")}
-                {filaAuto("Cierres", funnelMes.cierres, "text-emerald-400", n0, false, "funnel_cierres")}
-                {filaAuto("% cierre", funnelMes.agendas_bienvenidas.map((v, i) => { const ag = v + funnelMes.agendas_inbounds[i]; return ag > 0 ? funnelMes.cierres[i] / ag : 0; }), "text-emerald-500", pct, true)}
+                {filaEditable("Bienvenidas", funnelMes.bienvenidas, "fn_bien", "text-zinc-300", "funnel_bienvenidas")}
+                {filaEditable("Agendas bienvenidas", funnelMes.agendas_bienvenidas, "fn_agb", "text-zinc-300")}
+                {filaAuto("% agendas bienv.", fBienE.map((v, i) => (v > 0 ? fAgBE[i] / v : 0)), "text-zinc-500", pct, true)}
+                {filaEditable("Inbounds", funnelMes.inbounds, "fn_inb", "text-zinc-300", "funnel_inbounds")}
+                {filaEditable("Agendas inbounds", funnelMes.agendas_inbounds, "fn_agi", "text-zinc-300")}
+                {filaAuto("% agendas inb.", fInbE.map((v, i) => (v > 0 ? fAgIE[i] / v : 0)), "text-zinc-500", pct, true)}
+                {filaAuto("Agendas totales", fAgBE.map((v, i) => v + fAgIE[i]), "text-white", n0, false, "funnel_agendas")}
+                {filaEditable("Cierres", funnelMes.cierres, "fn_cier", "text-emerald-400", "funnel_cierres")}
+                {filaAuto("% cierre", fAgBE.map((v, i) => { const ag = v + fAgIE[i]; return ag > 0 ? fCierE[i] / ag : 0; }), "text-emerald-500", pct, true)}
               </tbody>
             </table>
           </div>

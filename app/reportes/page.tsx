@@ -14,7 +14,8 @@ interface CobroRow { fecha: string; importe: number; facturas: { computa_reparto
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
-const n0 = (v: number) => new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 }).format(v);
+// Con céntimos: en gastos y resultados los decimales importan
+const n0 = (v: number) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 const eur0 = (v: number) => `${n0(v)} €`;
 
 // Celda numérica de la tabla: vacía si no hay valor (como el Excel)
