@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { eur } from "@/lib/formato";
@@ -12,6 +12,35 @@ interface Reparto {
 
 const NOMBRE: Record<string, string> = { luis: "Luis", david: "David" };
 const mesActualISO = () => new Date().toISOString().slice(0, 7);
+
+// ---------- Checklist del cierre (los ticks se guardan por mes) ----------
+const TAREAS_SEMANA = [
+  { clave: "sobres", texto: "Contar sobres y comparar con el Efectivo del Dashboard" },
+  { clave: "apuntar", texto: "Apuntar la semana: grupales efectivo/TPV y gastos sueltos" },
+  { clave: "impagos", texto: "Revisar impagos (nota del lunes) y reclamar por WhatsApp" },
+];
+const TAREAS_MES: { clave: string; texto: string; href?: string }[] = [
+  { clave: "remesa", texto: "Aprobar la remesa de cuotas contra el banco", href: "/contabilidad/facturas" },
+  { clave: "fijos", texto: "Apuntar los gastos fijos de golpe", href: "/contabilidad/tesoreria" },
+  { clave: "comisiones", texto: "Apuntar comisiones de fin de mes (Caixa, Stripe, BemadBox)" },
+  { clave: "salud", texto: "Leer la nota «Cierre del mes» y la Salud financiera", href: "/contabilidad/finanzas" },
+  { clave: "nominas", texto: "Transferir nóminas y marcar PAGADO en Reparto", href: "/contabilidad/reparto" },
+  { clave: "kpis", texto: "Rellenar KPIs de tráfico (seguidores, anuncios…)", href: "/kpis" },
+  { clave: "escanear", texto: "Escanear facturas del mes y ordenar carpesano" },
+];
+const TAREAS_TRIMESTRE: { clave: string; texto: string; href?: string }[] = [
+  { clave: "xavi", texto: "Impuestos: revisar el trimestre y enviárselo a Xavi", href: "/contabilidad/impuestos" },
+  { clave: "pagado_real", texto: "Apuntar el «pagado real» cuando liquide Hacienda", href: "/contabilidad/impuestos" },
+  { clave: "bemadbox", texto: "Cuadrar facturas BEMADBOX / smetik" },
+];
+// Sábados que caen dentro de un mes (para las columnas semanales)
+function sabadosDelMes(mesISO: string): number {
+  const [y, m] = mesISO.split("-").map(Number);
+  let n = 0;
+  const dias = new Date(y, m, 0).getDate();
+  for (let d = 1; d <= dias; d++) if (new Date(y, m - 1, d).getDay() === 6) n++;
+  return n;
+}
 
 export default function CierrePage() {
   const [mes, setMes] = useState(mesActualISO());
@@ -27,6 +56,7 @@ export default function CierrePage() {
   const [nominaCatId, setNominaCatId] = useState<number | null>(null);
   const [cuentaBanco, setCuentaBanco] = useState<number | null>(null);
   const [nominaPuesta, setNominaPuesta] = useState<Set<string>>(new Set());
+  const [hechas, setHechas] = useState<Set<string>>(new Set()); // ticks del checklist (por mes)
   const [ok, setOk] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -88,11 +118,26 @@ export default function CierrePage() {
     setFijosPend(conceptos.size);
 
     // Nóminas ya registradas este mes
-    if (nomCat) {
-      const { data: gn } = await supabase.from("gastos").select("imputado_a").eq("categoria_id", nomCat).gte("fecha", desde).lt("fecha", hasta);
-      setNominaPuesta(new Set(((gn as { imputado_a: string }[]) ?? []).map((x) => x.imputado_a)));
-    }
+    // Nóminas: ahora se marcan con el tick PAGADO del Reparto
+    const { data: rp } = await supabase.from("reparto_pagos").select("persona").eq("mes", desde);
+    setNominaPuesta(new Set(((rp as { persona: string }[]) ?? []).map((x) => x.persona)));
+
+    // Ticks del checklist de este mes
+    const { data: ck } = await supabase.from("cierre_checklist").select("clave").eq("mes", desde);
+    setHechas(new Set(((ck as { clave: string }[]) ?? []).map((x) => x.clave)));
   }, [mes]);
+
+  async function toggleTarea(clave: string) {
+    const mesISO = `${mes}-01`;
+    if (hechas.has(clave)) {
+      await supabase.from("cierre_checklist").delete().eq("mes", mesISO).eq("clave", clave);
+      setHechas((prev) => { const s = new Set(prev); s.delete(clave); return s; });
+    } else {
+      const { error } = await supabase.from("cierre_checklist").insert({ mes: mesISO, clave });
+      if (error) return setError(error.message);
+      setHechas((prev) => new Set(prev).add(clave));
+    }
+  }
 
   useEffect(() => {
     cargar();
@@ -103,37 +148,13 @@ export default function CierrePage() {
   const nominaTotal = reparto.reduce((s, r) => s + Math.max(0, Number(r.beneficio) * 0.8), 0);
   const huchaTotal = reparto.reduce((s, r) => s + Math.max(0, Number(r.beneficio) * 0.2), 0);
 
-  async function registrarNomina(socio: string) {
-    const imp = nominaDe(socio);
-    if (!nominaCatId || imp <= 0) return;
-    const nombreSocio = NOMBRE[socio] ?? socio;
-    const mesLargo = new Date(`${mes}-01T00:00:00`).toLocaleDateString("es-ES", { month: "long", year: "numeric" });
-    const { error } = await supabase.from("gastos").insert({
-      fecha: `${mes}-28`,
-      concepto: `Nómina ${nombreSocio} ${mesLargo}`,
-      categoria_id: nominaCatId,
-      cuenta_id: cuentaBanco,
-      imputado_a: socio,
-      base: Math.round(imp * 100) / 100,
-      iva_pct: 0,
-      irpf_pct: 0,
-      deducible: false,
-      tiene_factura: false,
-      es_fijo: false,
-    });
-    if (error) return setError(error.message);
-    setOk(`Nómina de ${nombreSocio} apuntada ✓`);
-    setTimeout(() => setOk(null), 3000);
-    cargar();
-  }
-
-  // Estado de cada paso
+  // Estado de cada paso (semáforos automáticos)
   const nominasPendientes = reparto.filter((r) => nominaDe(r.socio) > 0 && !nominaPuesta.has(r.socio));
   const pasos = [
     { hecho: morososN === 0, titulo: morososN === 0 ? "Sin cobros pendientes" : `${morososN} clientes deben ${eur(morososTotal)}`, href: "/crm", accion: "Revisar" },
     { hecho: porFacturar === 0, titulo: porFacturar === 0 ? "Todas las facturas pedidas" : `${porFacturar} gastos sin factura por pedir`, href: "/gastos", accion: "Ver" },
     { hecho: fijosPend === 0, titulo: fijosPend === 0 ? "Gastos fijos del mes apuntados" : `${fijosPend} gastos fijos por apuntar`, href: "/contabilidad/tesoreria", accion: "Apuntar" },
-    { hecho: nominasPendientes.length === 0, titulo: nominasPendientes.length === 0 ? "Nóminas registradas" : `Registrar nómina de ${nominasPendientes.map((r) => NOMBRE[r.socio]).join(" y ")}`, href: null, accion: "" },
+    { hecho: nominasPendientes.length === 0, titulo: nominasPendientes.length === 0 ? "Nóminas pagadas (tick en Reparto)" : `Nóminas sin marcar PAGADO: ${nominasPendientes.map((r) => NOMBRE[r.socio]).join(" y ")} (${eur(nominasPendientes.reduce((s, r) => s + nominaDe(r.socio), 0))})`, href: "/contabilidad/reparto", accion: "Reparto" },
     { hecho: false, info: true, titulo: ivaTrim > 0 ? `Reservar ${eur(ivaTrim)} de IVA del trimestre` : "IVA del trimestre: nada a pagar (a compensar)", href: "/contabilidad/impuestos", accion: "Impuestos" },
   ];
   const completados = pasos.filter((p) => p.hecho).length;
@@ -172,9 +193,88 @@ export default function CierrePage() {
         ))}
       </div>
 
-      {/* Checklist */}
+      {/* Checklist de tareas con ticks (se guardan por mes) */}
+      {(() => {
+        const nSabados = sabadosDelMes(mes);
+        const clavesSemana = TAREAS_SEMANA.flatMap((t) => Array.from({ length: nSabados }, (_, w) => `sem:${t.clave}:${w + 1}`));
+        const clavesMes = TAREAS_MES.map((t) => `mes:${t.clave}`);
+        const esFinTrimestre = [3, 6, 9, 12].includes(Number(mes.split("-")[1]));
+        const clavesTri = esFinTrimestre ? TAREAS_TRIMESTRE.map((t) => `tri:${t.clave}`) : [];
+        const todas = [...clavesSemana, ...clavesMes, ...clavesTri];
+        const hechasN = todas.filter((k) => hechas.has(k)).length;
+        const check = (clave: string, texto: React.ReactNode, href?: string) => (
+          <div key={clave} className="flex items-center gap-2.5 border-b border-zinc-800/50 px-4 py-2 last:border-0">
+            <input
+              type="checkbox"
+              checked={hechas.has(clave)}
+              onChange={() => toggleTarea(clave)}
+              className="h-4 w-4 shrink-0 cursor-pointer accent-emerald-600"
+            />
+            <span className={`min-w-0 flex-1 text-[13px] ${hechas.has(clave) ? "text-zinc-600 line-through" : "text-zinc-200"}`}>{texto}</span>
+            {href && (
+              <Link href={href} className="shrink-0 rounded-md bg-zinc-800 px-2 py-0.5 text-[10px] font-bold text-zinc-400 hover:text-white">ir →</Link>
+            )}
+          </div>
+        );
+        return (
+          <div className="mb-5">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-sm font-black uppercase tracking-wide text-zinc-400">Tareas del mes</h3>
+              <div className="flex items-center gap-2">
+                <div className="h-1.5 w-24 overflow-hidden rounded-full bg-zinc-800">
+                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${todas.length ? (hechasN / todas.length) * 100 : 0}%` }} />
+                </div>
+                <span className="text-xs text-zinc-500">{hechasN}/{todas.length}</span>
+              </div>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {/* Sábados */}
+              <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
+                <p className="border-b border-zinc-800 bg-zinc-900 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-zinc-500">
+                  Cada sábado <span className="normal-case text-zinc-600">({nSabados} este mes)</span>
+                </p>
+                <div className="px-4 pt-2">
+                  <div className="grid" style={{ gridTemplateColumns: `1fr repeat(${nSabados}, 2rem)` }}>
+                    <span />
+                    {Array.from({ length: nSabados }, (_, w) => (
+                      <span key={w} className="pb-1 text-center text-[9px] font-bold text-zinc-600">S{w + 1}</span>
+                    ))}
+                    {TAREAS_SEMANA.map((t) => (
+                      <Fragment key={t.clave}>
+                        <span className="border-t border-zinc-800/50 py-1.5 pr-2 text-[12px] leading-snug text-zinc-300">{t.texto}</span>
+                        {Array.from({ length: nSabados }, (_, w) => {
+                          const k = `sem:${t.clave}:${w + 1}`;
+                          return (
+                            <span key={w} className="grid place-items-center border-t border-zinc-800/50">
+                              <input type="checkbox" checked={hechas.has(k)} onChange={() => toggleTarea(k)} className="h-3.5 w-3.5 cursor-pointer accent-emerald-600" />
+                            </span>
+                          );
+                        })}
+                      </Fragment>
+                    ))}
+                  </div>
+                  <div className="h-2" />
+                </div>
+              </div>
+              {/* Día 1 + trimestre */}
+              <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
+                <p className="border-b border-zinc-800 bg-zinc-900 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-zinc-500">Día 1 · cierre del mes anterior</p>
+                {TAREAS_MES.map((t) => check(`mes:${t.clave}`, t.texto, t.href))}
+                <p className="border-y border-zinc-800 bg-zinc-900 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-zinc-500">
+                  Trimestre {esFinTrimestre ? <span className="ml-1 rounded-full bg-amber-950 px-2 py-0.5 text-amber-400">toca este mes</span> : <span className="normal-case text-zinc-600">(solo mar · jun · sep · dic)</span>}
+                </p>
+                {esFinTrimestre
+                  ? TAREAS_TRIMESTRE.map((t) => check(`tri:${t.clave}`, t.texto, t.href))
+                  : <p className="px-4 py-2 text-[11px] text-zinc-600">Este mes no cierra trimestre: nada que hacer aquí.</p>}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Semáforos automáticos */}
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-black uppercase tracking-wide text-zinc-400">Checklist del cierre</h3>
+        <h3 className="text-sm font-black uppercase tracking-wide text-zinc-400">Semáforos automáticos</h3>
         <span className="text-xs text-zinc-500">{completados}/{pasos.filter((p) => !p.info).length} listos</span>
       </div>
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
@@ -191,17 +291,6 @@ export default function CierrePage() {
               <p className={`truncate text-sm font-semibold ${p.hecho ? "text-zinc-400" : "text-white"}`}>{p.titulo}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {/* Paso de nóminas: botones inline */}
-              {i === 3 && nominasPendientes.length > 0 &&
-                nominasPendientes.map((r) => (
-                  <button
-                    key={r.socio}
-                    onClick={() => registrarNomina(r.socio)}
-                    className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white"
-                  >
-                    {NOMBRE[r.socio]} ({eur(nominaDe(r.socio))})
-                  </button>
-                ))}
               {p.href && !p.hecho && (
                 <Link href={p.href} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-300 hover:bg-zinc-700">
                   {p.accion} →
