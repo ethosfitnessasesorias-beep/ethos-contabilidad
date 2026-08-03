@@ -359,7 +359,7 @@ export default function FichaCliente() {
                     {cliente.fecha_baja ? "Reactivar cliente" : "Dar de baja"}
                   </button>
 
-                  {/* Fusión de duplicados */}
+                  {/* Fusión de duplicados: los nombres parecidos salen arriba */}
                   <div className="mt-2 rounded-xl bg-zinc-950 p-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
                       ¿Es un duplicado? Fusionar con…
@@ -370,11 +370,25 @@ export default function FichaCliente() {
                       className={`${inputCls} w-full appearance-none`}
                     >
                       <option value="">Elegir el cliente bueno…</option>
-                      {otrosClientes.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.nombre}
-                        </option>
-                      ))}
+                      {(() => {
+                        const norm = (s: string) =>
+                          s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+                        const yo = norm(cliente.nombre);
+                        const similar = (n: string) => {
+                          const cn = norm(n);
+                          return cn === yo || (yo.length >= 5 && cn.length >= 5 && (cn.includes(yo) || yo.includes(cn)));
+                        };
+                        const parecidos = otrosClientes.filter((c) => similar(c.nombre));
+                        const resto = otrosClientes.filter((c) => !similar(c.nombre));
+                        return [
+                          ...parecidos.map((c) => (
+                            <option key={c.id} value={c.id}>≈ {c.nombre} (parecido)</option>
+                          )),
+                          ...resto.map((c) => (
+                            <option key={c.id} value={c.id}>{c.nombre}</option>
+                          )),
+                        ];
+                      })()}
                     </select>
                     {fusionId && (
                       <button

@@ -74,6 +74,10 @@ const precioDe = (q: CuotaCat | undefined, modalidad: string): number | null => 
   return v === null || v === undefined ? null : Number(v);
 };
 
+// Nombre normalizado para detectar duplicados (minúsculas, sin tildes)
+const normNombre = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+
 const MESES_PERIODO: Record<string, number> = { mensual: 1, trimestral: 3, semestral: 6, anual: 12 };
 // Próximo mes en que le toca factura según su ciclo (desde + múltiplos del periodo)
 function proximaFactura(desde: string | null | undefined, periodicidad: string): Date {
@@ -195,6 +199,13 @@ export default function CrmPage() {
     datos.cuota_periodicidad = (f.cuota_periodicidad as string) || "mensual";
     if (creando) {
       if (!String(datos.nombre ?? "").trim()) return setError("Pon al menos el nombre.");
+      // Aviso anti-duplicados: mismo nombre (o uno contenido en el otro) ya existente
+      const nn = normNombre(`${datos.nombre ?? ""} ${datos.apellidos ?? ""}`);
+      const parecido = cli.find((c) => {
+        const cn = normNombre(`${c.nombre} ${c.apellidos ?? ""}`);
+        return cn === nn || (nn.length >= 5 && cn.length >= 5 && (cn.startsWith(nn + " ") || nn.startsWith(cn + " ")));
+      });
+      if (parecido && !confirm(`Ya existe "${parecido.nombre} ${parecido.apellidos ?? ""}".\n\n¿Seguro que es otra persona y quieres crear una ficha nueva? (Si es la misma, cancela y edita la existente.)`)) return;
       datos.entrenador = (datos.entrenador as string) || "ethos";
       datos.origen = "manual";
       const { error } = await supabase.from("clientes").insert(datos);
