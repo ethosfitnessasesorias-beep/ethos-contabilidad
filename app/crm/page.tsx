@@ -136,6 +136,9 @@ export default function CrmPage() {
   const [cuentaCobro, setCuentaCobro] = useState("banco");
   const [fechaCobro, setFechaCobro] = useState(new Date().toISOString().slice(0, 10));
   const [verCobrosDe, setVerCobrosDe] = useState<number | null>(null);
+  // Factura antigua: corrige el histórico del cliente sin tocar saldos/reparto/impuestos
+  const [antAbierto, setAntAbierto] = useState(false);
+  const [ant, setAnt] = useState({ fecha: "", concepto: "", importe: "", cobrada: true });
 
   const cargar = useCallback(async () => {
     const { data, error } = await supabase.from("clientes").select("*").order("fecha_inicio", { ascending: false, nullsFirst: false });
@@ -300,6 +303,43 @@ export default function CrmPage() {
       .update({ condonado: Math.round((Number(f.condonado) + Number(f.pendiente)) * 100) / 100 })
       .eq("id", f.id);
     if (error) return setError(error.message);
+    refrescarDinero();
+  }
+
+  // Crea una factura antigua (+ cobro sin efecto en caja) para cuadrar el
+  // histórico del cliente: no toca saldos, ni reparto, ni impuestos.
+  async function crearFacturaAntigua() {
+    if (!dineroCli) return;
+    const imp = Number(ant.importe.replace(",", "."));
+    if (!ant.fecha || !Number.isFinite(imp) || imp <= 0) return setError("Pon fecha e importe válidos.");
+    const { data: cat } = await supabase
+      .from("categorias").select("id").eq("tipo", "ingreso").ilike("nombre", "otros").limit(1).maybeSingle();
+    const catId = (cat as { id: number } | null)?.id;
+    if (!catId) return setError("No encuentro la categoría de ingreso 'Otros'.");
+    const c = dineroCli.cli;
+    const { data: fac, error: e1 } = await supabase
+      .from("facturas")
+      .insert({
+        cliente_id: c.id, categoria_id: catId,
+        atribucion: ["luis", "david"].includes(c.entrenador) ? c.entrenador : "ethos",
+        fecha_emision: ant.fecha,
+        concepto: ant.concepto.trim() || "Factura antigua (corrección histórico)",
+        base: Math.round(imp * 100) / 100, iva_pct: 0, irpf_pct: 0,
+        canal: c.canal ?? "presencial",
+        computa_reparto: false, computa_impuestos: false, es_recurrente: false,
+      })
+      .select("id").single();
+    if (e1 || !fac) return setError(e1?.message ?? "No se pudo crear.");
+    if (ant.cobrada) {
+      const banco = cuentas.find((x) => x.codigo === "banco") ?? cuentas[0];
+      const { error: e2 } = await supabase.from("cobros").insert({
+        factura_id: fac.id, fecha: ant.fecha, importe: Math.round(imp * 100) / 100,
+        cuenta_id: banco?.id, metodo: "transferencia", afecta_caja: false,
+      });
+      if (e2) return setError(e2.message);
+    }
+    setAnt({ fecha: "", concepto: "", importe: "", cobrada: true });
+    setAntAbierto(false);
     refrescarDinero();
   }
 
@@ -766,6 +806,40 @@ export default function CrmPage() {
                     })}
                   </div>
                 )}
+
+                {/* Factura antigua: corrección del histórico */}
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                  <button onClick={() => setAntAbierto(!antAbierto)} className="flex w-full items-center justify-between text-left">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-sky-400">+ Añadir factura antigua</span>
+                    <span className="text-xs text-zinc-600">{antAbierto ? "▴" : "▾"}</span>
+                  </button>
+                  {antAbierto && (
+                    <div className="mt-2 flex flex-col gap-2 border-t border-zinc-800 pt-2">
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Fecha</span>
+                          <input type="date" value={ant.fecha} onChange={(e) => setAnt({ ...ant, fecha: e.target.value })} className={inputCls} />
+                        </label>
+                        <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Concepto</span>
+                          <input placeholder="Ej: Trimestre marzo" value={ant.concepto} onChange={(e) => setAnt({ ...ant, concepto: e.target.value })} className={inputCls} />
+                        </label>
+                        <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Importe €</span>
+                          <input inputMode="decimal" placeholder="0,00" value={ant.importe} onChange={(e) => setAnt({ ...ant, importe: e.target.value })} className={inputCls} />
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="flex items-center gap-2 text-sm text-zinc-300">
+                          <input type="checkbox" checked={ant.cobrada} onChange={(e) => setAnt({ ...ant, cobrada: e.target.checked })} className="h-4 w-4 accent-red-600" />
+                          Ya la pagó <span className="text-[10px] text-zinc-600">(desmarca si aún la debe)</span>
+                        </label>
+                        <button onClick={crearFacturaAntigua} className="rounded-lg bg-sky-700 px-4 py-1.5 text-xs font-bold text-white hover:bg-sky-600">Añadir</button>
+                      </div>
+                      <p className="text-[10px] leading-snug text-zinc-600">
+                        Es un pago pasado: corrige el facturado/pagado del cliente pero <b>no toca los saldos de las
+                        cuentas, ni el reparto, ni los impuestos</b> (eso ya se liquidó en su día en el Excel).
+                      </p>
+                    </div>
+                  )}
+                </div>
 
                 <p className="text-[10px] leading-snug text-zinc-600">
                   Las casillas Pagado y Deuda se calculan solas con las facturas y cobros: <b>Cobrar</b> apunta el

@@ -37,6 +37,7 @@ interface Movimiento {
   importe: number; // efecto en caja, con signo
   canal?: string | null;
   saldoTras?: number; // saldo de la cuenta tras el movimiento (si hay cuenta filtrada)
+  historico?: boolean; // factura antigua: no afecta al saldo de la cuenta
 }
 
 // Estado del modal de edición de un movimiento (según su tipo)
@@ -116,7 +117,7 @@ export default function LibroPage() {
     const [cobros, gastos, traspasos, pedir] = await Promise.all([
       supabase
         .from("cobros")
-        .select("id, fecha, importe, cuenta_id, facturas(concepto, canal, categoria_id, clientes(nombre))")
+        .select("id, fecha, importe, cuenta_id, afecta_caja, facturas(concepto, canal, categoria_id, clientes(nombre))")
         .gte("fecha", desde)
         .lt("fecha", hasta),
       supabase
@@ -138,7 +139,7 @@ export default function LibroPage() {
 
     const lista: Movimiento[] = [];
     for (const c of (cobros.data as unknown as Array<{
-      id: number; fecha: string; importe: number; cuenta_id: number;
+      id: number; fecha: string; importe: number; cuenta_id: number; afecta_caja: boolean | null;
       facturas: { concepto: string; canal: string | null; categoria_id: number | null; clientes: { nombre: string } | null } | null;
     }>) ?? []) {
       lista.push({
@@ -146,6 +147,7 @@ export default function LibroPage() {
         detalle: c.facturas?.clientes?.nombre ?? "", cuentaId: c.cuenta_id,
         categoriaId: c.facturas?.categoria_id ?? null,
         importe: Number(c.importe), canal: c.facturas?.canal,
+        historico: c.afecta_caja === false,
       });
     }
     for (const g of (gastos.data as Array<{
@@ -174,7 +176,7 @@ export default function LibroPage() {
     // apertura del mes y acumular cronológicamente.
     if (filtroCuenta && cuentaObj) {
       const [preC, preG, preTin, preTout] = await Promise.all([
-        supabase.from("cobros").select("importe").eq("cuenta_id", filtroCuenta).lt("fecha", desde),
+        supabase.from("cobros").select("importe").eq("cuenta_id", filtroCuenta).eq("afecta_caja", true).lt("fecha", desde),
         supabase.from("gastos").select("total, irpf_soportado").eq("cuenta_id", filtroCuenta).lt("fecha", desde),
         supabase.from("traspasos").select("importe").eq("cuenta_destino_id", filtroCuenta).lt("fecha", desde),
         supabase.from("traspasos").select("importe").eq("cuenta_origen_id", filtroCuenta).lt("fecha", desde),
@@ -189,6 +191,7 @@ export default function LibroPage() {
         suma(preTout.data as Record<string, number>[], (x) => Number(x.importe));
       const cronologico = [...visibles].sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0));
       for (const m of cronologico) {
+        if (m.historico) continue; // facturas antiguas: no mueven el saldo
         saldo += m.importe;
         m.saldoTras = Math.round(saldo * 100) / 100;
       }
@@ -562,6 +565,7 @@ export default function LibroPage() {
                     {new Date(m.fecha).toLocaleDateString("es-ES")}
                     {m.detalle ? ` · ${m.detalle}` : ""}
                     {m.canal ? ` · ${m.canal}` : ""}
+                    {m.historico && <span className="ml-1.5 rounded bg-sky-950 px-1.5 py-0.5 text-[10px] font-bold text-sky-400">histórico · no afecta caja</span>}
                   </p>
                 </div>
               </div>
