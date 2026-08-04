@@ -1,23 +1,21 @@
 "use client";
 
 // Compras: archivador de facturas de compra (escaneadas o descargadas).
-// Organización por CARPETAS (Proveedores, Suministros, Gym…): entras en una
-// carpeta, subes archivos dentro, y puedes mover archivos entre carpetas.
-// Cada archivo puede vincularse a un gasto del Libro: al hacerlo, el gasto
-// queda marcado como "tiene factura" (lo que revisa el Cierre de mes).
+// Filtros por año / trimestre / mes, subida múltiple (importación) y descarga
+// en ZIP de lo filtrado para mandárselo al gestor. Cada archivo puede
+// vincularse a un gasto del Libro: al hacerlo, el gasto queda marcado como
+// "tiene factura" (lo que revisa el Cierre de mes).
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { eur } from "@/lib/formato";
 
-interface Carpeta { id: number; nombre: string }
 interface Archivo {
   id: number;
   nombre: string;
   ruta: string;
   fecha: string;
   gasto_id: number | null;
-  carpeta_id: number | null;
   notas: string | null;
   gastos: { concepto: string; total: number; fecha: string } | null;
 }
@@ -28,10 +26,9 @@ const inputCls =
 
 const hoyISO = () => new Date().toISOString().slice(0, 10);
 const esImagen = (n: string) => /\.(png|jpe?g|webp|heic)$/i.test(n);
+const triDe = (fecha: string) => Math.floor((Number(fecha.slice(5, 7)) - 1) / 3) + 1;
 
 export default function ComprasPage() {
-  const [carpetas, setCarpetas] = useState<Carpeta[]>([]);
-  const [carpetaSel, setCarpetaSel] = useState<number | null>(null); // null = Inicio
   const [archivos, setArchivos] = useState<Archivo[]>([]);
   const [gastos, setGastos] = useState<Gasto[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -39,17 +36,18 @@ export default function ComprasPage() {
   const [fechaSubida, setFechaSubida] = useState(hoyISO());
   const [busqueda, setBusqueda] = useState("");
   const [vinculando, setVinculando] = useState<number | null>(null);
-  // Carpetas: crear / renombrar
-  const [creandoCarpeta, setCreandoCarpeta] = useState(false);
-  const [nombreCarpeta, setNombreCarpeta] = useState("");
-  const [renombrando, setRenombrando] = useState<number | null>(null);
+  // Filtros de tiempo
+  const [fAnyo, setFAnyo] = useState<string>("todos");
+  const [fTri, setFTri] = useState<string>("todos");
+  const [fMes, setFMes] = useState<string>("todos");
+  // Exportación
+  const [descargando, setDescargando] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
-    const [ca, a, g] = await Promise.all([
-      supabase.from("compras_carpetas").select("id, nombre").order("nombre"),
+    const [a, g] = await Promise.all([
       supabase
         .from("compras_archivos")
-        .select("id, nombre, ruta, fecha, gasto_id, carpeta_id, notas, gastos(concepto, total, fecha)")
+        .select("id, nombre, ruta, fecha, gasto_id, notas, gastos(concepto, total, fecha)")
         .order("fecha", { ascending: false })
         .order("id", { ascending: false }),
       supabase
@@ -59,7 +57,6 @@ export default function ComprasPage() {
         .limit(400),
     ]);
     if (a.error) return setError(a.error.message);
-    setCarpetas((ca.data as Carpeta[]) ?? []);
     setArchivos((a.data as unknown as Archivo[]) ?? []);
     setGastos((g.data as Gasto[]) ?? []);
   }, []);
@@ -67,43 +64,6 @@ export default function ComprasPage() {
   useEffect(() => {
     cargar();
   }, [cargar]);
-
-  // ---------- Carpetas ----------
-  async function crearCarpeta() {
-    const nombre = nombreCarpeta.trim();
-    if (!nombre) return;
-    const { error } = await supabase.from("compras_carpetas").insert({ nombre });
-    if (error) return setError(error.message);
-    setNombreCarpeta("");
-    setCreandoCarpeta(false);
-    cargar();
-  }
-
-  async function renombrarCarpeta(c: Carpeta, nombre: string) {
-    setRenombrando(null);
-    if (!nombre.trim() || nombre.trim() === c.nombre) return;
-    const { error } = await supabase.from("compras_carpetas").update({ nombre: nombre.trim() }).eq("id", c.id);
-    if (error) return setError(error.message);
-    cargar();
-  }
-
-  async function borrarCarpeta(c: Carpeta) {
-    const n = archivos.filter((a) => a.carpeta_id === c.id).length;
-    const msg = n > 0
-      ? `¿Borrar la carpeta "${c.nombre}"? Sus ${n} archivo(s) NO se borran: pasan a Inicio.`
-      : `¿Borrar la carpeta vacía "${c.nombre}"?`;
-    if (!confirm(msg)) return;
-    const { error } = await supabase.from("compras_carpetas").delete().eq("id", c.id);
-    if (error) return setError(error.message);
-    if (carpetaSel === c.id) setCarpetaSel(null);
-    cargar();
-  }
-
-  async function moverArchivo(a: Archivo, carpetaId: number | null) {
-    const { error } = await supabase.from("compras_archivos").update({ carpeta_id: carpetaId }).eq("id", a.id);
-    if (error) return setError(error.message);
-    cargar();
-  }
 
   // ---------- Archivos ----------
   async function subir(files: FileList | null) {
@@ -118,12 +78,7 @@ export default function ComprasPage() {
         setError(`${file.name}: ${up.error.message}`);
         continue;
       }
-      const ins = await supabase.from("compras_archivos").insert({
-        nombre: file.name,
-        ruta,
-        fecha: fechaSubida,
-        carpeta_id: carpetaSel,
-      });
+      const ins = await supabase.from("compras_archivos").insert({ nombre: file.name, ruta, fecha: fechaSubida });
       if (ins.error) setError(`${file.name}: ${ins.error.message}`);
     }
     setSubiendo(false);
@@ -159,28 +114,54 @@ export default function ComprasPage() {
     cargar();
   }
 
-  // ---------- Vistas ----------
-  const buscando = busqueda.trim() !== "";
+  // ---------- Filtros ----------
+  const anyos = useMemo(
+    () => [...new Set(archivos.map((a) => a.fecha.slice(0, 4)))].sort().reverse(),
+    [archivos]
+  );
 
-  // Con búsqueda se mira en TODAS las carpetas; sin búsqueda, solo la carpeta actual
   const visibles = useMemo(() => {
-    if (buscando) {
-      const q = busqueda.trim().toLowerCase();
-      return archivos.filter((a) => `${a.nombre} ${a.notas ?? ""} ${a.gastos?.concepto ?? ""}`.toLowerCase().includes(q));
+    const q = busqueda.trim().toLowerCase();
+    return archivos.filter((a) => {
+      if (fAnyo !== "todos" && a.fecha.slice(0, 4) !== fAnyo) return false;
+      if (fTri !== "todos" && String(triDe(a.fecha)) !== fTri) return false;
+      if (fMes !== "todos" && a.fecha.slice(5, 7) !== fMes) return false;
+      if (q && !`${a.nombre} ${a.notas ?? ""} ${a.gastos?.concepto ?? ""}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [archivos, busqueda, fAnyo, fTri, fMes]);
+
+  const etiquetaPeriodo = () => {
+    const partes: string[] = [];
+    if (fAnyo !== "todos") partes.push(fAnyo);
+    if (fTri !== "todos") partes.push(`T${fTri}`);
+    if (fMes !== "todos") partes.push(`mes${fMes}`);
+    return partes.length ? partes.join("_") : "todo";
+  };
+
+  // ---------- Exportación ZIP para el gestor ----------
+  async function descargarZip() {
+    if (visibles.length === 0) return setError("No hay archivos con estos filtros.");
+    setError(null);
+    const { default: JSZip } = await import("jszip");
+    const zip = new JSZip();
+    let hechos = 0;
+    for (const a of visibles) {
+      setDescargando(`Preparando ${++hechos}/${visibles.length}…`);
+      const { data, error } = await supabase.storage.from("compras").download(a.ruta);
+      if (error || !data) continue;
+      zip.file(`${a.fecha}_${a.nombre.replace(/[\\/:*?"<>|]+/g, "_")}`, data);
     }
-    return archivos.filter((a) => a.carpeta_id === carpetaSel);
-  }, [archivos, busqueda, buscando, carpetaSel]);
+    setDescargando("Comprimiendo…");
+    const blob = await zip.generateAsync({ type: "blob" });
+    const el = document.createElement("a");
+    el.href = URL.createObjectURL(blob);
+    el.download = `compras_${etiquetaPeriodo()}.zip`;
+    el.click();
+    URL.revokeObjectURL(el.href);
+    setDescargando(null);
+  }
 
-  const conteo = useMemo(() => {
-    const m = new Map<number | null, number>();
-    for (const a of archivos) m.set(a.carpeta_id, (m.get(a.carpeta_id) ?? 0) + 1);
-    return m;
-  }, [archivos]);
-
-  const carpetaActual = carpetas.find((c) => c.id === carpetaSel) ?? null;
-  const nombreCarpetaDe = (id: number | null) => (id === null ? "Inicio" : carpetas.find((c) => c.id === id)?.nombre ?? "?");
-
-  // Agrupar por mes (una sola cabecera, sin lío de trimestres)
   const mesDe = (f: string) =>
     new Date(f.slice(0, 7) + "-01T00:00:00").toLocaleDateString("es-ES", { month: "long", year: "numeric" });
 
@@ -193,137 +174,66 @@ export default function ComprasPage() {
 
   return (
     <div>
-      {/* Barra: migas + búsqueda */}
+      {/* Subida (importación) */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+        <label className={`cursor-pointer rounded-lg px-4 py-2 text-sm font-bold text-white ${subiendo ? "bg-zinc-700" : "bg-red-600 hover:bg-red-500"}`}>
+          {subiendo ? "Subiendo…" : "⬆ Subir facturas"}
+          <input
+            type="file"
+            multiple
+            accept=".pdf,.png,.jpg,.jpeg,.webp,.heic"
+            className="hidden"
+            disabled={subiendo}
+            onChange={(e) => { subir(e.target.files); e.target.value = ""; }}
+          />
+        </label>
+        <label className="flex items-center gap-2 text-xs font-bold text-zinc-400">
+          con fecha
+          <input type="date" value={fechaSubida} onChange={(e) => setFechaSubida(e.target.value || hoyISO())} className={inputCls} />
+        </label>
+        <span className="text-[10px] leading-snug text-zinc-600">
+          PDF o foto, varias a la vez. Luego vincula cada una a su gasto del Libro.
+        </span>
+      </div>
+
+      {/* Filtros de tiempo + búsqueda + exportación */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <nav className="flex items-center gap-1 text-sm">
-          <button
-            onClick={() => setCarpetaSel(null)}
-            className={`rounded-lg px-2.5 py-1 font-bold ${carpetaSel === null && !buscando ? "text-white" : "text-zinc-500 hover:text-zinc-300"}`}
-          >
-            🏠 Inicio
-          </button>
-          {carpetaActual && !buscando && (
-            <>
-              <span className="text-zinc-700">/</span>
-              <span className="rounded-lg px-2 py-1 font-bold text-white">📁 {carpetaActual.nombre}</span>
-            </>
-          )}
-          {buscando && (
-            <>
-              <span className="text-zinc-700">/</span>
-              <span className="rounded-lg px-2 py-1 font-bold text-amber-400">Resultados de «{busqueda.trim()}»</span>
-            </>
-          )}
-        </nav>
-        <input
-          placeholder="Buscar en todas las carpetas…"
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          className={`${inputCls} ml-auto min-w-52`}
-        />
+        <select value={fAnyo} onChange={(e) => setFAnyo(e.target.value)} className={`${inputCls} appearance-none`}>
+          <option value="todos">Año: todos</option>
+          {anyos.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <select value={fTri} onChange={(e) => { setFTri(e.target.value); if (e.target.value !== "todos") setFMes("todos"); }} className={`${inputCls} appearance-none`}>
+          <option value="todos">Trimestre: todos</option>
+          {[1, 2, 3, 4].map((t) => <option key={t} value={t}>T{t}</option>)}
+        </select>
+        <select value={fMes} onChange={(e) => { setFMes(e.target.value); if (e.target.value !== "todos") setFTri("todos"); }} className={`${inputCls} appearance-none`}>
+          <option value="todos">Mes: todos</option>
+          {Array.from({ length: 12 }, (_, i) => {
+            const v = String(i + 1).padStart(2, "0");
+            const n = new Date(2026, i, 1).toLocaleDateString("es-ES", { month: "long" });
+            return <option key={v} value={v}>{n}</option>;
+          })}
+        </select>
+        <input placeholder="Buscar…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className={`${inputCls} min-w-40 flex-1 sm:max-w-56`} />
+        <button
+          onClick={descargarZip}
+          disabled={!!descargando || visibles.length === 0}
+          title="Descarga en un ZIP todos los archivos filtrados, con la fecha delante del nombre, para mandárselo al gestor"
+          className="ml-auto rounded-lg bg-zinc-800 px-4 py-1.5 text-xs font-bold text-zinc-200 hover:bg-zinc-700 disabled:opacity-40"
+        >
+          {descargando ?? `⬇ Descargar ZIP (${visibles.length}) para el gestor`}
+        </button>
       </div>
 
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
-
-      {/* Carpetas (solo en Inicio y sin búsqueda) */}
-      {carpetaSel === null && !buscando && (
-        <div className="mb-4">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-            {carpetas.map((c) => (
-              <div
-                key={c.id}
-                className="group relative flex cursor-pointer items-center gap-2.5 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3.5 py-3 hover:border-zinc-600 hover:bg-zinc-900"
-                onClick={() => renombrando !== c.id && setCarpetaSel(c.id)}
-              >
-                <span className="text-2xl">📁</span>
-                <div className="min-w-0 flex-1">
-                  {renombrando === c.id ? (
-                    <input
-                      autoFocus
-                      defaultValue={c.nombre}
-                      onClick={(e) => e.stopPropagation()}
-                      onBlur={(e) => renombrarCarpeta(c, e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-                      className="w-full rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-sm text-white outline-none focus:border-red-500"
-                    />
-                  ) : (
-                    <p className="truncate text-sm font-bold text-zinc-200">{c.nombre}</p>
-                  )}
-                  <p className="text-[10px] text-zinc-600">{conteo.get(c.id) ?? 0} archivo(s)</p>
-                </div>
-                <div className="absolute right-1.5 top-1.5 hidden gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => setRenombrando(c.id)} title="Renombrar" className="rounded px-1 text-xs text-zinc-500 hover:text-white">✎</button>
-                  <button onClick={() => borrarCarpeta(c)} title="Borrar carpeta" className="rounded px-1 text-xs text-zinc-500 hover:text-red-400">✕</button>
-                </div>
-              </div>
-            ))}
-
-            {/* Nueva carpeta */}
-            {creandoCarpeta ? (
-              <div className="flex items-center gap-2 rounded-xl border border-dashed border-zinc-700 bg-zinc-900/40 px-3.5 py-3">
-                <span className="text-2xl">📁</span>
-                <input
-                  autoFocus
-                  placeholder="Nombre…"
-                  value={nombreCarpeta}
-                  onChange={(e) => setNombreCarpeta(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") crearCarpeta();
-                    if (e.key === "Escape") setCreandoCarpeta(false);
-                  }}
-                  onBlur={() => (nombreCarpeta.trim() ? crearCarpeta() : setCreandoCarpeta(false))}
-                  className="w-full rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-sm text-white outline-none focus:border-red-500"
-                />
-              </div>
-            ) : (
-              <button
-                onClick={() => setCreandoCarpeta(true)}
-                className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 px-3.5 py-3 text-sm font-bold text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
-              >
-                + Nueva carpeta
-              </button>
-            )}
-          </div>
-          <p className="mt-1.5 text-[10px] text-zinc-600">
-            Ejemplos: una carpeta por proveedor (HSN, Decathlon…) o por tipo (Suministros, Equipamiento, Online).
-            Clic para entrar; los archivos se mueven entre carpetas con su desplegable 📁.
-          </p>
-        </div>
-      )}
-
-      {/* Subida (sube a la carpeta en la que estás) */}
-      {!buscando && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-          <label className={`cursor-pointer rounded-lg px-4 py-2 text-sm font-bold text-white ${subiendo ? "bg-zinc-700" : "bg-red-600 hover:bg-red-500"}`}>
-            {subiendo ? "Subiendo…" : `⬆ Subir a ${carpetaActual ? `"${carpetaActual.nombre}"` : "Inicio"}`}
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.png,.jpg,.jpeg,.webp,.heic"
-              className="hidden"
-              disabled={subiendo}
-              onChange={(e) => { subir(e.target.files); e.target.value = ""; }}
-            />
-          </label>
-          <label className="flex items-center gap-2 text-xs font-bold text-zinc-400">
-            con fecha
-            <input type="date" value={fechaSubida} onChange={(e) => setFechaSubida(e.target.value || hoyISO())} className={inputCls} />
-          </label>
-          <span className="text-[10px] leading-snug text-zinc-600">
-            PDF o foto de la factura del proveedor. Luego vincúlala a su gasto del Libro con el botón «Vincular».
-          </span>
-        </div>
-      )}
 
       {/* Archivos */}
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
         {visibles.length === 0 ? (
           <p className="px-4 py-10 text-center text-sm text-zinc-500">
-            {buscando
-              ? "Nada coincide con la búsqueda."
-              : carpetaSel === null
-                ? "No hay archivos sueltos en Inicio. Sube facturas o entra en una carpeta."
-                : "Esta carpeta está vacía. Sube la primera factura con el botón rojo."}
+            {archivos.length === 0
+              ? "Aún no hay facturas de compra archivadas. Sube la primera con el botón rojo."
+              : "Nada coincide con los filtros."}
           </p>
         ) : (
           visibles.map((a) => {
@@ -333,8 +243,9 @@ export default function ComprasPage() {
             return (
               <Fragment key={a.id}>
                 {cabecera && (
-                  <div className="border-b border-zinc-800 bg-zinc-900/70 px-4 py-1.5 text-[11px] font-bold capitalize text-zinc-500">
-                    {mes}
+                  <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/70 px-4 py-1.5">
+                    <span className="text-[11px] font-bold capitalize text-zinc-500">{mes}</span>
+                    <span className="text-[10px] text-zinc-600">{visibles.filter((x) => mesDe(x.fecha) === mes).length} archivo(s)</span>
                   </div>
                 )}
                 <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800/60 px-4 py-2.5 last:border-0 hover:bg-zinc-900/40">
@@ -343,16 +254,13 @@ export default function ComprasPage() {
                     <button onClick={() => abrir(a)} className="block max-w-full truncate text-left text-sm font-semibold text-sky-400 hover:text-sky-300" title="Abrir el archivo">
                       {a.nombre}
                     </button>
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] text-zinc-600">
-                      <input
-                        type="date"
-                        defaultValue={a.fecha}
-                        onBlur={(e) => cambiarFecha(a, e.target.value)}
-                        className="rounded border border-transparent bg-transparent py-0.5 text-[10px] text-zinc-500 outline-none hover:border-zinc-700 focus:border-red-500"
-                        title="Fecha de la factura"
-                      />
-                      {buscando && <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-bold">📁 {nombreCarpetaDe(a.carpeta_id)}</span>}
-                    </div>
+                    <input
+                      type="date"
+                      defaultValue={a.fecha}
+                      onBlur={(e) => cambiarFecha(a, e.target.value)}
+                      className="rounded border border-transparent bg-transparent py-0.5 text-[10px] text-zinc-500 outline-none hover:border-zinc-700 focus:border-red-500"
+                      title="Fecha de la factura (ordena y filtra por ella)"
+                    />
                   </div>
 
                   {a.gasto_id && a.gastos ? (
@@ -372,18 +280,6 @@ export default function ComprasPage() {
                       Vincular a gasto
                     </button>
                   )}
-
-                  <select
-                    value={a.carpeta_id ?? ""}
-                    onChange={(e) => moverArchivo(a, e.target.value === "" ? null : Number(e.target.value))}
-                    title="Mover a otra carpeta"
-                    className="max-w-32 appearance-none rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-zinc-400 outline-none hover:border-zinc-600"
-                  >
-                    <option value="">📁 Inicio</option>
-                    {carpetas.map((c) => (
-                      <option key={c.id} value={c.id}>📁 {c.nombre}</option>
-                    ))}
-                  </select>
 
                   <button onClick={() => borrar(a)} title="Borrar archivo" className="px-1 font-bold text-zinc-700 hover:text-red-400">✕</button>
                 </div>
@@ -416,8 +312,9 @@ export default function ComprasPage() {
       </div>
 
       <p className="mt-3 text-[10px] leading-snug text-zinc-600">
-        Los archivos se guardan en un almacén privado (solo con sesión iniciada). <b>Vincular a gasto</b> conecta la factura
-        con su apunte del Libro y lo marca como «tiene factura» — el Cierre de mes avisa de los gastos que siguen sin ella.
+        Los archivos se guardan en un almacén privado (solo con sesión iniciada). <b>⬇ Descargar ZIP</b> baja lo que
+        estés viendo (filtros aplicados) con la fecha delante de cada nombre, listo para el gestor.
+        <b> Vincular a gasto</b> conecta la factura con su apunte del Libro y lo marca como «tiene factura».
       </p>
     </div>
   );

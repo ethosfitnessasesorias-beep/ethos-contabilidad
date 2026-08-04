@@ -17,6 +17,7 @@ interface FacturaCompleta {
   categoria_id: number | null;
   canal: string | null;
   atribucion: string;
+  rectifica_id: number | null;
   fecha_emision: string;
   fecha_vencimiento: string | null;
   concepto: string;
@@ -40,6 +41,8 @@ interface ConfigFacturacion {
   emisor_direccion: string;
   serie: string;
   proximo_numero: number;
+  serie_rect: string;
+  proximo_numero_rect: number;
 }
 
 interface LineaBD { id: number; orden: number; concepto: string; descripcion: string | null; cantidad: number; precio: number }
@@ -77,6 +80,7 @@ export default function PaginaFactura() {
   const [emitiendo, setEmitiendo] = useState(false);
   const [vistaPrevia, setVistaPrevia] = useState(false);
   const [avisoOk, setAvisoOk] = useState<string | null>(null);
+  const [rectificaDe, setRectificaDe] = useState<string | null>(null);
 
   // Estado editable del borrador
   const [lineas, setLineas] = useState<Linea[]>([]);
@@ -96,7 +100,7 @@ export default function PaginaFactura() {
     const [f, l, c, cli, cat, per] = await Promise.all([
       supabase
         .from("facturas")
-        .select("id, numero, cliente_id, categoria_id, canal, atribucion, fecha_emision, fecha_vencimiento, concepto, base, iva_pct, irpf_pct, iva_importe, irpf_importe, total, clientes(nombre, apellidos, nif, direccion)")
+        .select("id, numero, cliente_id, categoria_id, canal, atribucion, rectifica_id, fecha_emision, fecha_vencimiento, concepto, base, iva_pct, irpf_pct, iva_importe, irpf_importe, total, clientes(nombre, apellidos, nif, direccion)")
         .eq("id", facturaId)
         .single(),
       supabase.from("factura_lineas").select("*").eq("factura_id", facturaId).order("orden").order("id"),
@@ -110,6 +114,14 @@ export default function PaginaFactura() {
       return setError("Falta la configuración de facturación: ejecuta supabase/facturacion.sql en el SQL Editor.");
     const fac = f.data as unknown as FacturaCompleta;
     setFactura(fac);
+    // Si es rectificativa, traer el número de la factura original
+    if (fac.rectifica_id) {
+      const { data: orig } = await supabase.from("facturas").select("numero, fecha_emision").eq("id", fac.rectifica_id).single();
+      const o = orig as { numero: string | null; fecha_emision: string } | null;
+      setRectificaDe(o ? `${o.numero ?? "(borrador)"} · ${new Date(o.fecha_emision).toLocaleDateString("es-ES")}` : null);
+    } else {
+      setRectificaDe(null);
+    }
     setLineasBD((l.data as LineaBD[]) ?? []);
     setConfig(c.data as ConfigFacturacion);
     setClientes((cli.data as CliMin[]) ?? []);
@@ -120,6 +132,12 @@ export default function PaginaFactura() {
   useEffect(() => {
     if (sesionOk) cargar();
   }, [sesionOk, cargar]);
+
+  // Si se navega a otra factura (p. ej. al crear una rectificativa), reiniciar el formulario
+  useEffect(() => {
+    setInicializado(false);
+    setVistaPrevia(false);
+  }, [facturaId]);
 
   // Volcar la factura al formulario (solo la primera vez que llega)
   useEffect(() => {
@@ -243,18 +261,22 @@ export default function PaginaFactura() {
     return true;
   }
 
-  // Aprobar = guardar + asignar el siguiente número de la serie (una sola vez)
+  // Aprobar = guardar + asignar el siguiente número de la serie (una sola vez).
+  // Las rectificativas usan su propia serie (R) con numeración independiente.
   async function aprobar() {
     if (!config || !factura) return;
     const ok = await guardar(true);
     if (!ok) return;
     setEmitiendo(true);
-    const numero = `${config.serie}${String(config.proximo_numero).padStart(4, "0")}`;
+    const esRect = !!factura.rectifica_id;
+    const serie = esRect ? config.serie_rect : config.serie;
+    const proximo = esRect ? config.proximo_numero_rect : config.proximo_numero;
+    const numero = `${serie}${String(proximo).padStart(4, "0")}`;
     const consumo = await supabase
       .from("facturacion_config")
-      .update({ proximo_numero: config.proximo_numero + 1 })
+      .update(esRect ? { proximo_numero_rect: proximo + 1 } : { proximo_numero: proximo + 1 })
       .eq("id", 1)
-      .eq("proximo_numero", config.proximo_numero)
+      .eq(esRect ? "proximo_numero_rect" : "proximo_numero", proximo)
       .select();
     if (consumo.error || !consumo.data?.length) {
       setEmitiendo(false);
@@ -268,6 +290,44 @@ export default function PaginaFactura() {
     cargar();
   }
 
+  // Crea una rectificativa (abono): misma factura con importes en negativo,
+  // ligada a la original y con serie propia. Se abre como borrador editable.
+  async function crearRectificativa() {
+    if (!factura) return;
+    if (!confirm(`¿Crear una factura rectificativa (abono) de ${factura.numero}?\n\nSe abre como borrador con los importes en negativo; puedes ajustarla antes de aprobarla.`)) return;
+    const { data, error } = await supabase
+      .from("facturas")
+      .insert({
+        cliente_id: factura.cliente_id,
+        categoria_id: factura.categoria_id,
+        canal: factura.canal,
+        atribucion: factura.atribucion,
+        fecha_emision: new Date().toISOString().slice(0, 10),
+        concepto: `Rectificativa de ${factura.numero}`,
+        base: -Number(factura.base),
+        iva_pct: Number(factura.iva_pct),
+        irpf_pct: Number(factura.irpf_pct),
+        rectifica_id: factura.id,
+      })
+      .select("id")
+      .single();
+    if (error || !data) return setError(error?.message ?? "No se pudo crear la rectificativa.");
+    const origen = lineasBD.length
+      ? lineasBD
+      : [{ orden: 0, concepto: factura.concepto, descripcion: null, cantidad: 1, precio: r2(Number(factura.base) * (1 + Number(factura.iva_pct))) }];
+    await supabase.from("factura_lineas").insert(
+      origen.map((l, i) => ({
+        factura_id: data.id,
+        orden: i,
+        concepto: l.concepto,
+        descripcion: l.descripcion,
+        cantidad: Number(l.cantidad),
+        precio: r2(-Number(l.precio)),
+      }))
+    );
+    router.push(`/facturas/${data.id}`);
+  }
+
   if (sesionOk === null || (!factura && !error)) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-zinc-950 text-zinc-500">
@@ -277,6 +337,10 @@ export default function PaginaFactura() {
   }
 
   const emitida = !!factura?.numero;
+  const esRect = !!factura?.rectifica_id;
+  const serieActual = esRect ? config?.serie_rect ?? "R" : config?.serie ?? "";
+  const proximoActual = esRect ? config?.proximo_numero_rect ?? 0 : config?.proximo_numero ?? 0;
+  const numeroPrevisto = `${serieActual}${String(proximoActual).padStart(4, "0")}`;
   const clienteSel = clientes.find((c) => c.id === fCliente);
   const nombreCliente = clienteSel ? `${clienteSel.nombre} ${clienteSel.apellidos ?? ""}`.trim() : factura?.clientes?.nombre ?? "";
 
@@ -302,10 +366,13 @@ export default function PaginaFactura() {
     <div className="rounded-2xl bg-white p-8 text-zinc-900 shadow print:rounded-none print:p-10 print:shadow-none">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-black tracking-tight">FACTURA</h1>
+          <h1 className="text-2xl font-black tracking-tight">{esRect ? "FACTURA RECTIFICATIVA" : "FACTURA"}</h1>
           <p className="mt-1 text-sm font-semibold">
-            Nº {factura.numero ?? `(borrador — saldrá como ${config.serie}${String(config.proximo_numero).padStart(4, "0")})`}
+            Nº {factura.numero ?? `(borrador — saldrá como ${numeroPrevisto})`}
           </p>
+          {esRect && rectificaDe && (
+            <p className="text-sm">Rectifica a la factura {rectificaDe}</p>
+          )}
           <p className="text-sm">Fecha: {new Date(emitida ? factura.fecha_emision : fFecha || factura.fecha_emision).toLocaleDateString("es-ES")}</p>
           {(emitida ? factura.fecha_vencimiento : fVence) && (
             <p className="text-sm">Vencimiento: {new Date((emitida ? factura.fecha_vencimiento : fVence) as string).toLocaleDateString("es-ES")}</p>
@@ -382,15 +449,31 @@ export default function PaginaFactura() {
         <div className="flex items-center gap-3">
           <button onClick={() => router.back()} className="text-lg text-zinc-500 hover:text-zinc-300" aria-label="Volver">←</button>
           <h1 className="text-xl font-black tracking-tight text-white">
-            {emitida ? `Factura ${factura?.numero}` : "Nueva factura"}
+            {emitida ? `Factura ${factura?.numero}` : esRect ? "Nueva rectificativa" : "Nueva factura"}
           </h1>
           {!emitida && <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-[10px] font-bold uppercase text-zinc-400">borrador</span>}
+          {esRect && (
+            <span className="rounded-full bg-violet-950 px-2.5 py-0.5 text-[10px] font-bold uppercase text-violet-400" title={rectificaDe ? `Rectifica a ${rectificaDe}` : ""}>
+              rectificativa{rectificaDe ? ` de ${rectificaDe.split(" · ")[0]}` : ""}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {emitida ? (
-            <button onClick={() => window.print()} className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white">
-              Imprimir / Guardar PDF
-            </button>
+            <>
+              {!esRect && (
+                <button
+                  onClick={crearRectificativa}
+                  title="Crea un abono en negativo ligado a esta factura, con su propia serie R"
+                  className="rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-bold text-zinc-200 hover:bg-zinc-700"
+                >
+                  ↩ Crear rectificativa
+                </button>
+              )}
+              <button onClick={() => window.print()} className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white">
+                Imprimir / Guardar PDF
+              </button>
+            </>
           ) : (
             <>
               <button
@@ -411,7 +494,7 @@ export default function PaginaFactura() {
                 disabled={emitiendo || guardando}
                 className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50"
               >
-                {emitiendo ? "Aprobando…" : `Aprobar como ${config?.serie}${String(config?.proximo_numero ?? 0).padStart(4, "0")}`}
+                {emitiendo ? "Aprobando…" : `Aprobar como ${numeroPrevisto}`}
               </button>
             </>
           )}
@@ -440,7 +523,7 @@ export default function PaginaFactura() {
               </label>
               <label className="flex flex-col gap-1">
                 <span className={etiquetaCls}>Número de documento</span>
-                <input value={`${config?.serie ?? ""}${String(config?.proximo_numero ?? 0).padStart(4, "0")}`} disabled className={`${inputCls} opacity-60`} title="Se asigna al aprobar (numeración correlativa)" />
+                <input value={numeroPrevisto} disabled className={`${inputCls} opacity-60`} title="Se asigna al aprobar (numeración correlativa)" />
               </label>
               <label className="flex flex-col gap-1">
                 <span className={etiquetaCls}>Fecha</span>
@@ -600,7 +683,7 @@ export default function PaginaFactura() {
                 <p className="text-[10px] leading-snug text-zinc-600">
                   Los precios de las líneas son <b>finales (IVA incluido)</b>: si pones 100 €, el total es 100 € y la base
                   imponible se calcula sola. El IVA y el IRPF se aplican a toda la factura. Al aprobar se asigna el número{" "}
-                  {config?.serie}{String(config?.proximo_numero ?? 0).padStart(4, "0")} y ya no se puede cambiar.
+                  {numeroPrevisto} y ya no se puede cambiar.
                 </p>
               </div>
             </div>

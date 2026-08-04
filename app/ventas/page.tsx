@@ -330,6 +330,7 @@ export default function FacturasPage() {
   function estadoDe(f: Factura): { etiqueta: string; clase: string } {
     const saldo = saldos.get(f.id);
     if (!f.numero) return { etiqueta: "Borrador", clase: "bg-zinc-800 text-zinc-400" };
+    if (Number(f.total) < 0) return { etiqueta: "Rectificativa", clase: "bg-violet-950 text-violet-400" };
     if ((saldo?.pendiente ?? 0) > 0.01)
       return { etiqueta: `Debe ${eur(saldo!.pendiente)}`, clase: "bg-amber-950 text-amber-400" };
     return { etiqueta: "Cobrada", clase: "bg-emerald-950 text-emerald-400" };
