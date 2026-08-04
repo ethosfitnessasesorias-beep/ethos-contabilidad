@@ -7,7 +7,7 @@
 // En el tablero: previsión ponderada por probabilidad y ⚠ en tarjetas estancadas.
 // Nada de esto toca la contabilidad hasta marcar Ganado.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useSesion } from "@/lib/useSesion";
@@ -143,15 +143,25 @@ export default function EmbudoVentas() {
 
   const esGrandSlam = (embudos.find((e) => e.id === embudoSel)?.nombre ?? "").toLowerCase().includes("grand slam");
 
+  // Auto-sync del Grand Slam: al abrir su tablero se sincroniza solo (una vez por visita)
+  const gsAutoSync = useRef(false);
+  useEffect(() => {
+    if (esGrandSlam && colsEmbudo.length > 0 && !gsAutoSync.current) {
+      gsAutoSync.current = true;
+      sincronizarGrandSlam(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [esGrandSlam, embudoSel, columnas]);
+
   // ---------- Grand Slam: sincronizar clientes activos con sus ventanas ----------
   // Reglas del Excel: presencial 1→2 meses desde el alta · online 1→3 · online anual 3→6.
   // Crea una tarjeta por cliente activo sin tarjeta previa (en cualquier etapa,
   // Ganado/Perdido incluidos: un GS cerrado o rechazado no se vuelve a crear) y
   // avanza solas las tarjetas de "Aún no toca"/"En ventana" cuando pasan las fechas.
-  async function sincronizarGrandSlam() {
-    if (!embudoSel) return;
+  async function sincronizarGrandSlam(silencioso = false) {
+    if (!embudoSel || sincronizando) return;
     setSincronizando(true);
-    setError(null);
+    if (!silencioso) setError(null);
 
     const masMeses = (iso: string, m: number) => {
       const d = new Date(iso + "T00:00:00");
@@ -236,9 +246,12 @@ export default function EmbudoVentas() {
     }
 
     setSincronizando(false);
-    setAviso(`Grand Slam sincronizado: ${creadas} tarjeta(s) nueva(s) · ${movidas} avanzada(s) de etapa.`);
-    setTimeout(() => setAviso(null), 6000);
-    cargar();
+    // En el auto-sync silencioso solo avisa si ha cambiado algo
+    if (!silencioso || creadas + movidas > 0) {
+      setAviso(`Grand Slam sincronizado: ${creadas} tarjeta(s) nueva(s) · ${movidas} avanzada(s) de etapa.`);
+      setTimeout(() => setAviso(null), 6000);
+    }
+    if (creadas + movidas > 0 || !silencioso) cargar();
   }
 
   // ---------- Editor de embudo ----------
@@ -739,7 +752,7 @@ export default function EmbudoVentas() {
           </button>
           {esGrandSlam && (
             <button
-              onClick={sincronizarGrandSlam}
+              onClick={() => sincronizarGrandSlam()}
               disabled={sincronizando}
               className="rounded-full bg-emerald-800 px-4 py-1.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
               title="Crea una tarjeta por cada cliente activo según su ventana (presencial 1→2 meses desde el alta, online 1→3, online anual 3→6) y avanza solas las que pasan de fecha"
@@ -756,8 +769,8 @@ export default function EmbudoVentas() {
 
         {esGrandSlam && (
           <p className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-2 text-[11px] leading-snug text-zinc-500">
-            <b className="text-zinc-300">Cómo funciona:</b> ⚡ Sincronizar crea una tarjeta por cada cliente activo y la
-            coloca según su ventana (presencial <b>1→2 meses</b> desde el alta · online <b>1→3</b> · online anual <b>3→6</b>),
+            <b className="text-zinc-300">Cómo funciona:</b> al abrir este tablero se sincroniza solo (⚡ lo fuerza a mano):
+            cada cliente activo tiene su tarjeta, colocada según su ventana (presencial <b>1→2 meses</b> desde el alta · online <b>1→3</b> · online anual <b>3→6</b>),
             con oferta sugerida del catálogo (Semestral 6+1 · 480 € / Anual 12+3 · 900 €). Cuando hagas la oferta, arrastra a
             <b> Ofrecido</b>; si pide tiempo, a <b>Aplazado</b> (ponle seguimiento). <b className="text-emerald-400">✓ Ganado</b> = aceptó
             (te lleva a apuntar el cobro) · <b>Perdido</b> = rechazado. Ajusta importe u oferta tocando la tarjeta.
