@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useSesion } from "@/lib/useSesion";
 import { Shell } from "../shell";
@@ -40,6 +41,7 @@ export default function Dashboard() {
   const [kpis, setKpis] = useState<Kpis | null>(null);
   const [reparto, setReparto] = useState<Reparto[]>([]);
   const [acts, setActs] = useState<Actividad[]>([]);
+  const [segs, setSegs] = useState<{ id: number; titulo: string; seguimiento: string; seguimiento_nota: string | null; clientes: { nombre: string } | null }[]>([]);
   const [clientes, setClientes] = useState<Cli[]>([]);
   const [pendiente, setPendiente] = useState(0);
   const [evo, setEvo] = useState<{ mes: string; facturado: number; cobrado: number; gastos: number }[]>([]);
@@ -83,6 +85,17 @@ export default function Dashboard() {
       if (k.data) setKpis(k.data as Kpis);
       setReparto((r.data as Reparto[]) ?? []);
       setActs((a.data as Actividad[]) ?? []);
+
+      // Seguimientos del embudo: vencidos o en los próximos 7 días
+      const en7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+      const sg = await supabase
+        .from("deals")
+        .select("id, titulo, seguimiento, seguimiento_nota, clientes(nombre)")
+        .not("etapa", "in", "(ganado,perdido)")
+        .not("seguimiento", "is", null)
+        .lte("seguimiento", en7)
+        .order("seguimiento");
+      setSegs((sg.data as unknown as typeof segs) ?? []);
       setClientes((cli.data as Cli[]) ?? []);
       setPendiente(((sal.data as { pendiente: number }[]) ?? []).reduce((t, x) => t + Number(x.pendiente), 0));
 
@@ -391,6 +404,33 @@ export default function Dashboard() {
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            {/* Seguimientos del embudo de ventas */}
+            {segs.length > 0 && (
+              <div className="mb-4">
+                <h2 className="mb-3 text-sm font-black uppercase tracking-wide text-zinc-400">
+                  Seguimientos del embudo
+                </h2>
+                <ul className="flex flex-col gap-2.5">
+                  {segs.map((s) => {
+                    const vencido = s.seguimiento <= new Date().toISOString().slice(0, 10);
+                    return (
+                      <li key={s.id} className="flex items-start gap-2.5">
+                        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${vencido ? "bg-red-500" : "bg-amber-500"}`} />
+                        <div className="min-w-0">
+                          <Link href="/pipeline" className="block truncate text-sm font-semibold text-zinc-200 hover:text-red-400">
+                            {s.clientes?.nombre ?? s.titulo}
+                          </Link>
+                          <p className="truncate text-xs text-zinc-600">
+                            {new Date(s.seguimiento + "T00:00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" })}
+                            {s.seguimiento_nota ? ` · ${s.seguimiento_nota}` : ""}
+                          </p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
             <h2 className="mb-3 text-sm font-black uppercase tracking-wide text-zinc-400">Próximos eventos</h2>
             {acts.length === 0 ? (
               <p className="text-sm text-zinc-600">Sin actividades programadas.</p>

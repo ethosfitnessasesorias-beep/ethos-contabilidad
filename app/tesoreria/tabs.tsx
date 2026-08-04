@@ -4,16 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/contabilidad", etiqueta: "Libro diario" },
-  { href: "/contabilidad/pyg", etiqueta: "Pérdidas y ganancias" },
-  { href: "/contabilidad/impuestos", etiqueta: "Impuestos" },
-  { href: "/contabilidad/reparto", etiqueta: "Reparto" },
-  { href: "/contabilidad/cierre", etiqueta: "Cierre de mes" },
-  { href: "/contabilidad/importar", etiqueta: "Importar banco" },
-  { href: "/contabilidad/ajustes", etiqueta: "Ajustes" },
+  { href: "/tesoreria/cuentas", etiqueta: "Cuentas" },
+  { href: "/tesoreria/cashflow", etiqueta: "Cash flow" },
+  { href: "/tesoreria/pagos-cobros", etiqueta: "Pagos y cobros" },
 ];
 
-export function ContaTabs() {
+export function TesoTabs() {
   const ruta = usePathname();
   return (
     <div className="mt-4 flex gap-1 overflow-x-auto border-b border-zinc-800">

@@ -210,7 +210,7 @@ export default function KpisPage() {
     return out;
   }, [diario, negocio]);
 
-  // ---------- LTV y cohortes ----------
+  // ---------- LTV ----------
   const hoy = new Date();
   const canalDeCli = (c: string | null): Negocio => (c === "online" ? "online" : "gym");
   const mesesEntre = (a: string, b: Date | string) => {
@@ -233,32 +233,6 @@ export default function KpisPage() {
   const invAnuncios = MESES.reduce((s, _, i) => s + (valorManual("inversion_anuncios", i) ?? 0), 0);
   const altasAnyo = (auto?.altas[negocio] ?? []).reduce((s, x) => s + x, 0);
   const cac = altasAnyo > 0 ? invAnuncios / altasAnyo : 0;
-
-  const cohortes = useMemo(() => {
-    // Últimos 12 meses con altas: % de clientes que siguen k meses después
-    const cls = clientesRaw.filter((c) => canalDeCli(c.canal) === negocio && c.fecha_inicio);
-    const grupos = new Map<string, { total: number; bajas: { mesesHastaBaja: number }[] }>();
-    for (const c of cls) {
-      const mesAlta = c.fecha_inicio!.slice(0, 7);
-      const g = grupos.get(mesAlta) ?? { total: 0, bajas: [] };
-      g.total++;
-      if (c.fecha_baja) g.bajas.push({ mesesHastaBaja: mesesEntre(c.fecha_inicio!, c.fecha_baja) });
-      grupos.set(mesAlta, g);
-    }
-    const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}`;
-    const lista = [...grupos.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).slice(-12);
-    return lista.map(([mesAlta, g]) => {
-      const edadMeses = Math.floor(mesesEntre(`${mesAlta}-01`, hoy));
-      const filas: (number | null)[] = [];
-      for (let k = 0; k <= 11; k++) {
-        if (k > edadMeses) { filas.push(null); continue; }
-        const vivos = g.total - g.bajas.filter((b) => b.mesesHastaBaja <= k).length;
-        filas.push(g.total > 0 ? vivos / g.total : 0);
-      }
-      return { mesAlta, total: g.total, ret: filas };
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientesRaw, negocio]);
 
   if (sesionOk === null) {
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
@@ -578,60 +552,6 @@ export default function KpisPage() {
               </tbody>
             </table>
           </div>
-        </section>
-
-        {/* COHORTES DE RETENCIÓN */}
-        <section className="mb-5">
-          <h2 className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-rose-400">
-            Retención por cohortes · automático
-          </h2>
-          {cohortes.length === 0 ? (
-            <p className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-6 text-center text-sm text-zinc-600">
-              Sin clientes con fecha de inicio en este negocio.
-            </p>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
-                    <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-1.5 text-left">Alta en</th>
-                    <th className="px-2 py-1.5 text-right">Clientes</th>
-                    {Array.from({ length: 12 }, (_, k) => <th key={k} className="min-w-11 px-2 py-1.5 text-right">+{k}m</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {cohortes.map((c) => (
-                    <tr key={c.mesAlta} className="border-b border-zinc-800/40 last:border-0">
-                      <td className="sticky left-0 z-10 whitespace-nowrap bg-zinc-950/95 px-3 py-1 capitalize text-zinc-400">
-                        {new Date(c.mesAlta + "-01T00:00:00").toLocaleDateString("es-ES", { month: "short", year: "2-digit" })}
-                      </td>
-                      <td className="px-2 py-1 text-right font-bold tabular-nums text-zinc-300">{c.total}</td>
-                      {c.ret.map((r, k) =>
-                        r === null ? (
-                          <td key={k} className="px-1 py-1" />
-                        ) : (
-                          <td key={k} className="px-1 py-1">
-                            <span
-                              className="block rounded px-1 py-0.5 text-center text-[10px] font-bold tabular-nums"
-                              style={{
-                                backgroundColor: `rgba(16, 185, 129, ${(0.08 + r * 0.5).toFixed(2)})`,
-                                color: r >= 0.5 ? "#d1fae5" : "#fca5a5",
-                              }}
-                            >
-                              {Math.round(r * 100)}
-                            </span>
-                          </td>
-                        )
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="mt-1 text-[10px] text-zinc-600">
-            % de la cohorte que sigue activa k meses después de su alta. Si una promo trae clientes que se caen al 2º mes, se ve aquí.
-          </p>
         </section>
 
         {/* CONTRATACIÓN (solo GYM) */}

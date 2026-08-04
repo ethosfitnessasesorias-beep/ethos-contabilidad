@@ -20,10 +20,10 @@ const TAREAS_SEMANA = [
   { clave: "impagos", texto: "Revisar impagos (nota del lunes) y reclamar por WhatsApp" },
 ];
 const TAREAS_MES: { clave: string; texto: string; href?: string }[] = [
-  { clave: "remesa", texto: "Aprobar la remesa de cuotas contra el banco", href: "/contabilidad/facturas" },
-  { clave: "fijos", texto: "Apuntar los gastos fijos de golpe", href: "/contabilidad/tesoreria" },
+  { clave: "remesa", texto: "Aprobar la remesa de cuotas contra el banco", href: "/ventas" },
+  { clave: "fijos", texto: "Apuntar los gastos fijos de golpe", href: "/tesoreria/cashflow" },
   { clave: "comisiones", texto: "Apuntar comisiones de fin de mes (Caixa, Stripe, BemadBox)" },
-  { clave: "salud", texto: "Leer la nota «Cierre del mes» y la Salud financiera", href: "/contabilidad/finanzas" },
+  { clave: "salud", texto: "Leer la nota «Cierre del mes» y la Salud financiera", href: "/tesoreria/cuentas" },
   { clave: "nominas", texto: "Transferir nóminas y marcar PAGADO en Reparto", href: "/contabilidad/reparto" },
   { clave: "kpis", texto: "Rellenar KPIs de tráfico (seguidores, anuncios…)", href: "/kpis" },
   { clave: "escanear", texto: "Escanear facturas del mes y ordenar carpesano" },
@@ -153,7 +153,7 @@ export default function CierrePage() {
   const pasos = [
     { hecho: morososN === 0, titulo: morososN === 0 ? "Sin cobros pendientes" : `${morososN} clientes deben ${eur(morososTotal)}`, href: "/crm", accion: "Revisar" },
     { hecho: porFacturar === 0, titulo: porFacturar === 0 ? "Todas las facturas pedidas" : `${porFacturar} gastos sin factura por pedir`, href: "/gastos", accion: "Ver" },
-    { hecho: fijosPend === 0, titulo: fijosPend === 0 ? "Gastos fijos del mes apuntados" : `${fijosPend} gastos fijos por apuntar`, href: "/contabilidad/tesoreria", accion: "Apuntar" },
+    { hecho: fijosPend === 0, titulo: fijosPend === 0 ? "Gastos fijos del mes apuntados" : `${fijosPend} gastos fijos por apuntar`, href: "/tesoreria/cashflow", accion: "Apuntar" },
     { hecho: nominasPendientes.length === 0, titulo: nominasPendientes.length === 0 ? "Nóminas pagadas (tick en Reparto)" : `Nóminas sin marcar PAGADO: ${nominasPendientes.map((r) => NOMBRE[r.socio]).join(" y ")} (${eur(nominasPendientes.reduce((s, r) => s + nominaDe(r.socio), 0))})`, href: "/contabilidad/reparto", accion: "Reparto" },
     { hecho: false, info: true, titulo: ivaTrim > 0 ? `Reservar ${eur(ivaTrim)} de IVA del trimestre` : "IVA del trimestre: nada a pagar (a compensar)", href: "/contabilidad/impuestos", accion: "Impuestos" },
   ];

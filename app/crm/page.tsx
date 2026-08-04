@@ -164,6 +164,112 @@ export default function CrmPage() {
     if (sesionOk) cargar();
   }, [sesionOk, cargar]);
 
+  // ---------- Importar / exportar contactos (CSV) ----------
+  const CAMPOS_CSV = [
+    "nombre", "apellidos", "email", "telefono", "nif", "estado", "entrenador",
+    "canal", "origen", "tipo_plan", "fecha_inicio", "fecha_baja", "objetivo",
+  ] as const;
+
+  function exportarCSV() {
+    const esc = (v: unknown) => {
+      const s = String(v ?? "");
+      return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const filas = [CAMPOS_CSV.join(";")];
+    for (const c of cli) filas.push(CAMPOS_CSV.map((k) => esc(c[k as keyof Cli])).join(";"));
+    const blob = new Blob(["﻿" + filas.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `contactos_ethos_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function parseCSV(texto: string): string[][] {
+    const primera = texto.slice(0, texto.indexOf("\n") + 1 || texto.length);
+    const delim = (primera.match(/;/g)?.length ?? 0) >= (primera.match(/,/g)?.length ?? 0) ? ";" : ",";
+    const filas: string[][] = [];
+    let fila: string[] = [];
+    let campo = "";
+    let enComillas = false;
+    for (let i = 0; i < texto.length; i++) {
+      const ch = texto[i];
+      if (enComillas) {
+        if (ch === '"' && texto[i + 1] === '"') { campo += '"'; i++; }
+        else if (ch === '"') enComillas = false;
+        else campo += ch;
+      } else if (ch === '"') enComillas = true;
+      else if (ch === delim) { fila.push(campo); campo = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && texto[i + 1] === "\n") i++;
+        fila.push(campo); campo = "";
+        if (fila.some((x) => x.trim() !== "")) filas.push(fila);
+        fila = [];
+      } else campo += ch;
+    }
+    if (campo !== "" || fila.length) { fila.push(campo); if (fila.some((x) => x.trim() !== "")) filas.push(fila); }
+    return filas;
+  }
+
+  async function importarCSV(file: File | null) {
+    if (!file) return;
+    setError(null);
+    const texto = (await file.text()).replace(/^﻿/, "");
+    const filas = parseCSV(texto);
+    if (filas.length < 2) return setError("El CSV no tiene filas de datos.");
+    // Cabecera flexible: casa por nombre de columna (sin tildes, minúsculas)
+    const cab = filas[0].map((h) => normNombre(h));
+    const idx = (nombres: string[]) => cab.findIndex((h) => nombres.includes(h));
+    const iNombre = idx(["nombre", "name"]);
+    if (iNombre < 0) return setError('El CSV necesita una columna "nombre".');
+    const cols: Record<string, number> = {
+      apellidos: idx(["apellidos", "apellido", "surname"]),
+      email: idx(["email", "correo", "e-mail"]),
+      telefono: idx(["telefono", "tel", "movil", "phone"]),
+      nif: idx(["nif", "dni"]),
+      estado: idx(["estado", "status"]),
+      entrenador: idx(["entrenador", "preparador", "responsable"]),
+      canal: idx(["canal", "negocio"]),
+      origen: idx(["origen", "fuente"]),
+      tipo_plan: idx(["tipo plan", "tipo_plan", "plan", "servicio"]),
+      fecha_inicio: idx(["fecha inicio", "fecha_inicio", "inicio", "alta"]),
+      fecha_baja: idx(["fecha baja", "fecha_baja", "baja"]),
+      objetivo: idx(["objetivo"]),
+    };
+    const emails = new Set(cli.filter((c) => c.email).map((c) => c.email!.toLowerCase().trim()));
+    const nombres = new Set(cli.map((c) => normNombre(`${c.nombre} ${c.apellidos ?? ""}`)));
+    let creados = 0, saltados = 0, fallos = 0;
+    for (const fila of filas.slice(1)) {
+      const v = (k: string) => (cols[k] >= 0 ? (fila[cols[k]] ?? "").trim() : "");
+      const nombre = (fila[iNombre] ?? "").trim();
+      if (!nombre) { saltados++; continue; }
+      const email = v("email").toLowerCase();
+      const clave = normNombre(`${nombre} ${v("apellidos")}`);
+      if ((email && emails.has(email)) || nombres.has(clave)) { saltados++; continue; }
+      const fechaOk = (s: string) => (/^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null);
+      const estadoCrudo = v("estado").toLowerCase();
+      const { error } = await supabase.from("clientes").insert({
+        nombre,
+        apellidos: v("apellidos") || null,
+        email: email || null,
+        telefono: v("telefono") || null,
+        nif: v("nif") || null,
+        estado: ["cliente", "lead", "baja"].includes(estadoCrudo) ? estadoCrudo : "lead",
+        entrenador: ["david", "luis"].includes(v("entrenador").toLowerCase()) ? v("entrenador").toLowerCase() : "ethos",
+        canal: v("canal").toLowerCase() === "online" ? "online" : v("canal") ? "presencial" : null,
+        origen: v("origen") || "importado",
+        tipo_plan: v("tipo_plan") || null,
+        fecha_inicio: fechaOk(v("fecha_inicio")),
+        fecha_baja: fechaOk(v("fecha_baja")),
+        objetivo: v("objetivo") || null,
+      });
+      if (error) fallos++;
+      else { creados++; emails.add(email); nombres.add(clave); }
+    }
+    window.alert(`Importación terminada:\n· ${creados} contactos creados\n· ${saltados} saltados (ya existían o sin nombre)\n· ${fallos} con error`);
+    cargar();
+  }
+
   function abrirEditar(c: Cli) {
     setCreando(false);
     setEd(c);
@@ -457,14 +563,28 @@ export default function CrmPage() {
   );
 
   return (
-    <Shell titulo="CRM">
+    <Shell titulo="Contactos">
       <div className="px-5 py-6 md:px-8">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-black tracking-tight text-white">CRM</h1>
+            <h1 className="text-3xl font-black tracking-tight text-white">Contactos</h1>
             <p className="mt-1 text-sm text-zinc-500">Ciclo de vida, métricas y seguimiento de clientes. Entra solo desde el formulario, o a mano.</p>
           </div>
-          <button onClick={abrirNuevo} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">+ Nuevo cliente</button>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="cursor-pointer rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-bold text-zinc-300 hover:bg-zinc-700 hover:text-white">
+              Importar CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => { importarCSV(e.target.files?.[0] ?? null); e.target.value = ""; }}
+              />
+            </label>
+            <button onClick={exportarCSV} className="rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-bold text-zinc-300 hover:bg-zinc-700 hover:text-white">
+              Exportar CSV
+            </button>
+            <button onClick={abrirNuevo} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">+ Nuevo contacto</button>
+          </div>
         </div>
 
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}

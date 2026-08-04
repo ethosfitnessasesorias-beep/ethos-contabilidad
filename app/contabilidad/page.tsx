@@ -369,11 +369,11 @@ export default function LibroPage() {
 
   const saldoDe = (codigo: string) => Number(saldos.find((s) => s.codigo === codigo)?.saldo ?? 0);
 
-  function irAApuntar(tab: "ingreso" | "gasto") {
+  function irAApuntar(tab: "ingreso" | "gasto" | "traspaso") {
     try {
       sessionStorage.setItem("prefill_pestana", tab);
     } catch {}
-    router.push("/");
+    router.push("/apuntar");
   }
 
 
@@ -439,6 +439,12 @@ export default function LibroPage() {
             className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-500"
           >
             + Gasto
+          </button>
+          <button
+            onClick={() => irAApuntar("traspaso")}
+            className="rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-zinc-600"
+          >
+            + Traspaso
           </button>
           <input
             type="month"
