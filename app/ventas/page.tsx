@@ -99,17 +99,8 @@ export default function FacturasPage() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
 
-  // Nueva factura
-  const [creando, setCreando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [nClienteNombre, setNClienteNombre] = useState("");
-  const [nConcepto, setNConcepto] = useState("");
-  const [nBase, setNBase] = useState("");
-  const [nIva, setNIva] = useState(0.21);
-  const [nIrpf, setNIrpf] = useState(0);
-  const [nCanal, setNCanal] = useState<"presencial" | "online">("presencial");
-  const [nCategoria, setNCategoria] = useState<number | null>(null);
-  const [nPersona, setNPersona] = useState("ethos");
+  const [creandoFactura, setCreandoFactura] = useState(false);
 
   const cargar = useCallback(async () => {
     // fecha_ultimo_cobro requiere la migración mejoras_kanban_canal.sql;
@@ -163,28 +154,27 @@ export default function FacturasPage() {
     cargar();
   }, [cargar]);
 
+  // Crea un borrador vacío y abre el editor (flujo estilo Holded)
   async function crearFactura() {
-    const base = Number(nBase.replace(",", "."));
-    if (!nConcepto.trim()) return setError("Escribe el concepto.");
-    if (!Number.isFinite(base) || base <= 0) return setError("Pon una base válida.");
-    const categoriaId = nCategoria ?? categorias.find((c) => c.nombre === "Otros")?.id ?? categorias[0]?.id;
+    const categoriaId = categorias.find((c) => c.nombre === "Otros")?.id ?? categorias[0]?.id;
     if (!categoriaId) return setError("No hay categorías de ingreso.");
-    const cliente = clientes.find((c) => c.nombre.toLowerCase() === nClienteNombre.trim().toLowerCase());
+    setCreandoFactura(true);
     const { data, error } = await supabase
       .from("facturas")
       .insert({
-        cliente_id: cliente?.id ?? null,
+        cliente_id: null,
         categoria_id: categoriaId,
-        atribucion: nPersona,
+        atribucion: "ethos",
         fecha_emision: new Date().toISOString().slice(0, 10),
-        concepto: nConcepto.trim(),
-        base: Math.round(base * 100) / 100,
-        iva_pct: nIva,
-        irpf_pct: nIrpf,
-        canal: nCanal,
+        concepto: "",
+        base: 0,
+        iva_pct: 0.21,
+        irpf_pct: 0,
+        canal: "presencial",
       })
       .select("id")
       .single();
+    setCreandoFactura(false);
     if (error || !data) return setError(error?.message ?? "No se pudo crear");
     router.push(`/facturas/${data.id}`);
   }
@@ -410,60 +400,15 @@ export default function FacturasPage() {
           </button>
         )}
         <button
-          onClick={() => {
-            setCreando(!creando);
-            setError(null);
-          }}
-          className={`${remesa && lineas.length > 0 ? "ml-auto" : ""} rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white`}
+          onClick={crearFactura}
+          disabled={creandoFactura}
+          className={`${remesa && lineas.length > 0 ? "ml-auto" : ""} rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50`}
         >
-          {creando ? "Cancelar" : "+ Nueva factura"}
+          {creandoFactura ? "Abriendo…" : "+ Nueva factura"}
         </button>
       </div>
 
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
-
-      {creando && (
-        <div className="mb-4 flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-          <p className="text-xs font-bold uppercase tracking-wider text-zinc-500">Nueva factura (borrador)</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <input list="fact-clientes" placeholder="Cliente (opcional)" value={nClienteNombre} onChange={(e) => setNClienteNombre(e.target.value)} className={inputCls} />
-            <datalist id="fact-clientes">
-              {clientes.map((c) => (
-                <option key={c.id} value={c.nombre} />
-              ))}
-            </datalist>
-            <input placeholder="Concepto" value={nConcepto} onChange={(e) => setNConcepto(e.target.value)} className={inputCls} />
-            <input placeholder="Base sin impuestos €" inputMode="decimal" value={nBase} onChange={(e) => setNBase(e.target.value)} className={inputCls} />
-            <select value={nCategoria ?? ""} onChange={(e) => setNCategoria(Number(e.target.value) || null)} className={inputCls}>
-              <option value="">Categoría…</option>
-              {categorias.map((c) => (
-                <option key={c.id} value={c.id}>{c.nombre}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-            <span>IVA:</span>
-            {[0.21, 0.1, 0].map((v) => (
-              <button key={v} onClick={() => setNIva(v)} className={`rounded-full px-2.5 py-1 font-bold ${nIva === v ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>{Math.round(v * 100)}%</button>
-            ))}
-            <span className="ml-2">IRPF:</span>
-            {[0, 0.07, 0.15].map((v) => (
-              <button key={v} onClick={() => setNIrpf(v)} className={`rounded-full px-2.5 py-1 font-bold ${nIrpf === v ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>{Math.round(v * 100)}%</button>
-            ))}
-            <span className="ml-2">Negocio:</span>
-            {(["presencial", "online"] as const).map((c) => (
-              <button key={c} onClick={() => setNCanal(c)} className={`rounded-full px-2.5 py-1 font-bold capitalize ${nCanal === c ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>{c}</button>
-            ))}
-            <span className="ml-2">De:</span>
-            {personas.map((p) => (
-              <button key={p.codigo} onClick={() => setNPersona(p.codigo)} className={`rounded-full px-2.5 py-1 font-bold ${nPersona === p.codigo ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>{p.nombre}</button>
-            ))}
-          </div>
-          <button onClick={crearFactura} className="mt-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">
-            Crear y abrir factura
-          </button>
-        </div>
-      )}
 
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
         <div className="hidden grid-cols-[1fr_2fr_1fr_1fr_1fr_1.2fr] gap-2 border-b border-zinc-800 bg-zinc-900 px-4 py-2.5 md:grid">
@@ -554,7 +499,7 @@ export default function FacturasPage() {
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold text-white">
-                    {f.clientes?.nombre ?? f.concepto}
+                    {f.clientes?.nombre ?? (f.concepto || "(borrador sin concepto)")}
                   </span>
                   <span className="block truncate text-xs text-zinc-500 md:hidden">
                     {f.numero ?? "borrador"} · {fechaCorta(f.fecha_emision)}
