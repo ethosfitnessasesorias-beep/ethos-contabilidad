@@ -89,6 +89,7 @@ export default function EmbudoVentas() {
   const [edEtapas, setEdEtapas] = useState<EtapaEd[]>([]);
   const [edBorradas, setEdBorradas] = useState<number[]>([]);
   const [guardandoEmbudo, setGuardandoEmbudo] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
 
   // Deal (alta/edición)
   const [editando, setEditando] = useState<DealConCliente | null>(null);
@@ -139,6 +140,106 @@ export default function EmbudoVentas() {
     const col = colsEmbudo.find((c) => c.id === d.columna_id);
     return s + Number(d.importe_estimado || 0) * ((col?.probabilidad ?? 100) / 100);
   }, 0);
+
+  const esGrandSlam = (embudos.find((e) => e.id === embudoSel)?.nombre ?? "").toLowerCase().includes("grand slam");
+
+  // ---------- Grand Slam: sincronizar clientes activos con sus ventanas ----------
+  // Reglas del Excel: presencial 1→2 meses desde el alta · online 1→3 · online anual 3→6.
+  // Crea una tarjeta por cliente activo sin tarjeta previa (en cualquier etapa,
+  // Ganado/Perdido incluidos: un GS cerrado o rechazado no se vuelve a crear) y
+  // avanza solas las tarjetas de "Aún no toca"/"En ventana" cuando pasan las fechas.
+  async function sincronizarGrandSlam() {
+    if (!embudoSel) return;
+    setSincronizando(true);
+    setError(null);
+
+    const masMeses = (iso: string, m: number) => {
+      const d = new Date(iso + "T00:00:00");
+      d.setMonth(d.getMonth() + m);
+      return d.toISOString().slice(0, 10);
+    };
+    const fmt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit" });
+
+    const [cliRes, dealsRes] = await Promise.all([
+      supabase
+        .from("clientes")
+        .select("id, nombre, apellidos, entrenador, canal, fecha_inicio, cuota_periodicidad")
+        .is("fecha_baja", null)
+        .eq("estado", "cliente"),
+      supabase.from("deals").select("id, cliente_id, columna_id, etapa").eq("embudo_id", embudoSel),
+    ]);
+    if (cliRes.error) {
+      setSincronizando(false);
+      return setError(cliRes.error.message);
+    }
+    const activos = (cliRes.data as { id: number; nombre: string; apellidos: string | null; entrenador: string; canal: string | null; fecha_inicio: string | null; cuota_periodicidad: string | null }[]) ?? [];
+    const existentes = (dealsRes.data as { id: number; cliente_id: number | null; columna_id: number | null; etapa: string }[]) ?? [];
+
+    const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const colDe = (pref: string) => colsEmbudo.find((c) => norm(c.titulo).startsWith(pref))?.id ?? null;
+    const colNoToca = colDe("aun no toca");
+    const colVentana = colDe("en ventana");
+    const colVencido = colDe("vencido");
+    if (!colNoToca || !colVentana || !colVencido) {
+      setSincronizando(false);
+      return setError('Este embudo necesita las etapas "Aún no toca", "En ventana" y "Vencido" para sincronizar.');
+    }
+
+    const hoy = new Date().toISOString().slice(0, 10);
+    const dealDe = new Map(existentes.filter((d) => d.cliente_id).map((d) => [d.cliente_id as number, d]));
+    let creadas = 0;
+    let movidas = 0;
+
+    for (const c of activos) {
+      if (!c.fecha_inicio) continue;
+      const online = c.canal === "online";
+      const per = c.cuota_periodicidad || "mensual";
+      const [mIni, mFin] = online ? (per === "anual" ? [3, 6] : [1, 3]) : [1, 2];
+      const desde = masMeses(c.fecha_inicio, mIni);
+      const limite = masMeses(c.fecha_inicio, mFin);
+      const colObjetivo: number = hoy < desde ? colNoToca : hoy <= limite ? colVentana : colVencido;
+
+      const existente = dealDe.get(c.id);
+      if (existente) {
+        // Solo avanzan solas las etapas automáticas; Ofrecido/Aplazado y cerradas no se tocan
+        const esAvance =
+          (existente.columna_id === colNoToca && (colObjetivo === colVentana || colObjetivo === colVencido)) ||
+          (existente.columna_id === colVentana && colObjetivo === colVencido);
+        if (existente.etapa !== "ganado" && existente.etapa !== "perdido" && esAvance) {
+          await supabase
+            .from("deals")
+            .update({ columna_id: colObjetivo, columna_desde: new Date().toISOString() })
+            .eq("id", existente.id);
+          movidas++;
+        }
+        continue;
+      }
+
+      // Oferta sugerida del catálogo (precios de referencia del Excel)
+      const oferta = online && per === "anual" ? { nombre: "Anual 12+3", precio: 900 } : { nombre: "Semestral 6+1", precio: 480 };
+      const tipoTxt = online ? `Online ${per}` : "Presencial grupal";
+      const ins = await supabase.from("deals").insert({
+        titulo: `Grand Slam · ${oferta.nombre}`,
+        cliente_id: c.id,
+        canal: online ? "online" : "presencial",
+        importe_estimado: oferta.precio,
+        responsable: ["david", "luis"].includes(c.entrenador) ? c.entrenador : "ethos",
+        origen: "grand-slam",
+        etapa: "lead",
+        embudo_id: embudoSel,
+        columna_id: colObjetivo,
+        seguimiento: hoy < desde ? desde : hoy,
+        seguimiento_nota: `Ofrecer ${oferta.nombre} · ventana ${fmt(desde)} → ${fmt(limite)}`,
+        notas: `${tipoTxt} · alta ${fmt(c.fecha_inicio)} · ventana ${fmt(desde)} → límite ${fmt(limite)}`,
+      });
+      if (!ins.error) creadas++;
+    }
+
+    setSincronizando(false);
+    setAviso(`Grand Slam sincronizado: ${creadas} tarjeta(s) nueva(s) · ${movidas} avanzada(s) de etapa.`);
+    setTimeout(() => setAviso(null), 6000);
+    cargar();
+  }
 
   // ---------- Editor de embudo ----------
   function abrirEditorNuevo() {
@@ -636,6 +737,16 @@ export default function EmbudoVentas() {
           >
             ✎ Editar embudo
           </button>
+          {esGrandSlam && (
+            <button
+              onClick={sincronizarGrandSlam}
+              disabled={sincronizando}
+              className="rounded-full bg-emerald-800 px-4 py-1.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+              title="Crea una tarjeta por cada cliente activo según su ventana (presencial 1→2 meses desde el alta, online 1→3, online anual 3→6) y avanza solas las que pasan de fecha"
+            >
+              {sincronizando ? "Sincronizando…" : "⚡ Sincronizar clientes"}
+            </button>
+          )}
           {prevision > 0 && (
             <span className="ml-auto rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-bold text-zinc-300" title="Suma de importes × probabilidad de su etapa">
               Previsión ponderada <span className="text-emerald-400">{eur(prevision)}</span>
@@ -643,6 +754,15 @@ export default function EmbudoVentas() {
           )}
         </div>
 
+        {esGrandSlam && (
+          <p className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-2 text-[11px] leading-snug text-zinc-500">
+            <b className="text-zinc-300">Cómo funciona:</b> ⚡ Sincronizar crea una tarjeta por cada cliente activo y la
+            coloca según su ventana (presencial <b>1→2 meses</b> desde el alta · online <b>1→3</b> · online anual <b>3→6</b>),
+            con oferta sugerida del catálogo (Semestral 6+1 · 480 € / Anual 12+3 · 900 €). Cuando hagas la oferta, arrastra a
+            <b> Ofrecido</b>; si pide tiempo, a <b>Aplazado</b> (ponle seguimiento). <b className="text-emerald-400">✓ Ganado</b> = aceptó
+            (te lleva a apuntar el cobro) · <b>Perdido</b> = rechazado. Ajusta importe u oferta tocando la tarjeta.
+          </p>
+        )}
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
         {aviso && <p className="mb-4 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300">{aviso}</p>}
         {formulario}
