@@ -1,9 +1,11 @@
 "use client";
 
-// Embudo de ventas estilo Holded: varios embudos, cada uno con sus fases.
-// Las tarjetas se editan al clic, van ligadas a un contacto, admiten notas y
-// fecha de seguimiento (aviso en Dashboard, Actividades y correo del lunes).
-// No tiene efecto contable hasta que se marca Ganado.
+// Embudo de ventas estilo Holded: varios embudos, cada uno con sus etapas.
+// El EDITOR de embudo (crear/editar) es una pantalla completa como en Holded:
+// nombre arriba + columnas de etapa con nombre, descripción, probabilidad y
+// aviso de estancamiento (días), y "+ Nueva etapa" a la derecha.
+// En el tablero: previsión ponderada por probabilidad y ⚠ en tarjetas estancadas.
+// Nada de esto toca la contabilidad hasta marcar Ganado.
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -22,6 +24,9 @@ interface Columna {
   titulo: string;
   orden: number;
   embudo_id: number | null;
+  descripcion: string | null;
+  probabilidad: number;
+  estancado_dias: number | null;
 }
 interface Persona {
   codigo: string;
@@ -32,7 +37,17 @@ interface DealConCliente extends Deal {
   embudo_id: number | null;
   seguimiento: string | null;
   seguimiento_nota: string | null;
+  columna_desde: string | null;
   clientes: { nombre: string } | null;
+}
+// Etapa en el editor (id null = nueva)
+interface EtapaEd {
+  id: number | null;
+  titulo: string;
+  descripcion: string;
+  probabilidad: string;
+  estancadoOn: boolean;
+  estancadoDias: string;
 }
 
 const eur = (n: number) =>
@@ -40,8 +55,19 @@ const eur = (n: number) =>
 
 const inputCls =
   "rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
+const inputEtapaCls =
+  "w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
-const hoyISO = () => new Date().toISOString().slice(0, 10);
+const ETAPAS_DEFECTO = ["Lead", "Contacto establecido", "Necesidades definidas", "Propuesta realizada", "Negociaciones comenzadas"];
+
+const nuevaEtapa = (titulo = ""): EtapaEd => ({
+  id: null,
+  titulo,
+  descripcion: "",
+  probabilidad: "100",
+  estancadoOn: false,
+  estancadoDias: "7",
+});
 
 export default function EmbudoVentas() {
   const sesionOk = useSesion();
@@ -56,9 +82,13 @@ export default function EmbudoVentas() {
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
 
-  // Embudos (crear/renombrar/borrar)
-  const [gestionEmbudo, setGestionEmbudo] = useState(false);
-  const [nombreEmbudo, setNombreEmbudo] = useState("");
+  // Editor de embudo (pantalla completa, estilo Holded)
+  const [modo, setModo] = useState<"tablero" | "editor">("tablero");
+  const [edEmbudoId, setEdEmbudoId] = useState<number | null>(null); // null = nuevo
+  const [edNombre, setEdNombre] = useState("");
+  const [edEtapas, setEdEtapas] = useState<EtapaEd[]>([]);
+  const [edBorradas, setEdBorradas] = useState<number[]>([]);
+  const [guardandoEmbudo, setGuardandoEmbudo] = useState(false);
 
   // Deal (alta/edición)
   const [editando, setEditando] = useState<DealConCliente | null>(null);
@@ -72,12 +102,6 @@ export default function EmbudoVentas() {
   const [fNotas, setFNotas] = useState("");
   const [fSeguimiento, setFSeguimiento] = useState("");
   const [fSeguimientoNota, setFSeguimientoNota] = useState("");
-
-  // Columnas
-  const [colEditando, setColEditando] = useState<number | null>(null);
-  const [colTitulo, setColTitulo] = useState("");
-  const [creandoCol, setCreandoCol] = useState(false);
-  const [nuevaCol, setNuevaCol] = useState("");
 
   const cargar = useCallback(async () => {
     const [em, col, d, c, per] = await Promise.all([
@@ -110,47 +134,132 @@ export default function EmbudoVentas() {
   const colsEmbudo = columnas.filter((c) => c.embudo_id === embudoSel);
   const dealsEmbudo = deals.filter((d) => d.embudo_id === embudoSel);
 
-  // --- Embudos ---
-  async function crearEmbudo() {
-    const nombre = nombreEmbudo.trim();
-    if (!nombre) return;
-    const maxOrden = Math.max(0, ...embudos.map((e) => e.orden));
-    const { data, error } = await supabase.from("embudos").insert({ nombre, orden: maxOrden + 1 }).select("id").single();
-    if (error || !data) return setError(error?.message ?? "No se pudo crear.");
-    // Fases de arranque del embudo nuevo
-    await supabase.from("pipeline_columnas").insert(
-      ["Lead", "Contactado", "Propuesta", "Cierre"].map((t, i) => ({ titulo: t, orden: i + 1, embudo_id: data.id }))
-    );
-    setNombreEmbudo("");
-    setGestionEmbudo(false);
-    await cargar();
-    setEmbudoSel(data.id);
+  // Previsión ponderada del embudo: Σ importe × probabilidad de su etapa
+  const prevision = dealsEmbudo.reduce((s, d) => {
+    const col = colsEmbudo.find((c) => c.id === d.columna_id);
+    return s + Number(d.importe_estimado || 0) * ((col?.probabilidad ?? 100) / 100);
+  }, 0);
+
+  // ---------- Editor de embudo ----------
+  function abrirEditorNuevo() {
+    setEdEmbudoId(null);
+    setEdNombre("");
+    setEdEtapas(ETAPAS_DEFECTO.map((t) => nuevaEtapa(t)));
+    setEdBorradas([]);
+    setError(null);
+    setModo("editor");
   }
 
-  async function renombrarEmbudo() {
-    const nombre = nombreEmbudo.trim();
-    if (!nombre || !embudoSel) return;
-    await supabase.from("embudos").update({ nombre }).eq("id", embudoSel);
-    setNombreEmbudo("");
-    setGestionEmbudo(false);
-    cargar();
+  function abrirEditorActual() {
+    const em = embudos.find((e) => e.id === embudoSel);
+    if (!em) return;
+    setEdEmbudoId(em.id);
+    setEdNombre(em.nombre);
+    setEdEtapas(
+      colsEmbudo.map((c) => ({
+        id: c.id,
+        titulo: c.titulo,
+        descripcion: c.descripcion ?? "",
+        probabilidad: String(c.probabilidad ?? 100),
+        estancadoOn: c.estancado_dias !== null,
+        estancadoDias: String(c.estancado_dias ?? 7),
+      }))
+    );
+    setEdBorradas([]);
+    setError(null);
+    setModo("editor");
+  }
+
+  const setEtapa = (i: number, campo: keyof EtapaEd, valor: string | boolean) =>
+    setEdEtapas((prev) => prev.map((e, k) => (k === i ? { ...e, [campo]: valor } : e)));
+
+  function quitarEtapa(i: number) {
+    const et = edEtapas[i];
+    if (et.id !== null && deals.some((d) => d.columna_id === et.id)) {
+      return setError(`"${et.titulo}" tiene tarjetas: muévelas a otra etapa antes de borrarla.`);
+    }
+    if (edEtapas.length <= 1) return setError("El embudo necesita al menos una etapa.");
+    if (et.id !== null) setEdBorradas((prev) => [...prev, et.id as number]);
+    setEdEtapas((prev) => prev.filter((_, k) => k !== i));
+  }
+
+  function moverEtapa(i: number, dir: -1 | 1) {
+    setEdEtapas((prev) => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const copia = [...prev];
+      [copia[i], copia[j]] = [copia[j], copia[i]];
+      return copia;
+    });
+  }
+
+  async function guardarEmbudo() {
+    const nombre = edNombre.trim();
+    if (!nombre) return setError("Pon un nombre al embudo.");
+    if (edEtapas.some((e) => !e.titulo.trim())) return setError("Todas las etapas necesitan nombre.");
+    setGuardandoEmbudo(true);
+    setError(null);
+
+    let embudoId = edEmbudoId;
+    if (embudoId === null) {
+      const maxOrden = Math.max(0, ...embudos.map((e) => e.orden));
+      const { data, error } = await supabase.from("embudos").insert({ nombre, orden: maxOrden + 1 }).select("id").single();
+      if (error || !data) {
+        setGuardandoEmbudo(false);
+        return setError(error?.message ?? "No se pudo crear el embudo.");
+      }
+      embudoId = data.id;
+    } else {
+      const { error } = await supabase.from("embudos").update({ nombre }).eq("id", embudoId);
+      if (error) {
+        setGuardandoEmbudo(false);
+        return setError(error.message);
+      }
+    }
+
+    // Etapas borradas (sin tarjetas, ya validado al quitarlas)
+    if (edBorradas.length) await supabase.from("pipeline_columnas").delete().in("id", edBorradas);
+
+    // Actualizar existentes e insertar nuevas, en el orden del editor
+    for (let i = 0; i < edEtapas.length; i++) {
+      const e = edEtapas[i];
+      const fila = {
+        titulo: e.titulo.trim(),
+        descripcion: e.descripcion.trim() || null,
+        probabilidad: Math.min(100, Math.max(0, Number(e.probabilidad) || 0)),
+        estancado_dias: e.estancadoOn ? Math.max(1, Number(e.estancadoDias) || 7) : null,
+        orden: i + 1,
+        embudo_id: embudoId,
+      };
+      const res = e.id !== null
+        ? await supabase.from("pipeline_columnas").update(fila).eq("id", e.id)
+        : await supabase.from("pipeline_columnas").insert(fila);
+      if (res.error) {
+        setGuardandoEmbudo(false);
+        return setError(res.error.message);
+      }
+    }
+
+    setGuardandoEmbudo(false);
+    setModo("tablero");
+    await cargar();
+    setEmbudoSel(embudoId);
   }
 
   async function borrarEmbudo() {
-    if (!embudoSel) return;
+    if (edEmbudoId === null) return;
     if (embudos.length <= 1) return setError("Debe quedar al menos un embudo.");
-    if (dealsEmbudo.length > 0) return setError("Este embudo tiene tarjetas: muévelas o ciérralas antes de borrarlo.");
-    const em = embudos.find((e) => e.id === embudoSel);
-    if (!window.confirm(`¿Borrar el embudo "${em?.nombre}" y sus fases?`)) return;
-    await supabase.from("pipeline_columnas").delete().eq("embudo_id", embudoSel);
-    const { error } = await supabase.from("embudos").delete().eq("id", embudoSel);
+    if (deals.some((d) => d.embudo_id === edEmbudoId)) return setError("Este embudo tiene tarjetas: muévelas o ciérralas antes de borrarlo.");
+    if (!window.confirm(`¿Borrar el embudo "${edNombre}" y sus etapas?`)) return;
+    await supabase.from("pipeline_columnas").delete().eq("embudo_id", edEmbudoId);
+    const { error } = await supabase.from("embudos").delete().eq("id", edEmbudoId);
     if (error) return setError(error.message);
-    setGestionEmbudo(false);
+    setModo("tablero");
     setEmbudoSel(null);
     cargar();
   }
 
-  // --- Deals ---
+  // ---------- Deals ----------
   function abrirCrear() {
     setEditando(null);
     setFTitulo("");
@@ -254,8 +363,9 @@ export default function EmbudoVentas() {
   }
 
   async function moverColumna(id: number, columna: Columna) {
-    setDeals((prev) => prev.map((d) => (d.id === id ? { ...d, columna_id: columna.id } : d)));
-    const { error } = await supabase.from("deals").update({ columna_id: columna.id }).eq("id", id);
+    const ahora = new Date().toISOString();
+    setDeals((prev) => prev.map((d) => (d.id === id ? { ...d, columna_id: columna.id, columna_desde: ahora } : d)));
+    const { error } = await supabase.from("deals").update({ columna_id: columna.id, columna_desde: ahora }).eq("id", id);
     if (error) {
       setError(error.message);
       cargar();
@@ -293,50 +403,24 @@ export default function EmbudoVentas() {
     cargar();
   }
 
-  // --- Columnas ---
-  async function crearColumna() {
-    if (!nuevaCol.trim() || !embudoSel) return;
-    const maxOrden = Math.max(0, ...colsEmbudo.map((c) => c.orden));
-    const { error } = await supabase
-      .from("pipeline_columnas")
-      .insert({ titulo: nuevaCol.trim(), orden: maxOrden + 1, embudo_id: embudoSel });
-    if (error) return setError(error.message);
-    setNuevaCol("");
-    setCreandoCol(false);
-    cargar();
-  }
-  async function guardarColumna() {
-    if (colEditando === null || !colTitulo.trim()) return;
-    await supabase.from("pipeline_columnas").update({ titulo: colTitulo.trim() }).eq("id", colEditando);
-    setColEditando(null);
-    cargar();
-  }
-  async function borrarColumna(c: Columna) {
-    if (dealsEmbudo.some((d) => d.columna_id === c.id)) return setError(`"${c.titulo}" tiene tarjetas: muévelas antes de borrarla.`);
-    if (!window.confirm(`¿Borrar la fase "${c.titulo}"?`)) return;
-    await supabase.from("pipeline_columnas").delete().eq("id", c.id);
-    setColEditando(null);
-    cargar();
-  }
-  async function moverColOrden(c: Columna, dir: -1 | 1) {
-    const idx = colsEmbudo.findIndex((x) => x.id === c.id);
-    const vecina = colsEmbudo[idx + dir];
-    if (!vecina) return;
-    await supabase.from("pipeline_columnas").update({ orden: vecina.orden }).eq("id", c.id);
-    await supabase.from("pipeline_columnas").update({ orden: c.orden }).eq("id", vecina.id);
-    cargar();
-  }
-
   if (sesionOk === null) {
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
   }
 
   const dias = (fecha: string) => Math.max(0, Math.round((Date.now() - new Date(fecha).getTime()) / 86400000));
 
+  // ¿Lleva la tarjeta demasiado tiempo en su etapa? (aviso de estancamiento)
+  const estancada = (d: DealConCliente, col: Columna | undefined) => {
+    if (!col?.estancado_dias) return null;
+    const desde = d.columna_desde ?? d.fecha_alta;
+    const enFase = dias(desde);
+    return enFase >= col.estancado_dias ? enFase : null;
+  };
+
   // Estado del seguimiento de una tarjeta: vencido (rojo) / próximo ≤3 días (ámbar)
   const badgeSeguimiento = (d: DealConCliente) => {
     if (!d.seguimiento) return null;
-    const hoy = hoyISO();
+    const hoy = new Date().toISOString().slice(0, 10);
     const en3 = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
     const fecha = new Date(d.seguimiento + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
     if (d.seguimiento <= hoy)
@@ -346,6 +430,124 @@ export default function EmbudoVentas() {
     return <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-bold text-zinc-500" title={d.seguimiento_nota ?? ""}>⏰ {fecha}</span>;
   };
 
+  // ============ EDITOR DE EMBUDO (pantalla completa, estilo Holded) ============
+  if (modo === "editor") {
+    return (
+      <Shell titulo="Embudo de ventas">
+        <div className="px-5 py-6 md:px-8">
+          {/* Barra superior: nombre + acciones */}
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <input
+              autoFocus={edEmbudoId === null}
+              placeholder="Nuevo embudo"
+              value={edNombre}
+              onChange={(e) => setEdNombre(e.target.value)}
+              className={`${inputCls} min-w-64 text-lg font-black`}
+            />
+            <div className="flex gap-2">
+              {edEmbudoId !== null && (
+                <button onClick={borrarEmbudo} className="rounded-xl border border-red-900 px-4 py-2.5 text-sm font-bold text-red-500 hover:bg-red-950">
+                  Borrar embudo
+                </button>
+              )}
+              <button onClick={() => { setModo("tablero"); setError(null); }} className="rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-bold text-zinc-200 hover:bg-zinc-700">
+                Cancelar
+              </button>
+              <button onClick={guardarEmbudo} disabled={guardandoEmbudo} className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+                {guardandoEmbudo ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+          </div>
+
+          {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
+
+          {/* Etapas en columnas + panel de añadir */}
+          <div className="flex snap-x items-stretch gap-3 overflow-x-auto pb-4">
+            {edEtapas.map((e, i) => (
+              <div key={e.id ?? `n${i}`} className="flex w-[80vw] max-w-72 shrink-0 snap-start flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 md:w-72">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-600">Etapa {i + 1}</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => moverEtapa(i, -1)} disabled={i === 0} title="Mover a la izquierda" className="rounded px-1.5 text-xs font-bold text-zinc-500 hover:text-white disabled:opacity-20">←</button>
+                    <button onClick={() => moverEtapa(i, 1)} disabled={i === edEtapas.length - 1} title="Mover a la derecha" className="rounded px-1.5 text-xs font-bold text-zinc-500 hover:text-white disabled:opacity-20">→</button>
+                    <button onClick={() => quitarEtapa(i)} title="Quitar etapa" className="rounded px-1.5 text-xs font-bold text-zinc-600 hover:text-red-400">✕</button>
+                  </div>
+                </div>
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-bold text-zinc-400">Nombre</span>
+                  <input value={e.titulo} onChange={(ev) => setEtapa(i, "titulo", ev.target.value)} placeholder="Nombre de la etapa" className={inputEtapaCls} />
+                </label>
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] font-bold text-zinc-400">Descripción</span>
+                  <input value={e.descripcion} onChange={(ev) => setEtapa(i, "descripcion", ev.target.value)} placeholder="Qué significa esta etapa" className={inputEtapaCls} />
+                </label>
+
+                <label className="flex flex-col gap-1">
+                  <span className="flex items-center gap-1 text-[11px] font-bold text-zinc-400">
+                    Probabilidad de la oportunidad
+                    <span title="Se usa para la previsión ponderada del tablero: importe × probabilidad" className="cursor-help text-zinc-600">ⓘ</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={e.probabilidad}
+                      onChange={(ev) => setEtapa(i, "probabilidad", ev.target.value)}
+                      inputMode="numeric"
+                      className={`${inputEtapaCls} text-right`}
+                    />
+                    <span className="text-sm text-zinc-500">%</span>
+                  </div>
+                </label>
+
+                <div className="flex flex-col gap-1">
+                  <span className="flex items-center gap-1 text-[11px] font-bold text-zinc-400">
+                    Estancado durante (días)
+                    <span title="Las tarjetas que lleven más de estos días en la etapa se marcan con ⚠ en el tablero" className="cursor-help text-zinc-600">ⓘ</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setEtapa(i, "estancadoOn", !e.estancadoOn)}
+                      aria-label="Activar aviso de estancamiento"
+                      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${e.estancadoOn ? "bg-red-600" : "bg-zinc-700"}`}
+                    >
+                      <span className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${e.estancadoOn ? "translate-x-4" : ""}`} />
+                    </button>
+                    <input
+                      value={e.estancadoDias}
+                      onChange={(ev) => setEtapa(i, "estancadoDias", ev.target.value)}
+                      disabled={!e.estancadoOn}
+                      inputMode="numeric"
+                      className={`${inputEtapaCls} text-right ${e.estancadoOn ? "" : "opacity-40"}`}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* Panel añadir etapa */}
+            <div className="flex w-[70vw] max-w-64 shrink-0 snap-start flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-700 p-6 text-center md:w-64">
+              <p className="text-sm font-black text-white">Añadir etapa</p>
+              <p className="text-[11px] leading-snug text-zinc-500">Las etapas del embudo representan el estado de tus ventas.</p>
+              <button
+                onClick={() => setEdEtapas((prev) => [...prev, nuevaEtapa()])}
+                className="mt-1 rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white"
+              >
+                + Nueva etapa
+              </button>
+            </div>
+          </div>
+
+          <p className="text-[10px] leading-snug text-zinc-600">
+            La <b>probabilidad</b> pondera la previsión del tablero (una propuesta al 75% de 1.000 € cuenta como 750 €).
+            <b> Estancado</b> marca con ⚠ las tarjetas que llevan demasiados días quietas en la etapa.
+          </p>
+        </div>
+      </Shell>
+    );
+  }
+
+  // ============ TABLERO ============
   const formulario = (creando || editando) && (
     <div className="mb-5 flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
       <p className="text-xs font-bold uppercase tracking-wider text-zinc-500">{editando ? "Editar tarjeta" : "Nueva tarjeta"}</p>
@@ -401,13 +603,13 @@ export default function EmbudoVentas() {
           <div>
             <h1 className="text-3xl font-black tracking-tight text-white">Embudo de ventas</h1>
             <p className="mt-1 text-sm text-zinc-500">
-              Varios embudos, cada uno con sus fases. Nada de esto toca la contabilidad hasta marcar <b>Ganado</b>.
+              Varios embudos, cada uno con sus etapas. Nada de esto toca la contabilidad hasta marcar <b>Ganado</b>.
             </p>
           </div>
           <button onClick={abrirCrear} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">+ Nueva tarjeta</button>
         </div>
 
-        {/* Selector de embudos */}
+        {/* Selector de embudos + acciones */}
         <div className="mb-4 flex flex-wrap items-center gap-1.5">
           {embudos.map((e) => (
             <button
@@ -421,23 +623,25 @@ export default function EmbudoVentas() {
             </button>
           ))}
           <button
-            onClick={() => { setGestionEmbudo(!gestionEmbudo); setNombreEmbudo(""); }}
+            onClick={abrirEditorNuevo}
             className="rounded-full border border-dashed border-zinc-700 px-3 py-1.5 text-sm font-bold text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
-            title="Crear, renombrar o borrar embudos"
+            title="Crear un embudo nuevo con sus etapas"
           >
-            ✎ Embudos
+            + Nuevo embudo
           </button>
+          <button
+            onClick={abrirEditorActual}
+            className="rounded-full border border-dashed border-zinc-700 px-3 py-1.5 text-sm font-bold text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
+            title="Editar el nombre y las etapas de este embudo"
+          >
+            ✎ Editar embudo
+          </button>
+          {prevision > 0 && (
+            <span className="ml-auto rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-bold text-zinc-300" title="Suma de importes × probabilidad de su etapa">
+              Previsión ponderada <span className="text-emerald-400">{eur(prevision)}</span>
+            </span>
+          )}
         </div>
-
-        {gestionEmbudo && (
-          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-            <input placeholder="Nombre del embudo…" value={nombreEmbudo} onChange={(e) => setNombreEmbudo(e.target.value)} className={inputCls} autoFocus />
-            <button onClick={crearEmbudo} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">+ Crear nuevo</button>
-            <button onClick={renombrarEmbudo} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-300">Renombrar el actual</button>
-            <button onClick={borrarEmbudo} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-red-400">Borrar el actual</button>
-            <span className="text-[10px] text-zinc-600">El nuevo embudo arranca con fases Lead → Contactado → Propuesta → Cierre.</span>
-          </div>
-        )}
 
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
         {aviso && <p className="mb-4 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300">{aviso}</p>}
@@ -457,74 +661,71 @@ export default function EmbudoVentas() {
                 }}
                 className="w-[85vw] max-w-xs shrink-0 snap-start rounded-2xl border border-zinc-800 bg-zinc-900/40 md:w-80"
               >
-                <div className="flex items-center justify-between gap-2 px-4 py-3">
-                  <h2 className="truncate text-sm font-black uppercase tracking-wide text-zinc-300">{col.titulo}</h2>
+                <div className="flex items-center justify-between gap-2 px-4 py-3" title={col.descripcion ?? ""}>
+                  <div className="min-w-0">
+                    <h2 className="truncate text-sm font-black uppercase tracking-wide text-zinc-300">{col.titulo}</h2>
+                    {col.descripcion && <p className="truncate text-[10px] text-zinc-600">{col.descripcion}</p>}
+                  </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    {col.probabilidad < 100 && (
+                      <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400" title="Probabilidad de la oportunidad en esta etapa">
+                        {col.probabilidad}%
+                      </span>
+                    )}
                     {totalCol > 0 && <span className="text-xs font-bold text-zinc-500">{eur(totalCol)}</span>}
                     <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-bold text-zinc-400">{lista.length}</span>
-                    <button onClick={() => (colEditando === col.id ? setColEditando(null) : (setColEditando(col.id), setColTitulo(col.titulo)))} className="text-zinc-600 hover:text-zinc-300">✎</button>
                   </div>
                 </div>
 
-                {colEditando === col.id && (
-                  <div className="mx-3 mb-3 flex flex-col gap-2 rounded-xl bg-zinc-950 p-3">
-                    <input value={colTitulo} onChange={(e) => setColTitulo(e.target.value)} className={inputCls} />
-                    <div className="flex gap-2">
-                      <button onClick={() => moverColOrden(col, -1)} disabled={iCol === 0} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-300 disabled:opacity-20">←</button>
-                      <button onClick={() => moverColOrden(col, 1)} disabled={iCol === colsEmbudo.length - 1} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-300 disabled:opacity-20">→</button>
-                      <button onClick={guardarColumna} className="flex-1 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">Guardar</button>
-                      <button onClick={() => borrarColumna(col)} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-red-400">Borrar</button>
-                    </div>
-                  </div>
-                )}
-
                 <div className="flex min-h-24 flex-col gap-2 px-3 pb-3">
-                  {lista.map((d) => (
-                    <div
-                      key={d.id}
-                      draggable
-                      onDragStart={() => setArrastrando(d.id)}
-                      onClick={() => abrirEditar(d)}
-                      className="cursor-grab rounded-xl border border-zinc-800 bg-zinc-950 p-3 active:cursor-grabbing"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-semibold text-white">{d.clientes?.nombre ?? d.titulo}</p>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${d.canal === "online" ? "bg-blue-950 text-blue-400" : "bg-red-950 text-red-400"}`}>{d.canal === "online" ? "Online" : "Presencial"}</span>
+                  {lista.map((d) => {
+                    const diasEstancada = estancada(d, col);
+                    return (
+                      <div
+                        key={d.id}
+                        draggable
+                        onDragStart={() => setArrastrando(d.id)}
+                        onClick={() => abrirEditar(d)}
+                        className={`cursor-grab rounded-xl border bg-zinc-950 p-3 active:cursor-grabbing ${
+                          diasEstancada !== null ? "border-amber-800" : "border-zinc-800"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-semibold text-white">{d.clientes?.nombre ?? d.titulo}</p>
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${d.canal === "online" ? "bg-blue-950 text-blue-400" : "bg-red-950 text-red-400"}`}>{d.canal === "online" ? "Online" : "Presencial"}</span>
+                        </div>
+                        {d.clientes?.nombre && <p className="mt-0.5 truncate text-xs text-zinc-500">{d.titulo}</p>}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                          <p className="text-lg font-black text-red-500">{eur(Number(d.importe_estimado || 0))}</p>
+                          {badgeSeguimiento(d)}
+                          {diasEstancada !== null && (
+                            <span className="rounded-full bg-amber-950 px-2 py-0.5 text-[10px] font-bold text-amber-400" title={`Lleva ${diasEstancada} días en esta etapa (aviso a partir de ${col.estancado_dias})`}>
+                              ⚠ {diasEstancada}d parada
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-zinc-500">{nombrePersona(d.responsable)} · hace {dias(d.fecha_alta)}d{d.origen ? ` · ${d.origen}` : ""}</p>
+                        {d.notas && <p className="mt-1 truncate text-[11px] italic text-zinc-600" title={d.notas}>{d.notas}</p>}
+                        <div className="mt-2 flex items-center justify-between gap-1" onClick={(e) => e.stopPropagation()}>
+                          <button disabled={iCol === 0} onClick={() => moverColumna(d.id, colsEmbudo[iCol - 1])} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-400 disabled:opacity-20">←</button>
+                          <button onClick={() => perder(d)} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-500">Perdido</button>
+                          <button onClick={() => ganar(d)} className="rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white">✓ Ganado</button>
+                          <button disabled={iCol === colsEmbudo.length - 1} onClick={() => moverColumna(d.id, colsEmbudo[iCol + 1])} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-400 disabled:opacity-20">→</button>
+                        </div>
                       </div>
-                      {d.clientes?.nombre && <p className="mt-0.5 truncate text-xs text-zinc-500">{d.titulo}</p>}
-                      <div className="mt-1.5 flex items-center gap-2">
-                        <p className="text-lg font-black text-red-500">{eur(Number(d.importe_estimado || 0))}</p>
-                        {badgeSeguimiento(d)}
-                      </div>
-                      <p className="text-xs text-zinc-500">{nombrePersona(d.responsable)} · hace {dias(d.fecha_alta)}d{d.origen ? ` · ${d.origen}` : ""}</p>
-                      {d.notas && <p className="mt-1 truncate text-[11px] italic text-zinc-600" title={d.notas}>{d.notas}</p>}
-                      <div className="mt-2 flex items-center justify-between gap-1" onClick={(e) => e.stopPropagation()}>
-                        <button disabled={iCol === 0} onClick={() => moverColumna(d.id, colsEmbudo[iCol - 1])} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-400 disabled:opacity-20">←</button>
-                        <button onClick={() => perder(d)} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-500">Perdido</button>
-                        <button onClick={() => ganar(d)} className="rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white">✓ Ganado</button>
-                        <button disabled={iCol === colsEmbudo.length - 1} onClick={() => moverColumna(d.id, colsEmbudo[iCol + 1])} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-400 disabled:opacity-20">→</button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {lista.length === 0 && <p className="py-4 text-center text-xs text-zinc-700">Suelta tarjetas aquí</p>}
                 </div>
               </div>
             );
           })}
 
-          {/* Añadir fase */}
+          {/* Añadir etapa desde el tablero → abre el editor */}
           <div className="w-[70vw] max-w-xs shrink-0 snap-start md:w-60">
-            {creandoCol ? (
-              <div className="flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3">
-                <input autoFocus placeholder="Título de la fase" value={nuevaCol} onChange={(e) => setNuevaCol(e.target.value)} onKeyDown={(e) => e.key === "Enter" && crearColumna()} className={inputCls} />
-                <div className="flex gap-2">
-                  <button onClick={crearColumna} className="flex-1 rounded-lg bg-red-600 py-1.5 text-xs font-bold text-white">Crear</button>
-                  <button onClick={() => setCreandoCol(false)} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-300">Cancelar</button>
-                </div>
-              </div>
-            ) : (
-              <button onClick={() => setCreandoCol(true)} className="w-full rounded-2xl border border-dashed border-zinc-800 py-4 text-sm font-bold text-zinc-600 hover:border-zinc-600 hover:text-zinc-400">+ Fase</button>
-            )}
+            <button onClick={abrirEditorActual} className="w-full rounded-2xl border border-dashed border-zinc-800 py-4 text-sm font-bold text-zinc-600 hover:border-zinc-600 hover:text-zinc-400">
+              + Etapa (editar embudo)
+            </button>
           </div>
         </div>
       </div>
