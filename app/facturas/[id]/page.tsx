@@ -142,7 +142,13 @@ export default function PaginaFactura() {
             cantidad: String(x.cantidad),
             precio: String(x.precio),
           }))
-        : [{ concepto: factura.concepto, descripcion: "", cantidad: "1", precio: String(factura.base) }]
+        : [{
+            concepto: factura.concepto,
+            descripcion: "",
+            cantidad: "1",
+            // El precio de línea es final (IVA incluido); la base guardada se reconstruye
+            precio: String(r2(Number(factura.base) * (1 + Number(factura.iva_pct)))),
+          }]
     );
     setInicializado(true);
   }, [factura, lineasBD, inicializado]);
@@ -156,11 +162,14 @@ export default function PaginaFactura() {
     setFDireccion(c?.direccion ?? "");
   }
 
+  // Los precios de las líneas son FINALES (IVA incluido): la base sale hacia atrás.
+  // Ej: precio 100 con IVA 21% → base 82,64 + IVA 17,36 = total 100.
   const totales = useMemo(() => {
-    const subtotal = r2(lineas.reduce((s, l) => s + r2(num(l.cantidad) * num(l.precio)), 0));
-    const iva = r2(subtotal * fIva);
-    const irpf = r2(subtotal * fIrpf);
-    return { subtotal, iva, irpf, total: r2(subtotal + iva - irpf) };
+    const conIva = r2(lineas.reduce((s, l) => s + r2(num(l.cantidad) * num(l.precio)), 0));
+    const base = fIva > 0 ? r2(conIva / (1 + fIva)) : conIva;
+    const iva = r2(conIva - base);
+    const irpf = r2(base * fIrpf);
+    return { conIva, base, iva, irpf, total: r2(conIva - irpf) };
   }, [lineas, fIva, fIrpf]);
 
   const setLinea = (i: number, campo: keyof Linea, valor: string) =>
@@ -191,7 +200,7 @@ export default function PaginaFactura() {
         fecha_emision: fFecha,
         fecha_vencimiento: fVence || null,
         concepto: conceptoAgregado(),
-        base: totales.subtotal,
+        base: totales.base,
         iva_pct: fIva,
         irpf_pct: fIrpf,
       })
@@ -276,13 +285,13 @@ export default function PaginaFactura() {
     ? lineasBD.length
       ? lineasBD.map((x) => ({ concepto: x.concepto, descripcion: x.descripcion, cantidad: Number(x.cantidad), precio: Number(x.precio) }))
       : factura
-        ? [{ concepto: factura.concepto, descripcion: null, cantidad: 1, precio: Number(factura.base) }]
+        ? [{ concepto: factura.concepto, descripcion: null, cantidad: 1, precio: r2(Number(factura.base) * (1 + Number(factura.iva_pct))) }]
         : []
     : lineas
         .filter((l) => l.concepto.trim() || num(l.precio) !== 0)
         .map((l) => ({ concepto: l.concepto, descripcion: l.descripcion || null, cantidad: num(l.cantidad) || 1, precio: num(l.precio) }));
 
-  const docBase = emitida && factura ? Number(factura.base) : totales.subtotal;
+  const docBase = emitida && factura ? Number(factura.base) : totales.base;
   const docIva = emitida && factura ? Number(factura.iva_importe) : totales.iva;
   const docIrpf = emitida && factura ? Number(factura.irpf_importe) : totales.irpf;
   const docTotal = emitida && factura ? Number(factura.total) : totales.total;
@@ -322,7 +331,7 @@ export default function PaginaFactura() {
           <tr className="border-b-2 border-zinc-900 text-left">
             <th className="py-2">Concepto</th>
             <th className="py-2 text-right">Cant.</th>
-            <th className="py-2 text-right">Precio</th>
+            <th className="py-2 text-right">Precio (IVA incl.)</th>
             <th className="py-2 text-right">Importe</th>
           </tr>
         </thead>
@@ -463,7 +472,7 @@ export default function PaginaFactura() {
                     <th className="px-3 py-2.5 text-left">Concepto</th>
                     <th className="px-3 py-2.5 text-left">Descripción</th>
                     <th className="w-20 px-2 py-2.5 text-right">Cantidad</th>
-                    <th className="w-24 px-2 py-2.5 text-right">Precio</th>
+                    <th className="w-24 px-2 py-2.5 text-right">Precio (IVA incl.)</th>
                     <th className="w-24 px-2 py-2.5 text-center">Impuestos</th>
                     <th className="w-24 px-3 py-2.5 text-right">Total</th>
                     <th className="w-8"></th>
@@ -563,8 +572,8 @@ export default function PaginaFactura() {
 
               <div className="flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-zinc-400">Subtotal</span>
-                  <span className="font-bold tabular-nums text-white">{eur(totales.subtotal)}</span>
+                  <span className="text-zinc-400">Base imponible <span className="text-[10px] text-zinc-600">(calculada)</span></span>
+                  <span className="font-bold tabular-nums text-white">{eur(totales.base)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-2 text-sm">
                   <select value={fIva} onChange={(e) => setFIva(Number(e.target.value))} className={`${inputCls} appearance-none py-1`}>
@@ -589,8 +598,9 @@ export default function PaginaFactura() {
                   <span className="text-2xl font-black tabular-nums text-white">{eur(totales.total)}</span>
                 </div>
                 <p className="text-[10px] leading-snug text-zinc-600">
-                  El IVA y el IRPF se aplican a toda la factura. Al aprobar se asigna el número {config?.serie}
-                  {String(config?.proximo_numero ?? 0).padStart(4, "0")} y ya no se puede cambiar (numeración correlativa).
+                  Los precios de las líneas son <b>finales (IVA incluido)</b>: si pones 100 €, el total es 100 € y la base
+                  imponible se calcula sola. El IVA y el IRPF se aplican a toda la factura. Al aprobar se asigna el número{" "}
+                  {config?.serie}{String(config?.proximo_numero ?? 0).padStart(4, "0")} y ya no se puede cambiar.
                 </p>
               </div>
             </div>
