@@ -53,11 +53,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ token: string 
       const filaSeg = (s: Seguimiento) =>
         `<li><b>${esc(s.cliente || s.titulo)}</b> · ${fFecha(s.fecha)}${s.fecha <= hoy ? " <b style=\"color:#dc2626\">(toca hoy)</b>" : ""}${s.nota ? ` — ${esc(s.nota)}` : ""}</li>`;
 
+      // Listas capadas: con backlog grande, un correo kilométrico se ignora
+      const lista = (xs: Seguimiento[], max: number) =>
+        xs.slice(0, max).map(filaSeg).join("") +
+        (xs.length > max ? `<li style="color:#71717a">… y ${xs.length - max} más en el embudo</li>` : "");
+
       if (esLunes) {
         // Lunes: resumen completo de la semana
         if (info.seguimientos.length > 0 || info.impagos.length > 0) {
           const bloqueSeg = info.seguimientos.length
-            ? `<h3 style="margin:16px 0 6px">⏰ Seguimientos de la semana</h3><ul>` + info.seguimientos.map(filaSeg).join("") + `</ul>`
+            ? `<h3 style="margin:16px 0 6px">⏰ Seguimientos de la semana</h3><ul>` + lista(info.seguimientos, 25) + `</ul>`
             : "";
           const totalImp = info.impagos.reduce((s, x) => s + Number(x.pendiente), 0);
           const bloqueImp = info.impagos.length
@@ -88,7 +93,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ token: string 
               from: "Ethos App <avisos@ethosfitnessasesorias.es>",
               to: [info.email],
               subject: `Hoy toca escribir a ${deHoy.length} persona(s)`,
-              html: `<div style="font-family:sans-serif;font-size:14px;color:#18181b"><h2 style="margin:0 0 4px">⏰ Seguimientos de hoy</h2><ul>${deHoy.map(filaSeg).join("")}</ul><p style="margin:8px 0 0;color:#71717a;font-size:12px">Abre el embudo y despacha estos primero.</p></div>`,
+              html: `<div style="font-family:sans-serif;font-size:14px;color:#18181b"><h2 style="margin:0 0 4px">⏰ Seguimientos de hoy</h2><ul>${lista(deHoy, 20)}</ul><p style="margin:8px 0 0;color:#71717a;font-size:12px">Abre el embudo y despacha estos primero.</p></div>`,
             }),
           });
           email = res.ok ? `enviado (diario, ${deHoy.length})` : { error: `resend ${res.status}` };
