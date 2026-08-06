@@ -156,9 +156,10 @@ export default function FichaCliente() {
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const [pestana, setPestana] = useState<Pestana>("facturas");
 
-  // Fusión con vista previa del destino
+  // Fusión con vista previa del destino y elección de quién sobrevive
   const [fusionId, setFusionId] = useState<number | null>(null);
   const [fusionInfo, setFusionInfo] = useState<{ facturado: number; cobrado: number; n: number } | null>(null);
+  const [fusionQuedo, setFusionQuedo] = useState(false); // false = se queda el otro · true = se queda este
 
   // Edición de datos (pestaña Ficha)
   const [nombre, setNombre] = useState("");
@@ -309,25 +310,31 @@ export default function FichaCliente() {
     cargar();
   }
 
-  // Fusiona ESTE cliente dentro de otro: sus facturas se mueven y este se borra
+  // Fusiona en la dirección elegida: el perdedor desaparece y TODO su historial
+  // (facturas, remesas, oportunidades, actividades, contenido, fila de la matriz)
+  // pasa al superviviente; los datos de contacto que falten se completan.
   async function fusionar() {
     if (!fusionId || !cliente) return;
-    const destino = otrosClientes.find((c) => c.id === fusionId);
-    if (!destino) return;
-    if (
-      !window.confirm(
-        `"${cliente.nombre} ${cliente.apellidos ?? ""}" desaparecerá y todo su historial (facturas, actividades, oportunidades y contenido) pasará a "${destino.nombre} ${destino.apellidos ?? ""}". ¿Seguro?`
-      )
-    )
-      return;
-    for (const tabla of ["facturas", "deals", "actividades", "contenido"]) {
-      const { error } = await supabase.from(tabla).update({ cliente_id: fusionId }).eq("cliente_id", clienteId);
-      if (error) return avisar("error", `No se pudo mover ${tabla}: ${error.message}`);
+    const otro = otrosClientes.find((c) => c.id === fusionId);
+    if (!otro) return;
+    const nombreEste = `${cliente.nombre} ${cliente.apellidos ?? ""}`.trim();
+    const nombreOtro = `${otro.nombre} ${otro.apellidos ?? ""}`.trim();
+    const [pierde, queda] = fusionQuedo ? [nombreOtro, nombreEste] : [nombreEste, nombreOtro];
+    if (!window.confirm(`"${pierde}" desaparecerá y todo su historial pasará a "${queda}". ¿Seguro?`)) return;
+    const { data, error } = await supabase.rpc("merge_cliente", {
+      p_perdedor: fusionQuedo ? fusionId : clienteId,
+      p_superviviente: fusionQuedo ? clienteId : fusionId,
+    });
+    if (error) return avisar("error", error.message);
+    const res = data as { ok: boolean; error?: string } | null;
+    if (!res?.ok) return avisar("error", res?.error ?? "No se pudo fusionar.");
+    if (fusionQuedo) {
+      setFusionId(null);
+      avisar("ok", `"${pierde}" fusionado aquí ✓`);
+      cargar();
+    } else {
+      router.push(`/clientes/${fusionId}`);
     }
-    const del = await supabase.from("clientes").delete().eq("id", clienteId).select();
-    if (del.error) return avisar("error", del.error.message);
-    if (!del.data || del.data.length === 0) return avisar("error", "No se pudo borrar el duplicado (permiso denegado).");
-    router.push(`/clientes/${fusionId}`);
   }
 
   async function ejecutarAccion() {
@@ -820,47 +827,75 @@ export default function FichaCliente() {
                   })()}
                 </select>
 
+                {fusionId && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="font-bold text-zinc-400">¿Quién se queda con todo?</span>
+                    <button
+                      onClick={() => setFusionQuedo(true)}
+                      className={`rounded-full px-3 py-1 font-bold ${fusionQuedo ? "bg-emerald-700 text-white" : "bg-zinc-800 text-zinc-400"}`}
+                    >
+                      Este ({cliente.nombre})
+                    </button>
+                    <button
+                      onClick={() => setFusionQuedo(false)}
+                      className={`rounded-full px-3 py-1 font-bold ${!fusionQuedo ? "bg-emerald-700 text-white" : "bg-zinc-800 text-zinc-400"}`}
+                    >
+                      El otro
+                    </button>
+                  </div>
+                )}
+
                 {fusionId && (() => {
                   const destino = otrosClientes.find((c) => c.id === fusionId);
                   if (!destino) return null;
+                  const cartaEste = {
+                    nombre: `${cliente.nombre} ${cliente.apellidos ?? ""}`,
+                    email: cliente.email, telefono: cliente.telefono, plan: cliente.tipo_plan,
+                    alta: cliente.fecha_inicio, n: facturas.length, facturado: totalFacturado, cobrado: totalCobrado,
+                  };
+                  const cartaOtro = {
+                    nombre: `${destino.nombre} ${destino.apellidos ?? ""}`,
+                    email: destino.email, telefono: destino.telefono, plan: destino.tipo_plan,
+                    alta: destino.fecha_inicio, n: fusionInfo?.n, facturado: fusionInfo?.facturado, cobrado: fusionInfo?.cobrado,
+                  };
+                  const carta = (c: typeof cartaEste | typeof cartaOtro, seQueda: boolean) => (
+                    <div className={`rounded-xl border p-3 ${seQueda ? "border-emerald-900/50 bg-emerald-950/20" : "border-red-900/50 bg-red-950/20"}`}>
+                      <p className={`mb-1 text-[9px] font-black uppercase ${seQueda ? "text-emerald-400" : "text-red-400"}`}>
+                        {seQueda ? "✓ Se queda con todo" : "✕ Desaparece"}
+                      </p>
+                      <p className="font-bold text-white">{c.nombre}</p>
+                      <p className="text-zinc-500">{c.email ?? "sin email"}</p>
+                      <p className="text-zinc-500">{c.telefono ?? "sin teléfono"}</p>
+                      <p className="text-zinc-500">{c.plan ?? "sin plan"} · alta {c.alta ? fechaCorta(c.alta) : "—"}</p>
+                      {c.n !== undefined ? (
+                        <>
+                          <p className="mt-1 font-bold text-zinc-300">{c.n} facturas · {eur(Number(c.facturado ?? 0))}</p>
+                          <p className="text-zinc-500">cobrado {eur(Number(c.cobrado ?? 0))}</p>
+                        </>
+                      ) : (
+                        <p className="mt-1 text-zinc-600">cargando…</p>
+                      )}
+                    </div>
+                  );
                   return (
                     <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div className="rounded-xl border border-red-900/50 bg-red-950/20 p-3">
-                        <p className="mb-1 text-[9px] font-black uppercase text-red-400">Este desaparece</p>
-                        <p className="font-bold text-white">{cliente.nombre} {cliente.apellidos ?? ""}</p>
-                        <p className="text-zinc-500">{cliente.email ?? "sin email"}</p>
-                        <p className="text-zinc-500">{cliente.telefono ?? "sin teléfono"}</p>
-                        <p className="text-zinc-500">{cliente.tipo_plan ?? "sin plan"} · alta {cliente.fecha_inicio ? fechaCorta(cliente.fecha_inicio) : "—"}</p>
-                        <p className="mt-1 font-bold text-zinc-300">{facturas.length} facturas · {eur(totalFacturado)}</p>
-                        <p className="text-zinc-500">cobrado {eur(totalCobrado)}</p>
-                      </div>
-                      <div className="rounded-xl border border-emerald-900/50 bg-emerald-950/20 p-3">
-                        <p className="mb-1 text-[9px] font-black uppercase text-emerald-400">Se queda con todo</p>
-                        <p className="font-bold text-white">{destino.nombre} {destino.apellidos ?? ""}</p>
-                        <p className="text-zinc-500">{destino.email ?? "sin email"}</p>
-                        <p className="text-zinc-500">{destino.telefono ?? "sin teléfono"}</p>
-                        <p className="text-zinc-500">{destino.tipo_plan ?? "sin plan"} · alta {destino.fecha_inicio ? fechaCorta(destino.fecha_inicio) : "—"}</p>
-                        {fusionInfo ? (
-                          <>
-                            <p className="mt-1 font-bold text-zinc-300">{fusionInfo.n} facturas · {eur(fusionInfo.facturado)}</p>
-                            <p className="text-zinc-500">cobrado {eur(fusionInfo.cobrado)}</p>
-                          </>
-                        ) : (
-                          <p className="mt-1 text-zinc-600">cargando…</p>
-                        )}
-                      </div>
+                      {carta(cartaEste, fusionQuedo)}
+                      {carta(cartaOtro, !fusionQuedo)}
                     </div>
                   );
                 })()}
 
                 {fusionId && (
                   <button onClick={fusionar} disabled={!fusionInfo} className="rounded-xl bg-red-900 py-2.5 text-sm font-bold text-red-200 disabled:opacity-50">
-                    Fusionar (este cliente desaparece)
+                    {fusionQuedo
+                      ? `Fusionar: el otro desaparece y todo pasa a ${cliente.nombre}`
+                      : "Fusionar: este cliente desaparece"}
                   </button>
                 )}
                 <p className="text-[10px] leading-snug text-zinc-600">
-                  Revisa las dos tarjetas antes de confirmar: el de la izquierda se borra y todo su historial (facturas,
-                  oportunidades, actividades, contenido) pasa al de la derecha.
+                  Elige quién sobrevive y revisa las dos tarjetas antes de confirmar. El que desaparece pasa TODO su
+                  historial al otro (facturas, remesas, oportunidades, actividades, contenido y su fila de Pagos y
+                  cobros), y los datos de contacto que le falten al superviviente se completan solos.
                 </p>
               </div>
             </div>
