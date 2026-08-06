@@ -55,8 +55,17 @@ interface DealConCliente extends Deal {
   seguimiento_nota: string | null;
   columna_desde: string | null;
   orden?: number;
-  clientes: { nombre: string } | null;
+  temperatura: string | null;
+  clientes: { nombre: string; telefono: string | null } | null;
 }
+
+// Temperatura del lead (transversal a la fase, como las etiquetas de WhatsApp)
+const TEMPERATURAS = [
+  { valor: "caliente", emoji: "🔥", etiqueta: "Caliente", clase: "bg-orange-950 text-orange-400" },
+  { valor: "tibio", emoji: "🟡", etiqueta: "Tibio", clase: "bg-yellow-950 text-yellow-400" },
+  { valor: "frio", emoji: "❄️", etiqueta: "Frío", clase: "bg-sky-950 text-sky-400" },
+  { valor: "futuro", emoji: "⏳", etiqueta: "A futuro", clase: "bg-violet-950 text-violet-400" },
+] as const;
 // Etapa en el editor (id null = nueva)
 interface EtapaEd {
   id: number | null;
@@ -139,6 +148,7 @@ export default function EmbudoVentas() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [arrastrando, setArrastrando] = useState<number | null>(null);
   const [ordenCols, setOrdenCols] = useState<Record<number, number[]>>({});
+  const [fTemp, setFTemp] = useState<string>("todas"); // filtro por temperatura del lead
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
 
@@ -168,6 +178,8 @@ export default function EmbudoVentas() {
   const [fNotas, setFNotas] = useState("");
   const [fSeguimiento, setFSeguimiento] = useState("");
   const [fSeguimientoNota, setFSeguimientoNota] = useState("");
+  const [fTemperatura, setFTemperatura] = useState("");
+  const [filtroTemp, setFiltroTemp] = useState("todas");
 
   const cargar = useCallback(async () => {
     const [em, col, d, c, per] = await Promise.all([
@@ -175,7 +187,7 @@ export default function EmbudoVentas() {
       supabase.from("pipeline_columnas").select("*").order("orden"),
       supabase
         .from("deals")
-        .select("*, clientes(nombre)")
+        .select("*, clientes(nombre, telefono)")
         .not("etapa", "in", "(ganado,perdido)")
         .order("creado_en", { ascending: false }),
       supabase.from("clientes").select("id, nombre, entrenador, telefono").is("fecha_baja", null).order("nombre"),
@@ -558,6 +570,7 @@ export default function EmbudoVentas() {
     setFNotas("");
     setFSeguimiento("");
     setFSeguimientoNota("");
+    setFTemperatura("");
     setCreando(true);
   }
 
@@ -573,6 +586,7 @@ export default function EmbudoVentas() {
     setFNotas(d.notas ?? "");
     setFSeguimiento(d.seguimiento ?? "");
     setFSeguimientoNota(d.seguimiento_nota ?? "");
+    setFTemperatura(d.temperatura ?? "");
   }
 
   async function resolverCliente(): Promise<number | null | "cancelado"> {
@@ -638,6 +652,7 @@ export default function EmbudoVentas() {
       notas: fNotas.trim() || null,
       seguimiento: fSeguimiento || null,
       seguimiento_nota: fSeguimientoNota.trim() || null,
+      temperatura: fTemperatura || null,
     };
     const res = editando
       ? await supabase.from("deals").update(datos).eq("id", editando.id)
@@ -872,9 +887,26 @@ export default function EmbudoVentas() {
           <button key={p.codigo} onClick={() => setFResponsable(p.codigo)} className={`rounded-full px-3 py-1 text-xs font-semibold ${fResponsable === p.codigo ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>{p.nombre}</button>
         ))}
       </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-zinc-500">Temperatura:</span>
+        {TEMPERATURAS.map((t) => (
+          <button
+            key={t.valor}
+            onClick={() => setFTemperatura(fTemperatura === t.valor ? "" : t.valor)}
+            className={`rounded-full px-3 py-1 text-xs font-bold ${fTemperatura === t.valor ? t.clase + " ring-1 ring-current" : "bg-zinc-800 text-zinc-400"}`}
+          >
+            {t.emoji} {t.etiqueta}
+          </button>
+        ))}
+        {fTemperatura === "futuro" && !fSeguimiento && (
+          <span className="text-[10px] text-violet-400">⚠ ponle fecha de reactivación en el seguimiento (abajo)</span>
+        )}
+      </div>
       <div className="grid gap-2 sm:grid-cols-2">
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-bold uppercase text-zinc-500">Seguimiento (aviso ese día)</span>
+          <span className="text-[10px] font-bold uppercase text-zinc-500">
+            {fTemperatura === "futuro" ? "Reactivación (aviso ese día)" : "Seguimiento (aviso ese día)"}
+          </span>
           <input type="date" value={fSeguimiento} onChange={(e) => setFSeguimiento(e.target.value)} className={inputCls} />
         </label>
         <label className="flex flex-col gap-1">
@@ -997,6 +1029,31 @@ export default function EmbudoVentas() {
         {aviso && <p className="mb-4 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300">{aviso}</p>}
         {formulario}
 
+        {/* Filtro por temperatura: "otra sección" sin mover la tarjeta de su fase */}
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setFTemp("todas")}
+            className={`rounded-full px-3 py-1 text-xs font-bold ${fTemp === "todas" ? "bg-zinc-200 text-zinc-900" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"}`}
+          >
+            Todas ({dealsEmbudo.length})
+          </button>
+          {TEMPERATURAS.map((t) => {
+            const n = dealsEmbudo.filter((d) => d.temperatura === t.valor).length;
+            return (
+              <button
+                key={t.valor}
+                onClick={() => setFTemp(fTemp === t.valor ? "todas" : t.valor)}
+                className={`rounded-full px-3 py-1 text-xs font-bold ${fTemp === t.valor ? t.clase + " ring-1 ring-current" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"}`}
+              >
+                {t.emoji} {t.etiqueta} ({n})
+              </button>
+            );
+          })}
+          {fTemp === "futuro" && (
+            <span className="text-[10px] text-zinc-600">Los ⏳ avisan solos en su fecha de reactivación (seguimiento).</span>
+          )}
+        </div>
+
         <DndContext
           sensors={sensores}
           collisionDetection={closestCorners}
@@ -1006,7 +1063,9 @@ export default function EmbudoVentas() {
         >
           <div className="flex snap-x items-start gap-4 overflow-x-auto pb-4">
             {colsEmbudo.map((col) => {
-              const ids = ordenCols[col.id] ?? [];
+              const ids = (ordenCols[col.id] ?? []).filter(
+                (id) => fTemp === "todas" || dealPorId.get(id)?.temperatura === fTemp
+              );
               const lista = ids.map((id) => dealPorId.get(id)).filter(Boolean) as DealConCliente[];
               const totalCol = lista.reduce((s, d) => s + Number(d.importe_estimado || 0), 0);
               return (
@@ -1041,6 +1100,10 @@ export default function EmbudoVentas() {
                               {d.clientes?.nombre && <p className="mt-0.5 truncate text-xs text-zinc-500">{d.titulo}</p>}
                               <div className="mt-1.5 flex flex-wrap items-center gap-2">
                                 <p className="text-lg font-black text-red-500">{eur(Number(d.importe_estimado || 0))}</p>
+                                {(() => {
+                                  const t = TEMPERATURAS.find((x) => x.valor === d.temperatura);
+                                  return t ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${t.clase}`}>{t.emoji} {t.etiqueta}</span> : null;
+                                })()}
                                 {badgeSeguimiento(d)}
                                 {diasEstancada !== null && (
                                   <span className="rounded-full bg-amber-950 px-2 py-0.5 text-[10px] font-bold text-amber-400" title={`Lleva ${diasEstancada} días en esta etapa (aviso a partir de ${col.estancado_dias})`}>
@@ -1050,9 +1113,27 @@ export default function EmbudoVentas() {
                               </div>
                               <p className="text-xs text-zinc-500">{nombrePersona(d.responsable)} · hace {dias(d.fecha_alta)}d{d.origen ? ` · ${d.origen}` : ""}</p>
                               {d.notas && <p className="mt-1 truncate text-[11px] italic text-zinc-600" title={d.notas}>{d.notas}</p>}
-                              <div className="mt-2 flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                                <button onClick={() => perder(d)} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-500 hover:text-zinc-300">Perdido</button>
-                                <button onClick={() => ganar(d)} className="rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white hover:bg-emerald-600">✓ Ganado</button>
+                              <div className="mt-2 flex items-center justify-between gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                {(() => {
+                                  const wa = d.clientes?.telefono ? telefonoWa(d.clientes.telefono) : null;
+                                  return wa ? (
+                                    <a
+                                      href={`https://wa.me/${wa}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title="Abrir su chat de WhatsApp"
+                                      className="rounded-lg bg-emerald-950 px-2.5 py-1 text-xs font-bold text-emerald-400 hover:bg-emerald-900"
+                                    >
+                                      💬 WhatsApp
+                                    </a>
+                                  ) : (
+                                    <span className="text-[10px] text-zinc-700" title="Añade el teléfono en su ficha para abrir el chat desde aquí">sin tel.</span>
+                                  );
+                                })()}
+                                <div className="flex gap-1.5">
+                                  <button onClick={() => perder(d)} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-500 hover:text-zinc-300">Perdido</button>
+                                  <button onClick={() => ganar(d)} className="rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white hover:bg-emerald-600">✓ Ganado</button>
+                                </div>
                               </div>
                             </div>
                           </SortableDeal>
