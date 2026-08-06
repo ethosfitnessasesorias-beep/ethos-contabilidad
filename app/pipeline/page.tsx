@@ -77,6 +77,14 @@ const inputEtapaCls =
 
 const ETAPAS_DEFECTO = ["Lead", "Contacto establecido", "Necesidades definidas", "Propuesta realizada", "Negociaciones comenzadas"];
 
+// Teléfono español a formato wa.me (solo dígitos, con 34 delante)
+const telefonoWa = (tel: string): string | null => {
+  const d = tel.replace(/\D/g, "");
+  if (d.length === 9) return `34${d}`;
+  if (d.length >= 11) return d;
+  return null;
+};
+
 const nuevaEtapa = (titulo = ""): EtapaEd => ({
   id: null,
   titulo,
@@ -170,7 +178,7 @@ export default function EmbudoVentas() {
         .select("*, clientes(nombre)")
         .not("etapa", "in", "(ganado,perdido)")
         .order("creado_en", { ascending: false }),
-      supabase.from("clientes").select("id, nombre, entrenador").is("fecha_baja", null).order("nombre"),
+      supabase.from("clientes").select("id, nombre, entrenador, telefono").is("fecha_baja", null).order("nombre"),
       supabase.from("personas").select("codigo, nombre").eq("activa", true).order("orden"),
     ]);
     if (em.error) return setError(em.error.message.includes("embudos") ? "Falta la migración de embudos." : em.error.message);
@@ -279,6 +287,14 @@ export default function EmbudoVentas() {
         setError(error.message);
         cargar();
         return;
+      }
+      // Al caer en una etapa de llamada sin fecha, pedirla en el momento:
+      // así el aviso y el evento de Calendar no se quedan sin crear
+      const colObj = colsEmbudo.find((c) => c.id === col);
+      if (colObj && /llamada/i.test(colObj.titulo) && !cardActual.seguimiento) {
+        abrirEditar({ ...cardActual, columna_id: col });
+        setAviso("Ponle fecha a la llamada: con ella llegan el aviso y el botón de Google Calendar 📅");
+        setTimeout(() => setAviso(null), 6000);
       }
     }
     // Renumerar el orden de las columnas afectadas (si la BD aún no tiene la
@@ -884,7 +900,18 @@ export default function EmbudoVentas() {
               fin.setDate(fin.getDate() + 1);
               const d2 = fin.toISOString().slice(0, 10).replace(/-/g, "");
               const titulo = encodeURIComponent(`Llamada · ${fClienteNombre.trim() || fTitulo.trim() || "lead"}`);
-              const detalle = encodeURIComponent(fSeguimientoNota.trim() || "Seguimiento del embudo Ethos");
+              // El evento lleva el lead "vinculado": teléfono, WhatsApp y enlace a su ficha
+              const cliSel =
+                (editando?.cliente_id ? clientes.find((c) => c.id === editando.cliente_id) : undefined) ??
+                clientes.find((c) => c.nombre.toLowerCase() === fClienteNombre.trim().toLowerCase());
+              const tel = (cliSel as { telefono?: string | null } | undefined)?.telefono ?? "";
+              const wa = tel ? telefonoWa(tel) : null;
+              const origen = typeof window === "undefined" ? "" : window.location.origin;
+              const lineas = [fSeguimientoNota.trim() || "Seguimiento del embudo Ethos"];
+              if (tel) lineas.push(`Tel: ${tel}`);
+              if (wa) lineas.push(`WhatsApp: https://wa.me/${wa}`);
+              if (cliSel && origen) lineas.push(`Ficha: ${origen}/clientes/${cliSel.id}`);
+              const detalle = encodeURIComponent(lineas.join("\n"));
               return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${titulo}&dates=${d}/${d2}&details=${detalle}`;
             })()}
             target="_blank"
