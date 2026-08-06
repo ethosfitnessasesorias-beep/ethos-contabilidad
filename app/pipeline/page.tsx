@@ -402,11 +402,21 @@ export default function EmbudoVentas() {
     setFSeguimientoNota(d.seguimiento_nota ?? "");
   }
 
-  async function resolverCliente(): Promise<number | null> {
+  async function resolverCliente(): Promise<number | null | "cancelado"> {
     const nombre = fClienteNombre.trim();
     if (!nombre) return null;
     const existente = clientes.find((c) => c.nombre.toLowerCase() === nombre.toLowerCase());
     if (existente) return existente.id;
+    // Aviso anti-duplicados: si hay un contacto con nombre parecido, confirmar antes de crear otro
+    const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
+    const nn = norm(nombre);
+    const parecido = clientes.find((c) => {
+      const cn = norm(c.nombre);
+      return nn.length >= 4 && cn.length >= 4 && (cn.includes(nn) || nn.includes(cn));
+    });
+    if (parecido && !window.confirm(`Ya existe un contacto parecido: "${parecido.nombre}".\n\n¿Seguro que quieres crear OTRO contacto nuevo llamado "${nombre}"?\n(Si es la misma persona, cancela y escribe su nombre exacto.)`)) {
+      return "cancelado";
+    }
     const { data, error } = await supabase
       .from("clientes")
       .insert({ nombre, entrenador: fResponsable, estado: "lead", canal: fCanal, origen: fOrigen.trim() || null })
@@ -444,6 +454,7 @@ export default function EmbudoVentas() {
     if (!fTitulo.trim()) return setError("Pon un título a la tarjeta.");
     setError(null);
     const clienteId = await resolverCliente();
+    if (clienteId === "cancelado") return; // duplicado evitado: no se guarda nada
     const datos = {
       titulo: fTitulo.trim(),
       cliente_id: clienteId,

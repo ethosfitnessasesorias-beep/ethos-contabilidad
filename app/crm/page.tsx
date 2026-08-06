@@ -56,6 +56,8 @@ interface CuotaCat {
   id: number;
   nombre: string;
   activa: boolean;
+  es_bono?: boolean;
+  negocio?: string | null;
   precio_mensual: number | null;
   precio_trimestral: number | null;
   precio_semestral: number | null;
@@ -147,7 +149,7 @@ export default function CrmPage() {
       return;
     }
     setCli((data as Cli[]) ?? []);
-    const { data: qs } = await supabase.from("cuotas").select("id, nombre, activa, precio_mensual, precio_trimestral, precio_semestral, precio_anual").order("nombre");
+    const { data: qs } = await supabase.from("cuotas").select("id, nombre, activa, es_bono, negocio, precio_mensual, precio_trimestral, precio_semestral, precio_anual").order("nombre");
     setCuotasCat((qs as CuotaCat[]) ?? []);
     const { data: sal } = await supabase.from("v_facturas_saldo").select("cliente_id, cobrado, pendiente");
     const m = new Map<number, { cobrado: number; pendiente: number }>();
@@ -772,11 +774,23 @@ export default function CrmPage() {
                 <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-[10px] font-bold uppercase text-zinc-500">Plan</span>
                   <select value={f.cuota_id ?? ""} onChange={(e) => setF({ ...f, cuota_id: Number(e.target.value) || null })} className={`${inputCls} appearance-none`}>
                     <option value="">Sin cuota</option>
-                    {cuotasCat.filter((q) => q.activa || q.id === f.cuota_id).map((q) => (
-                      <option key={q.id} value={q.id}>{q.nombre}</option>
-                    ))}
+                    {(["gym", "online", null] as (string | null)[]).map((neg) => {
+                      const grupo = cuotasCat.filter((q) => (q.activa || q.id === f.cuota_id) && !q.es_bono && (q.negocio ?? null) === neg);
+                      if (!grupo.length) return null;
+                      return (
+                        <optgroup key={neg ?? "otros"} label={neg === "gym" ? "GYM (planes)" : neg === "online" ? "ONLINE" : "Otros planes"}>
+                          {grupo.map((q) => <option key={q.id} value={q.id}>{q.nombre}</option>)}
+                        </optgroup>
+                      );
+                    })}
+                    <optgroup label="BONOS y pagos únicos">
+                      {cuotasCat.filter((q) => (q.activa || q.id === f.cuota_id) && q.es_bono).map((q) => (
+                        <option key={q.id} value={q.id}>{q.nombre}{q.precio_mensual !== null ? ` · ${Number(q.precio_mensual).toFixed(2).replace(".", ",")} €` : ""}</option>
+                      ))}
+                    </optgroup>
                   </select>
                 </label>
+                {!cuotasCat.find((x) => x.id === f.cuota_id)?.es_bono && (
                 <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Modalidad</span>
                   <select
                     value={(f.cuota_periodicidad as string) ?? "mensual"}
@@ -792,6 +806,7 @@ export default function CrmPage() {
                     })()}
                   </select>
                 </label>
+                )}
                 <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Descuento %</span>
                   <input inputMode="decimal" value={f.descuento_pct ?? 0} onChange={(e) => setF({ ...f, descuento_pct: Number(e.target.value.replace(",", ".")) || 0 })} className={inputCls} />
                 </label>
@@ -811,6 +826,18 @@ export default function CrmPage() {
               {(() => {
                 const q = cuotasCat.find((x) => x.id === f.cuota_id);
                 if (!q) return null;
+                if (q.es_bono) {
+                  const pb = Number(q.precio_mensual ?? 0);
+                  const precioBono = Math.max(0, Math.round((pb * (1 - (Number(f.descuento_pct) || 0) / 100) - (Number(f.descuento_eur) || 0)) * 100) / 100);
+                  return (
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-950/40 px-3 py-1.5">
+                      <span className="text-[11px] text-amber-300">
+                        <b>Bono · pago único.</b> No entra en la remesa: apunta la venta como factura cuando la cobres.
+                      </span>
+                      <span className="text-sm font-black text-amber-300">{precioBono.toFixed(2).replace(".", ",")} €</span>
+                    </div>
+                  );
+                }
                 const modalidad = (f.cuota_periodicidad as string) || "mensual";
                 const base = precioDe(q, modalidad);
                 if (base === null) {
