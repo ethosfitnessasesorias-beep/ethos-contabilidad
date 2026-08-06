@@ -7,11 +7,27 @@
 // En el tablero: previsión ponderada por probabilidad y ⚠ en tarjetas estancadas.
 // Nada de esto toca la contabilidad hasta marcar Ganado.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  TouchSensor,
+  closestCorners,
+  useSensor,
+  useSensors,
+  useDroppable,
+  type DragStartEvent,
+  type DragOverEvent,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { supabase } from "@/lib/supabase";
 import { useSesion } from "@/lib/useSesion";
 import { Shell } from "../shell";
+import Modal from "@/components/Modal";
 import type { Canal, Cliente, Deal } from "@/lib/tipos";
 
 interface Embudo {
@@ -38,6 +54,7 @@ interface DealConCliente extends Deal {
   seguimiento: string | null;
   seguimiento_nota: string | null;
   columna_desde: string | null;
+  orden?: number;
   clientes: { nombre: string } | null;
 }
 // Etapa en el editor (id null = nueva)
@@ -69,6 +86,40 @@ const nuevaEtapa = (titulo = ""): EtapaEd => ({
   estancadoDias: "7",
 });
 
+// ids del espacio DnD: tarjetas "c<id>", columnas "k<id>" (mismo patrón que Actividades)
+const cardDnd = (id: number) => `c${id}`;
+const colDnd = (id: number) => `k${id}`;
+const parseCard = (dnd: string) => Number(dnd.slice(1));
+
+// Tarjeta arrastrable: el click abre el modal, el drag mueve entre etapas
+function SortableDeal({ id, onAbrir, children }: { id: number; onAbrir: () => void; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: cardDnd(id) });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, touchAction: "none" }}
+      {...attributes}
+      {...listeners}
+      onClick={onAbrir}
+      className={`cursor-grab rounded-xl active:cursor-grabbing ${isDragging ? "opacity-40" : ""}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ColumnaDrop({ colId, children }: { colId: number; children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: colDnd(colId) });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`flex min-h-24 flex-col gap-2 rounded-xl px-3 pb-3 transition ${isOver ? "bg-zinc-800/40 ring-1 ring-red-500/40" : ""}`}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function EmbudoVentas() {
   const sesionOk = useSesion();
   const router = useRouter();
@@ -79,8 +130,14 @@ export default function EmbudoVentas() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [arrastrando, setArrastrando] = useState<number | null>(null);
+  const [ordenCols, setOrdenCols] = useState<Record<number, number[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
+
+  const sensores = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
+  );
 
   // Editor de embudo (pantalla completa, estilo Holded)
   const [modo, setModo] = useState<"tablero" | "editor">("tablero");
@@ -140,6 +197,102 @@ export default function EmbudoVentas() {
     const col = colsEmbudo.find((c) => c.id === d.columna_id);
     return s + Number(d.importe_estimado || 0) * ((col?.probabilidad ?? 100) / 100);
   }, 0);
+
+  const dealPorId = useMemo(() => new Map(deals.map((d) => [d.id, d])), [deals]);
+
+  // Orden de trabajo del tablero: colId -> ids de tarjeta en orden (se rehace al recargar datos)
+  useEffect(() => {
+    const m: Record<number, number[]> = {};
+    for (const c of columnas.filter((x) => x.embudo_id === embudoSel)) {
+      m[c.id] = deals
+        .filter((d) => d.embudo_id === embudoSel && d.columna_id === c.id)
+        .sort((a, b) => (Number(a.orden ?? 0) - Number(b.orden ?? 0)) || a.id - b.id)
+        .map((d) => d.id);
+    }
+    setOrdenCols(m);
+  }, [deals, columnas, embudoSel]);
+
+  // ---------- DnD (mismo patrón que Actividades) ----------
+  function columnaDeDnd(dndId: string): number | null {
+    if (dndId.startsWith("k")) return Number(dndId.slice(1));
+    const cardId = parseCard(dndId);
+    for (const [colId, ids] of Object.entries(ordenCols)) if (ids.includes(cardId)) return Number(colId);
+    return null;
+  }
+
+  function onDragStart(e: DragStartEvent) {
+    setArrastrando(parseCard(String(e.active.id)));
+  }
+
+  function onDragOver(e: DragOverEvent) {
+    const { active, over } = e;
+    if (!over) return;
+    const activeCol = columnaDeDnd(String(active.id));
+    const overCol = columnaDeDnd(String(over.id));
+    if (activeCol == null || overCol == null || activeCol === overCol) return;
+    setOrdenCols((prev) => {
+      const activeId = parseCard(String(active.id));
+      const origen = (prev[activeCol] ?? []).filter((id) => id !== activeId);
+      const destino = [...(prev[overCol] ?? [])];
+      let idx = destino.length;
+      if (!String(over.id).startsWith("k")) {
+        const overIdx = destino.indexOf(parseCard(String(over.id)));
+        if (overIdx >= 0) idx = overIdx;
+      }
+      destino.splice(idx, 0, activeId);
+      return { ...prev, [activeCol]: origen, [overCol]: destino };
+    });
+  }
+
+  async function onDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    setArrastrando(null);
+    if (!over) return;
+    const activeId = parseCard(String(active.id));
+    const col = columnaDeDnd(String(active.id));
+    if (col == null) return;
+
+    // Reordenar dentro de la columna si soltamos sobre otra tarjeta
+    let nuevoOrden = ordenCols;
+    if (!String(over.id).startsWith("k")) {
+      const overCol = columnaDeDnd(String(over.id));
+      if (overCol === col) {
+        const ids = ordenCols[col] ?? [];
+        const from = ids.indexOf(activeId);
+        const to = ids.indexOf(parseCard(String(over.id)));
+        if (from !== to && from >= 0 && to >= 0) {
+          nuevoOrden = { ...ordenCols, [col]: arrayMove(ids, from, to) };
+          setOrdenCols(nuevoOrden);
+        }
+      }
+    }
+
+    // Persistir: cambio de etapa (con columna_desde para el aviso de estancamiento)
+    const cardActual = dealPorId.get(activeId);
+    if (cardActual && cardActual.columna_id !== col) {
+      setDeals((prev) => prev.map((d) => (d.id === activeId ? { ...d, columna_id: col, columna_desde: new Date().toISOString() } : d)));
+      const { error } = await supabase
+        .from("deals")
+        .update({ columna_id: col, columna_desde: new Date().toISOString() })
+        .eq("id", activeId);
+      if (error) {
+        setError(error.message);
+        cargar();
+        return;
+      }
+    }
+    // Renumerar el orden de las columnas afectadas (si la BD aún no tiene la
+    // columna orden, se ignora en silencio: el arrastre entre etapas funciona igual)
+    const afectadas = new Set<number>([col]);
+    if (cardActual?.columna_id != null) afectadas.add(cardActual.columna_id);
+    const updates: PromiseLike<unknown>[] = [];
+    for (const colId of afectadas) {
+      (nuevoOrden[colId] ?? []).forEach((id, i) => {
+        updates.push(supabase.from("deals").update({ orden: i }).eq("id", id));
+      });
+    }
+    await Promise.all(updates);
+  }
 
   const esGrandSlam = (embudos.find((e) => e.id === embudoSel)?.nombre ?? "").toLowerCase().includes("grand slam");
 
@@ -487,16 +640,6 @@ export default function EmbudoVentas() {
     cargar();
   }
 
-  async function moverColumna(id: number, columna: Columna) {
-    const ahora = new Date().toISOString();
-    setDeals((prev) => prev.map((d) => (d.id === id ? { ...d, columna_id: columna.id, columna_desde: ahora } : d)));
-    const { error } = await supabase.from("deals").update({ columna_id: columna.id, columna_desde: ahora }).eq("id", id);
-    if (error) {
-      setError(error.message);
-      cargar();
-    }
-  }
-
   async function ganar(d: DealConCliente) {
     const r1 = await supabase
       .from("deals")
@@ -673,9 +816,14 @@ export default function EmbudoVentas() {
   }
 
   // ============ TABLERO ============
-  const formulario = (creando || editando) && (
-    <div className="mb-5 flex flex-col gap-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
-      <p className="text-xs font-bold uppercase tracking-wider text-zinc-500">{editando ? "Editar tarjeta" : "Nueva tarjeta"}</p>
+  const formulario = (
+    <Modal
+      abierto={creando || !!editando}
+      onCerrar={() => { setCreando(false); setEditando(null); }}
+      titulo={editando ? "Editar tarjeta" : "Nueva tarjeta"}
+      ancho="max-w-2xl"
+    >
+    <div className="flex flex-col gap-2">
       <div className="grid gap-2 sm:grid-cols-2">
         <input placeholder="Título (ej: Trimestre entreno + nutri)" value={fTitulo} onChange={(e) => setFTitulo(e.target.value)} className={inputCls} />
         <input list="lista-contactos" placeholder="Contacto (si no existe, se crea)" value={fClienteNombre} onChange={(e) => setFClienteNombre(e.target.value)} className={inputCls} />
@@ -719,6 +867,7 @@ export default function EmbudoVentas() {
         </p>
       )}
     </div>
+    </Modal>
   );
 
   return (
@@ -791,87 +940,96 @@ export default function EmbudoVentas() {
         {aviso && <p className="mb-4 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300">{aviso}</p>}
         {formulario}
 
-        <div className="flex snap-x items-start gap-4 overflow-x-auto pb-4">
-          {colsEmbudo.map((col, iCol) => {
-            const lista = dealsEmbudo.filter((d) => d.columna_id === col.id);
-            const totalCol = lista.reduce((s, d) => s + Number(d.importe_estimado || 0), 0);
-            return (
-              <div
-                key={col.id}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={() => {
-                  if (arrastrando !== null) moverColumna(arrastrando, col);
-                  setArrastrando(null);
-                }}
-                className="w-[85vw] max-w-xs shrink-0 snap-start rounded-2xl border border-zinc-800 bg-zinc-900/40 md:w-80"
-              >
-                <div className="flex items-center justify-between gap-2 px-4 py-3" title={col.descripcion ?? ""}>
-                  <div className="min-w-0">
-                    <h2 className="truncate text-sm font-black uppercase tracking-wide text-zinc-300">{col.titulo}</h2>
-                    {col.descripcion && <p className="truncate text-[10px] text-zinc-600">{col.descripcion}</p>}
+        <DndContext
+          sensors={sensores}
+          collisionDetection={closestCorners}
+          onDragStart={onDragStart}
+          onDragOver={onDragOver}
+          onDragEnd={onDragEnd}
+        >
+          <div className="flex snap-x items-start gap-4 overflow-x-auto pb-4">
+            {colsEmbudo.map((col) => {
+              const ids = ordenCols[col.id] ?? [];
+              const lista = ids.map((id) => dealPorId.get(id)).filter(Boolean) as DealConCliente[];
+              const totalCol = lista.reduce((s, d) => s + Number(d.importe_estimado || 0), 0);
+              return (
+                <div key={col.id} className="w-[85vw] max-w-xs shrink-0 snap-start rounded-2xl border border-zinc-800 bg-zinc-900/40 md:w-80">
+                  <div className="flex items-center justify-between gap-2 px-4 py-3" title={col.descripcion ?? ""}>
+                    <div className="min-w-0">
+                      <h2 className="truncate text-sm font-black uppercase tracking-wide text-zinc-300">{col.titulo}</h2>
+                      {col.descripcion && <p className="truncate text-[10px] text-zinc-600">{col.descripcion}</p>}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {col.probabilidad < 100 && (
+                        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400" title="Probabilidad de la oportunidad en esta etapa">
+                          {col.probabilidad}%
+                        </span>
+                      )}
+                      {totalCol > 0 && <span className="text-xs font-bold text-zinc-500">{eur(totalCol)}</span>}
+                      <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-bold text-zinc-400">{lista.length}</span>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {col.probabilidad < 100 && (
-                      <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400" title="Probabilidad de la oportunidad en esta etapa">
-                        {col.probabilidad}%
-                      </span>
-                    )}
-                    {totalCol > 0 && <span className="text-xs font-bold text-zinc-500">{eur(totalCol)}</span>}
-                    <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-bold text-zinc-400">{lista.length}</span>
-                  </div>
-                </div>
 
-                <div className="flex min-h-24 flex-col gap-2 px-3 pb-3">
-                  {lista.map((d) => {
-                    const diasEstancada = estancada(d, col);
-                    return (
-                      <div
-                        key={d.id}
-                        draggable
-                        onDragStart={() => setArrastrando(d.id)}
-                        onClick={() => abrirEditar(d)}
-                        className={`cursor-grab rounded-xl border bg-zinc-950 p-3 active:cursor-grabbing ${
-                          diasEstancada !== null ? "border-amber-800" : "border-zinc-800"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-sm font-semibold text-white">{d.clientes?.nombre ?? d.titulo}</p>
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${d.canal === "online" ? "bg-blue-950 text-blue-400" : "bg-red-950 text-red-400"}`}>{d.canal === "online" ? "Online" : "Presencial"}</span>
-                        </div>
-                        {d.clientes?.nombre && <p className="mt-0.5 truncate text-xs text-zinc-500">{d.titulo}</p>}
-                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                          <p className="text-lg font-black text-red-500">{eur(Number(d.importe_estimado || 0))}</p>
-                          {badgeSeguimiento(d)}
-                          {diasEstancada !== null && (
-                            <span className="rounded-full bg-amber-950 px-2 py-0.5 text-[10px] font-bold text-amber-400" title={`Lleva ${diasEstancada} días en esta etapa (aviso a partir de ${col.estancado_dias})`}>
-                              ⚠ {diasEstancada}d parada
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-zinc-500">{nombrePersona(d.responsable)} · hace {dias(d.fecha_alta)}d{d.origen ? ` · ${d.origen}` : ""}</p>
-                        {d.notas && <p className="mt-1 truncate text-[11px] italic text-zinc-600" title={d.notas}>{d.notas}</p>}
-                        <div className="mt-2 flex items-center justify-between gap-1" onClick={(e) => e.stopPropagation()}>
-                          <button disabled={iCol === 0} onClick={() => moverColumna(d.id, colsEmbudo[iCol - 1])} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-400 disabled:opacity-20">←</button>
-                          <button onClick={() => perder(d)} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-500">Perdido</button>
-                          <button onClick={() => ganar(d)} className="rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white">✓ Ganado</button>
-                          <button disabled={iCol === colsEmbudo.length - 1} onClick={() => moverColumna(d.id, colsEmbudo[iCol + 1])} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-400 disabled:opacity-20">→</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {lista.length === 0 && <p className="py-4 text-center text-xs text-zinc-700">Suelta tarjetas aquí</p>}
+                  <SortableContext items={ids.map(cardDnd)} strategy={verticalListSortingStrategy}>
+                    <ColumnaDrop colId={col.id}>
+                      {lista.map((d) => {
+                        const diasEstancada = estancada(d, col);
+                        return (
+                          <SortableDeal key={d.id} id={d.id} onAbrir={() => abrirEditar(d)}>
+                            <div className={`rounded-xl border bg-zinc-950 p-3 ${diasEstancada !== null ? "border-amber-800" : "border-zinc-800"}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="text-sm font-semibold text-white">{d.clientes?.nombre ?? d.titulo}</p>
+                                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${d.canal === "online" ? "bg-blue-950 text-blue-400" : "bg-red-950 text-red-400"}`}>{d.canal === "online" ? "Online" : "Presencial"}</span>
+                              </div>
+                              {d.clientes?.nombre && <p className="mt-0.5 truncate text-xs text-zinc-500">{d.titulo}</p>}
+                              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                                <p className="text-lg font-black text-red-500">{eur(Number(d.importe_estimado || 0))}</p>
+                                {badgeSeguimiento(d)}
+                                {diasEstancada !== null && (
+                                  <span className="rounded-full bg-amber-950 px-2 py-0.5 text-[10px] font-bold text-amber-400" title={`Lleva ${diasEstancada} días en esta etapa (aviso a partir de ${col.estancado_dias})`}>
+                                    ⚠ {diasEstancada}d parada
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-zinc-500">{nombrePersona(d.responsable)} · hace {dias(d.fecha_alta)}d{d.origen ? ` · ${d.origen}` : ""}</p>
+                              {d.notas && <p className="mt-1 truncate text-[11px] italic text-zinc-600" title={d.notas}>{d.notas}</p>}
+                              <div className="mt-2 flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <button onClick={() => perder(d)} className="rounded-lg bg-zinc-900 px-2.5 py-1 text-xs font-bold text-zinc-500 hover:text-zinc-300">Perdido</button>
+                                <button onClick={() => ganar(d)} className="rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-bold text-white hover:bg-emerald-600">✓ Ganado</button>
+                              </div>
+                            </div>
+                          </SortableDeal>
+                        );
+                      })}
+                      {lista.length === 0 && <p className="py-4 text-center text-xs text-zinc-700">Arrastra tarjetas aquí</p>}
+                    </ColumnaDrop>
+                  </SortableContext>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
 
-          {/* Añadir etapa desde el tablero → abre el editor */}
-          <div className="w-[70vw] max-w-xs shrink-0 snap-start md:w-60">
-            <button onClick={abrirEditorActual} className="w-full rounded-2xl border border-dashed border-zinc-800 py-4 text-sm font-bold text-zinc-600 hover:border-zinc-600 hover:text-zinc-400">
-              + Etapa (editar embudo)
-            </button>
+            {/* Añadir etapa desde el tablero → abre el editor */}
+            <div className="w-[70vw] max-w-xs shrink-0 snap-start md:w-60">
+              <button onClick={abrirEditorActual} className="w-full rounded-2xl border border-dashed border-zinc-800 py-4 text-sm font-bold text-zinc-600 hover:border-zinc-600 hover:text-zinc-400">
+                + Etapa (editar embudo)
+              </button>
+            </div>
           </div>
-        </div>
+
+          {/* Sombra de la tarjeta mientras se arrastra */}
+          <DragOverlay>
+            {arrastrando !== null && (() => {
+              const d = dealPorId.get(arrastrando);
+              if (!d) return null;
+              return (
+                <div className="w-72 rounded-xl border border-red-500/60 bg-zinc-950 p-3 shadow-2xl">
+                  <p className="text-sm font-semibold text-white">{d.clientes?.nombre ?? d.titulo}</p>
+                  <p className="mt-1 text-lg font-black text-red-500">{eur(Number(d.importe_estimado || 0))}</p>
+                </div>
+              );
+            })()}
+          </DragOverlay>
+        </DndContext>
       </div>
     </Shell>
   );

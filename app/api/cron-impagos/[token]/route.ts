@@ -20,6 +20,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ token: string 
   const { data, error } = await supa.rpc("cron_impagos", { p_token: token });
   if (error) return Response.json({ ok: false, error: error.message }, { status: 500 });
 
+  // Sincronizar el embudo Grand Slam (altas nuevas + avance de etapas por fechas).
+  // Si la función aún no existe en la BD, no rompe el cron.
+  let grandSlam: unknown = "no disponible";
+  try {
+    const gs = await supa.rpc("cron_grand_slam", { p_token: token });
+    grandSlam = gs.error ? { error: gs.error.message } : gs.data;
+  } catch (e) {
+    grandSlam = { error: String(e) };
+  }
+
   // Correo del lunes (si falla, no rompe el cron: la nota ya está creada)
   let email: string | { error: string } = "sin datos";
   try {
@@ -67,5 +77,5 @@ export async function GET(_req: Request, ctx: { params: Promise<{ token: string 
     email = { error: String(e) };
   }
 
-  return Response.json({ nota: data, email });
+  return Response.json({ nota: data, email, grandSlam });
 }
