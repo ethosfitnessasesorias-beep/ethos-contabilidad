@@ -873,9 +873,28 @@ export default function EmbudoVentas() {
         {editando && <button onClick={borrarDeal} className="rounded-xl bg-zinc-800 px-4 text-sm font-bold text-red-400">Borrar</button>}
       </div>
       {fSeguimiento && (
-        <p className="text-[10px] text-zinc-600">
-          El seguimiento avisa ese día en el Dashboard, crea una tarjeta en Actividades y sale en el correo del lunes.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] text-zinc-600">
+            El seguimiento avisa ese día en el Dashboard y por correo (a diario si toca, resumen los lunes).
+          </p>
+          <a
+            href={(() => {
+              const d = fSeguimiento.replace(/-/g, "");
+              const fin = new Date(fSeguimiento + "T00:00:00");
+              fin.setDate(fin.getDate() + 1);
+              const d2 = fin.toISOString().slice(0, 10).replace(/-/g, "");
+              const titulo = encodeURIComponent(`Llamada · ${fClienteNombre.trim() || fTitulo.trim() || "lead"}`);
+              const detalle = encodeURIComponent(fSeguimientoNota.trim() || "Seguimiento del embudo Ethos");
+              return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${titulo}&dates=${d}/${d2}&details=${detalle}`;
+            })()}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Crea el evento prellenado; en el diálogo de Google elige el calendario de Llamadas y ponle hora"
+            className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-200 hover:bg-zinc-700"
+          >
+            📅 Añadir a Google Calendar
+          </a>
+        </div>
       )}
     </div>
     </Modal>
