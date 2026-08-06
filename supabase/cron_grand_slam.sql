@@ -2,6 +2,17 @@
 -- Slam desde el cron del lunes (ademas del auto-sync al abrir el tablero).
 ALTER TABLE deals ADD COLUMN IF NOT EXISTS orden int NOT NULL DEFAULT 0;
 
+-- Clientes cuya tarjeta de Grand Slam se borro a mano: NUNCA se les recrea
+CREATE TABLE IF NOT EXISTS grand_slam_excluidos (
+  cliente_id bigint PRIMARY KEY REFERENCES clientes(id) ON DELETE CASCADE,
+  creado_en timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE grand_slam_excluidos ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS acceso_autenticados ON grand_slam_excluidos;
+CREATE POLICY acceso_autenticados ON grand_slam_excluidos FOR ALL TO authenticated USING (true) WITH CHECK (true);
+REVOKE ALL ON grand_slam_excluidos FROM anon;
+GRANT ALL ON grand_slam_excluidos TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.cron_grand_slam(p_token text)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -26,6 +37,7 @@ BEGIN
     SELECT c.id, c.entrenador, c.canal, c.fecha_inicio, COALESCE(NULLIF(c.cuota_periodicidad,''),'mensual') AS per
     FROM clientes c
     WHERE c.estado = 'cliente' AND c.fecha_baja IS NULL AND c.fecha_inicio IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM grand_slam_excluidos g WHERE g.cliente_id = c.id)
   LOOP
     IF r.canal = 'online' THEN
       IF r.per = 'anual' THEN v_m_ini := 3; v_m_fin := 6; ELSE v_m_ini := 1; v_m_fin := 3; END IF;

@@ -338,6 +338,10 @@ export default function EmbudoVentas() {
     const activos = (cliRes.data as { id: number; nombre: string; apellidos: string | null; entrenador: string; canal: string | null; fecha_inicio: string | null; cuota_periodicidad: string | null }[]) ?? [];
     const existentes = (dealsRes.data as { id: number; cliente_id: number | null; columna_id: number | null; etapa: string }[]) ?? [];
 
+    // Clientes cuya tarjeta se borró a mano: no se les vuelve a crear
+    const { data: exc } = await supabase.from("grand_slam_excluidos").select("cliente_id");
+    const excluidos = new Set((((exc as { cliente_id: number }[] | null) ?? [])).map((x) => x.cliente_id));
+
     const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
     const colDe = (pref: string) => colsEmbudo.find((c) => norm(c.titulo).startsWith(pref))?.id ?? null;
     const colNoToca = colDe("aun no toca");
@@ -354,7 +358,7 @@ export default function EmbudoVentas() {
     let movidas = 0;
 
     for (const c of activos) {
-      if (!c.fecha_inicio) continue;
+      if (!c.fecha_inicio || excluidos.has(c.id)) continue;
       const online = c.canal === "online";
       const per = c.cuota_periodicidad || "mensual";
       const [mIni, mFin] = online ? (per === "anual" ? [3, 6] : [1, 3]) : [1, 2];
@@ -633,9 +637,16 @@ export default function EmbudoVentas() {
 
   async function borrarDeal() {
     if (!editando) return;
-    if (!window.confirm(`¿Borrar la tarjeta "${editando.titulo}"?`)) return;
+    const msg = esGrandSlam && editando.cliente_id
+      ? `¿Borrar la tarjeta "${editando.titulo}"?\n\nEste cliente queda EXCLUIDO del Grand Slam: la sincronización no volverá a crearle tarjeta.`
+      : `¿Borrar la tarjeta "${editando.titulo}"?`;
+    if (!window.confirm(msg)) return;
     const { error } = await supabase.from("deals").delete().eq("id", editando.id);
     if (error) return setError(error.message);
+    // Borrado manual en el Grand Slam = exclusión permanente del auto-sync
+    if (esGrandSlam && editando.cliente_id) {
+      await supabase.from("grand_slam_excluidos").upsert({ cliente_id: editando.cliente_id });
+    }
     setEditando(null);
     cargar();
   }
