@@ -8,9 +8,12 @@ import { Shell } from "../shell";
 // Reportes estilo Excel ("Libro - I/G"): tablas categoría × mes del año
 // entero para comparar meses de un vistazo, y una gráfica compacta debajo.
 
-interface FactRow { fecha_emision: string; total: number; computa_reparto: boolean | null; categorias: { grupo: string; nombre: string } | null }
-interface GastoRow { fecha: string; total: number; categorias: { grupo: string; nombre: string; es_inversion: boolean } | null }
-interface CobroRow { fecha: string; importe: number; facturas: { computa_reparto: boolean | null } | null }
+interface FactRow { fecha_emision: string; total: number; canal: string | null; computa_reparto: boolean | null; categorias: { grupo: string; nombre: string } | null }
+interface GastoRow { fecha: string; total: number; canal: string | null; categorias: { grupo: string; nombre: string; es_inversion: boolean } | null }
+interface CobroRow { fecha: string; importe: number; facturas: { computa_reparto: boolean | null; canal: string | null } | null }
+
+type Negocio = "todos" | "online" | "presencial";
+const negocioDe = (canal: string | null | undefined) => (canal === "online" ? "online" : "presencial");
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
@@ -27,6 +30,7 @@ const suma = (a: number[]) => a.reduce((s, x) => s + x, 0);
 export default function Reportes() {
   const sesionOk = useSesion();
   const [anyo, setAnyo] = useState(new Date().getFullYear());
+  const [fNeg, setFNeg] = useState<Negocio>("todos");
   const [ing, setIng] = useState<FactRow[]>([]);
   const [gas, setGas] = useState<GastoRow[]>([]);
   const [cob, setCob] = useState<CobroRow[]>([]);
@@ -38,9 +42,9 @@ export default function Reportes() {
       const desde = `${anyo}-01-01`;
       const hasta = `${anyo + 1}-01-01`;
       const [f, g, c] = await Promise.all([
-        supabase.from("facturas").select("fecha_emision, total, computa_reparto, categorias(grupo, nombre)").gte("fecha_emision", desde).lt("fecha_emision", hasta),
-        supabase.from("gastos").select("fecha, total, categorias(grupo, nombre, es_inversion)").gte("fecha", desde).lt("fecha", hasta),
-        supabase.from("cobros").select("fecha, importe, facturas!inner(computa_reparto)").gte("fecha", desde).lt("fecha", hasta),
+        supabase.from("facturas").select("fecha_emision, total, canal, computa_reparto, categorias(grupo, nombre)").gte("fecha_emision", desde).lt("fecha_emision", hasta),
+        supabase.from("gastos").select("fecha, total, canal, categorias(grupo, nombre, es_inversion)").gte("fecha", desde).lt("fecha", hasta),
+        supabase.from("cobros").select("fecha, importe, facturas!inner(computa_reparto, canal)").gte("fecha", desde).lt("fecha", hasta),
       ]);
       if (f.error) return setError(f.error.message);
       setIng((f.data as unknown as FactRow[]) ?? []);
@@ -54,16 +58,18 @@ export default function Reportes() {
     const total = Array(12).fill(0);
     for (const c of cob) {
       if (c.facturas?.computa_reparto === false) continue;
+      if (fNeg !== "todos" && negocioDe(c.facturas?.canal) !== fNeg) continue;
       total[new Date(c.fecha + "T00:00:00").getMonth()] += Number(c.importe);
     }
     return total;
-  }, [cob]);
+  }, [cob, fNeg]);
 
   // Ingresos: subcategoría × mes (las aportaciones de capital no computan)
   const pivotIng = useMemo(() => {
     const filas = new Map<string, number[]>();
     for (const f of ing) {
       if (f.computa_reparto === false) continue;
+      if (fNeg !== "todos" && negocioDe(f.canal) !== fNeg) continue;
       const m = new Date(f.fecha_emision + "T00:00:00").getMonth();
       const k = f.categorias?.nombre ?? "Sin categoría";
       const arr = filas.get(k) ?? Array(12).fill(0);
@@ -74,13 +80,14 @@ export default function Reportes() {
     const total = Array(12).fill(0);
     for (const [, arr] of lista) arr.forEach((v, i) => (total[i] += v));
     return { lista, total };
-  }, [ing]);
+  }, [ing, fNeg]);
 
   // Gastos: grupo (categoría) → subcategorías × mes, separando inversión
   const pivotGas = useMemo(() => {
     interface Sub { nombre: string; vals: number[]; inv: boolean }
     const grupos = new Map<string, Map<string, Sub>>();
     for (const g of gas) {
+      if (fNeg !== "todos" && negocioDe(g.canal) !== fNeg) continue;
       const m = new Date(g.fecha + "T00:00:00").getMonth();
       const grupo = g.categorias?.grupo ?? "Otros";
       const nombre = g.categorias?.nombre ?? "Sin categoría";
@@ -103,7 +110,7 @@ export default function Reportes() {
     for (const g of lista) g.subs.forEach((s) => s.vals.forEach((v, i) => { total[i] += v; if (s.inv) totalInv[i] += v; }));
     const totalSinInv = total.map((v, i) => v - totalInv[i]);
     return { lista, total, totalInv, totalSinInv };
-  }, [gas]);
+  }, [gas, fNeg]);
 
   if (sesionOk === null) {
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
@@ -127,13 +134,31 @@ export default function Reportes() {
             <h1 className="text-3xl font-black tracking-tight text-white">Reportes</h1>
             <p className="mt-1 text-sm text-zinc-500">Año completo, mes a mes, para comparar de un vistazo (como el Excel).</p>
           </div>
-          <select
-            value={anyo}
-            onChange={(e) => setAnyo(Number(e.target.value))}
-            className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm text-white outline-none"
-          >
-            {[new Date().getFullYear(), new Date().getFullYear() - 1].map((y) => <option key={y} value={y}>{y}</option>)}
-          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Filtro por negocio: ONLINE y PRESENCIAL siempre diferenciados */}
+            <div className="flex overflow-hidden rounded-lg border border-zinc-800">
+              {(["todos", "presencial", "online"] as Negocio[]).map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setFNeg(n)}
+                  className={`px-3 py-1.5 text-xs font-bold capitalize ${
+                    fNeg === n
+                      ? n === "online" ? "bg-sky-700 text-white" : n === "presencial" ? "bg-amber-700 text-white" : "bg-zinc-200 text-zinc-900"
+                      : "bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  {n === "todos" ? "Todo" : n === "online" ? "Online" : "Gym"}
+                </button>
+              ))}
+            </div>
+            <select
+              value={anyo}
+              onChange={(e) => setAnyo(Number(e.target.value))}
+              className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm text-white outline-none"
+            >
+              {[new Date().getFullYear(), new Date().getFullYear() - 1].map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
         </div>
 
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}

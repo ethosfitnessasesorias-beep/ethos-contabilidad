@@ -114,7 +114,9 @@ export default function KpisPage() {
     for (const c of (cli.data as { canal: string | null; fecha_inicio: string | null; fecha_baja: string | null }[]) ?? []) {
       const neg = canalDe(c.canal);
       if (c.fecha_inicio?.startsWith(String(anyo))) altas[neg][mesDe(c.fecha_inicio)]++;
-      if (c.fecha_baja?.startsWith(String(anyo))) bajas[neg][mesDe(c.fecha_baja)]++;
+      // Solo cuenta como baja quien llegó a empezar: los leads descartados
+      // en limpiezas del CRM no son churn de clientes
+      if (c.fecha_inicio && c.fecha_baja?.startsWith(String(anyo))) bajas[neg][mesDe(c.fecha_baja)]++;
       if (c.fecha_inicio && !c.fecha_baja) activos[neg]++;
     }
     setAuto({ fact, cobrado, gasto, altas, bajas, activos });

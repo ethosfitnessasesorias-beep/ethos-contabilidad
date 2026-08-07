@@ -47,7 +47,8 @@ export default function RepartoPage() {
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [abierto, setAbierto] = useState<string | null>(null);
-  const [pagados, setPagados] = useState<Set<string>>(new Set()); // "YYYY-MM-persona" con tick de pagado
+  // "YYYY-MM-persona" -> importe realmente cobrado (null = usar el teórico)
+  const [pagados, setPagados] = useState<Map<string, number | null>>(new Map());
   const [huchaDesde, setHuchaDesde] = useState("2026-03-01"); // la hucha empezó tras la obra del local
   const [huchaAjuste, setHuchaAjuste] = useState(0); // cuadre manual con la hucha real (Ajustes → Negocio)
 
@@ -56,7 +57,7 @@ export default function RepartoPage() {
       supabase.from("v_reparto_beneficios").select("*").order("mes"),
       supabase.from("v_inversion_mensual").select("*").order("mes"),
       supabase.from("v_pagos_colaboradores").select("*").order("mes"),
-      supabase.from("reparto_pagos").select("mes, persona"),
+      supabase.from("reparto_pagos").select("mes, persona, importe"),
     ]);
     if (r.error) {
       setDisponible(false);
@@ -67,9 +68,10 @@ export default function RepartoPage() {
     setFilas((r.data as FilaReparto[]) ?? []);
     setInversiones((inv.data as FilaInversion[]) ?? []);
     setColab((c.data as FilaColab[]) ?? []);
-    const set = new Set<string>();
-    for (const x of (rp.data as { mes: string; persona: string }[]) ?? []) set.add(`${x.mes.slice(0, 7)}-${x.persona}`);
-    setPagados(set);
+    const map = new Map<string, number | null>();
+    for (const x of (rp.data as { mes: string; persona: string; importe: number | null }[]) ?? [])
+      map.set(`${x.mes.slice(0, 7)}-${x.persona}`, x.importe === null ? null : Number(x.importe));
+    setPagados(map);
     // Fecha de inicio de la hucha y ajuste manual (Ajustes → Negocio)
     const [hd, ha] = await Promise.all([
       supabase.from("config_texto").select("valor").eq("clave", "hucha_desde").maybeSingle(),
@@ -88,19 +90,33 @@ export default function RepartoPage() {
   const aHucha = (b: number) => Math.max(0, b * 0.2);
 
   // Tick de PAGADO por mes y persona. NO escribe nada en el libro:
-  // el pago real (efectivo/transferencia) se apunta a mano si se quiere.
-  async function togglePagado(mes: string, persona: string) {
+  // guarda además el importe REALMENTE cobrado (editable; por defecto el teórico).
+  async function togglePagado(mes: string, persona: string, teorico?: number) {
     const k = `${mes.slice(0, 7)}-${persona}`;
     const mesISO = `${mes.slice(0, 7)}-01`;
     if (pagados.has(k)) {
       const { error } = await supabase.from("reparto_pagos").delete().eq("mes", mesISO).eq("persona", persona);
       if (error) return setError(error.message);
-      setPagados((prev) => { const s = new Set(prev); s.delete(k); return s; });
+      setPagados((prev) => { const m = new Map(prev); m.delete(k); return m; });
     } else {
-      const { error } = await supabase.from("reparto_pagos").insert({ mes: mesISO, persona });
+      const imp = teorico !== undefined ? Math.round(teorico * 100) / 100 : null;
+      const { error } = await supabase.from("reparto_pagos").insert({ mes: mesISO, persona, importe: imp });
       if (error) return setError(error.message);
-      setPagados((prev) => new Set(prev).add(k));
+      setPagados((prev) => new Map(prev).set(k, imp));
     }
+  }
+
+  // Importe real cobrado (puede diferir del 80% teórico: se retira lo que hay)
+  async function guardarImporte(mes: string, persona: string, texto: string) {
+    const n = Number(texto.replace(",", "."));
+    if (!Number.isFinite(n) || n < 0) return;
+    const k = `${mes.slice(0, 7)}-${persona}`;
+    const imp = Math.round(n * 100) / 100;
+    const { error } = await supabase.from("reparto_pagos").update({ importe: imp }).eq("mes", `${mes.slice(0, 7)}-01`).eq("persona", persona);
+    if (error) return setError(error.message);
+    setPagados((prev) => new Map(prev).set(k, imp));
+    setOk("Importe real guardado ✓");
+    setTimeout(() => setOk(null), 2000);
   }
 
   // Hucha: empezó tras la obra del local (huchaDesde). La obra de antes es
@@ -146,7 +162,8 @@ export default function RepartoPage() {
       acc.aPagar += Number(c.a_pagar);
       acc.aEthos += Number(c.a_ethos);
       acc.base += Number(c.base_cobrada);
-      acc.pagado += pagados.has(`${c.mes.slice(0, 7)}-${c.colaborador}`) ? Number(c.a_pagar) : 0;
+      const kPag = `${c.mes.slice(0, 7)}-${c.colaborador}`;
+      acc.pagado += pagados.has(kPag) ? Number(pagados.get(kPag) ?? c.a_pagar) : 0;
       acc.meses.push(c);
       m.set(c.colaborador, acc);
     }
@@ -251,17 +268,29 @@ export default function RepartoPage() {
                         {nom <= 0 ? (
                           <span className="text-zinc-700">—</span>
                         ) : (
-                          <button
-                            onClick={() => togglePagado(mes, socio)}
-                            title={pagadoTick ? "Quitar el pagado" : "Marcar como pagado"}
-                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold tracking-wide ${
-                              pagadoTick
-                                ? "bg-emerald-600/15 text-emerald-400 ring-1 ring-emerald-800/60"
-                                : "bg-zinc-800/80 text-zinc-500 hover:text-zinc-300"
-                            }`}
-                          >
-                            {pagadoTick ? "✓ pagado" : "pendiente"}
-                          </button>
+                          <span className="inline-flex items-center gap-1.5">
+                            <button
+                              onClick={() => togglePagado(mes, socio, nom)}
+                              title={pagadoTick ? "Quitar el pagado" : "Marcar como pagado"}
+                              className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold tracking-wide ${
+                                pagadoTick
+                                  ? "bg-emerald-600/15 text-emerald-400 ring-1 ring-emerald-800/60"
+                                  : "bg-zinc-800/80 text-zinc-500 hover:text-zinc-300"
+                              }`}
+                            >
+                              {pagadoTick ? "✓ pagado" : "pendiente"}
+                            </button>
+                            {pagadoTick && (
+                              <input
+                                key={`${clave}-${pagados.get(`${mes.slice(0, 7)}-${socio}`) ?? "t"}`}
+                                defaultValue={(pagados.get(`${mes.slice(0, 7)}-${socio}`) ?? nom).toFixed(2)}
+                                onBlur={(e) => guardarImporte(mes, socio, e.target.value)}
+                                inputMode="decimal"
+                                title="Importe realmente cobrado (edítalo si difiere del 80% teórico)"
+                                className="w-20 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-0.5 text-right text-[11px] tabular-nums text-white outline-none focus:border-red-500"
+                              />
+                            )}
+                          </span>
                         )}
                       </td>
                       <td className="px-3 py-2 text-right">
@@ -339,18 +368,33 @@ export default function RepartoPage() {
                       .slice()
                       .sort((a, b) => (a.mes < b.mes ? -1 : 1))
                       .map((m) => {
-                        const hecho = pagados.has(`${m.mes.slice(0, 7)}-${c.codigo}`);
+                        const kCh = `${m.mes.slice(0, 7)}-${c.codigo}`;
+                        const hecho = pagados.has(kCh);
+                        const real = hecho ? (pagados.get(kCh) ?? Number(m.a_pagar)) : Number(m.a_pagar);
                         return (
-                          <button
-                            key={m.mes}
-                            onClick={() => togglePagado(m.mes, c.codigo)}
-                            title={hecho ? "Quitar el pagado" : "Marcar como pagado"}
-                            className={`rounded-md px-2 py-1 text-[11px] font-bold ${
-                              hecho ? "bg-emerald-600/20 text-emerald-400 ring-1 ring-emerald-800" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
-                            }`}
-                          >
-                            <span className="capitalize">{MESCORTO(m.mes)}</span> {eur(Number(m.a_pagar))}{hecho ? " ✓" : ""}
-                          </button>
+                          <span key={m.mes} className="inline-flex overflow-hidden rounded-md">
+                            <button
+                              onClick={() => togglePagado(m.mes, c.codigo, Number(m.a_pagar))}
+                              title={hecho ? "Quitar el pagado" : "Marcar como pagado"}
+                              className={`px-2 py-1 text-[11px] font-bold ${
+                                hecho ? "bg-emerald-600/20 text-emerald-400 ring-1 ring-inset ring-emerald-800" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
+                              }`}
+                            >
+                              <span className="capitalize">{MESCORTO(m.mes)}</span> {eur(real)}{hecho ? " ✓" : ""}
+                            </button>
+                            {hecho && (
+                              <button
+                                onClick={() => {
+                                  const v = window.prompt(`Importe realmente pagado a ${c.nombre} (${MESCORTO(m.mes)}):`, real.toFixed(2));
+                                  if (v !== null && v.trim() !== "") guardarImporte(m.mes, c.codigo, v);
+                                }}
+                                title="Editar el importe real cobrado"
+                                className="bg-emerald-950 px-1.5 text-[10px] text-emerald-500 hover:text-white"
+                              >
+                                ✎
+                              </button>
+                            )}
+                          </span>
                         );
                       })}
                   </div>
