@@ -3,6 +3,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { eur, eurEntero } from "@/lib/formato";
+import Modal from "@/components/Modal";
+
+// ---------- Auditoría del mes: cada línea que entra en el reparto ----------
+interface AudCobro {
+  fecha: string;
+  importe: number;
+  facturas: {
+    atribucion: string; computa_reparto: boolean | null; base: number; total: number;
+    concepto: string; clientes: { nombre: string } | null;
+  } | null;
+}
+interface AudGasto {
+  fecha: string; concepto: string; total: number; iva_soportado: number; irpf_soportado: number;
+  deducible: boolean | null; imputado_a: string; categorias: { nombre: string; es_inversion: boolean } | null;
+}
+interface AudFactura {
+  fecha_emision: string; concepto: string; iva_importe: number; atribucion: string;
+  clientes: { nombre: string } | null;
+}
 
 interface FilaReparto {
   mes: string;
@@ -51,6 +70,14 @@ export default function RepartoPage() {
   const [pagados, setPagados] = useState<Map<string, number | null>>(new Map());
   const [huchaDesde, setHuchaDesde] = useState("2026-03-01"); // la hucha empezó tras la obra del local
   const [huchaAjuste, setHuchaAjuste] = useState(0); // cuadre manual con la hucha real (Ajustes → Negocio)
+
+  // Auditoría del mes: todas las líneas que componen el reparto
+  const [audMes, setAudMes] = useState<string | null>(null);
+  const [audCobros, setAudCobros] = useState<AudCobro[]>([]);
+  const [audGastos, setAudGastos] = useState<AudGasto[]>([]);
+  const [audFacturas, setAudFacturas] = useState<AudFactura[]>([]);
+  const [audCargando, setAudCargando] = useState(false);
+  const [verGuia, setVerGuia] = useState(false);
 
   const cargar = useCallback(async () => {
     const [r, inv, c, rp] = await Promise.all([
@@ -119,6 +146,82 @@ export default function RepartoPage() {
     setTimeout(() => setOk(null), 2000);
   }
 
+  // Carga todas las líneas del mes para auditar el reparto (misma lógica que la vista)
+  async function abrirAuditoria(mes: string) {
+    setAudMes(mes);
+    setAudCargando(true);
+    const desde = mes.slice(0, 7) + "-01";
+    const d = new Date(desde + "T00:00:00");
+    const hasta = new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString().slice(0, 10);
+    const [co, ga, fa] = await Promise.all([
+      supabase
+        .from("cobros")
+        .select("fecha, importe, facturas!inner(atribucion, computa_reparto, base, total, concepto, clientes(nombre))")
+        .gte("fecha", desde).lt("fecha", hasta)
+        .eq("facturas.computa_reparto", true),
+      supabase
+        .from("gastos")
+        .select("fecha, concepto, total, iva_soportado, irpf_soportado, deducible, imputado_a, categorias(nombre, es_inversion)")
+        .gte("fecha", desde).lt("fecha", hasta),
+      supabase
+        .from("facturas")
+        .select("fecha_emision, concepto, iva_importe, atribucion, clientes(nombre)")
+        .gte("fecha_emision", desde).lt("fecha_emision", hasta)
+        .eq("computa_impuestos", true),
+    ]);
+    setAudCobros((co.data as unknown as AudCobro[]) ?? []);
+    setAudGastos((ga.data as unknown as AudGasto[]) ?? []);
+    setAudFacturas((fa.data as unknown as AudFactura[]) ?? []);
+    setAudCargando(false);
+  }
+
+  // Réplica exacta de la fórmula de la vista, calculada aquí línea a línea
+  const auditoria = useMemo(() => {
+    if (!audMes) return null;
+    const esNomina = (g: AudGasto) => /mina/i.test(g.categorias?.nombre ?? "");
+    // cobros: cuánto computa cada línea y a qué cubo va
+    const lineasCobro = audCobros.map((c) => {
+      const f = c.facturas!;
+      const at = f.atribucion;
+      let computa = Number(c.importe);
+      let cubo: "luis" | "david" | "centro" = "centro";
+      if (at === "luis" || at === "david") cubo = at;
+      else if (at === "alex_esteban" || at === "alex_guerrero") {
+        computa = Number(f.total) ? 0.3 * Number(c.importe) * Number(f.base) / Number(f.total) : 0;
+      }
+      return { ...c, computa, cubo, at };
+    });
+    const cobrado = { luis: 0, david: 0, centro: 0 };
+    for (const l of lineasCobro) cobrado[l.cubo] += l.computa;
+
+    const lineasGasto = audGastos.map((g) => {
+      const excluido = g.categorias?.es_inversion ? "inversión" : esNomina(g) ? "nómina" : null;
+      const cubo = g.imputado_a === "luis" || g.imputado_a === "david" ? g.imputado_a : "centro";
+      return { ...g, excluido, cubo: cubo as "luis" | "david" | "centro" };
+    });
+    const gasto = { luis: 0, david: 0, centro: 0 };
+    const ivaSop = { luis: 0, david: 0, centro: 0 };
+    const irpf = { luis: 0, david: 0, centro: 0 };
+    for (const g of lineasGasto) {
+      if (!g.excluido) gasto[g.cubo] += Number(g.total);
+      if (g.deducible) ivaSop[g.cubo] += Number(g.iva_soportado);
+      irpf[g.cubo] += Number(g.irpf_soportado);
+    }
+    const ivaRep = { luis: 0, david: 0, centro: 0 };
+    for (const f of audFacturas) {
+      const cubo = f.atribucion === "luis" || f.atribucion === "david" ? f.atribucion : f.atribucion === "ethos" ? "centro" : null;
+      if (cubo) ivaRep[cubo] += Number(f.iva_importe);
+    }
+    const ivaNeto = {
+      luis: Math.max(0, ivaRep.luis - ivaSop.luis),
+      david: Math.max(0, ivaRep.david - ivaSop.david),
+      centro: Math.max(0, ivaRep.centro - ivaSop.centro),
+    };
+    const beneficio = (s: "luis" | "david") =>
+      cobrado[s] + cobrado.centro / 2 - (ivaNeto[s] + irpf[s] + gasto[s]) - (ivaNeto.centro + irpf.centro + gasto.centro) / 2;
+    return { lineasCobro, lineasGasto, cobrado, gasto, ivaRep, ivaSop, ivaNeto, irpf, beneficio };
+  }, [audMes, audCobros, audGastos, audFacturas]);
+
   // Hucha: empezó tras la obra del local (huchaDesde). La obra de antes es
   // inversión del local (se ve en el Dashboard), no sale de la hucha.
   const aporte20Total = filas
@@ -186,6 +289,10 @@ export default function RepartoPage() {
           <h2 className="text-xl font-black text-white">Reparto de beneficios</h2>
           <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
             Nómina = 80% del beneficio · 20% a la hucha. Sobre lo cobrado, sin contar nóminas ni inversión.
+            {" "}
+            <button onClick={() => setVerGuia(!verGuia)} className="font-bold text-sky-400 hover:text-sky-300">
+              {verGuia ? "cerrar guía" : "¿cómo se cierra el mes? →"}
+            </button>
           </p>
         </div>
         <select
@@ -198,6 +305,22 @@ export default function RepartoPage() {
           ))}
         </select>
       </div>
+
+      {verGuia && (
+        <div className="mb-4 rounded-xl border border-sky-900 bg-sky-950/20 p-4 text-xs leading-relaxed text-zinc-300">
+          <p className="mb-2 text-sm font-black text-white">Flujo mensual del reparto y las nóminas</p>
+          <ol className="list-decimal space-y-1.5 pl-4">
+            <li><b>Durante el mes</b>: cada ingreso se apunta con su <b>«De:»</b> correcto (Luis / David / Ethos — lo del centro va a medias) y cada gasto con su <b>imputado</b>. Esa etiqueta es la que decide de qué nómina sale cada euro.</li>
+            <li><b>Día 1</b>: aprobar la remesa en Ventas contra el recibo del banco y apuntar los fijos <b>cuando estén pagados</b> (el botón de Cash flow copia los del mes anterior: no lo pulses antes de tiempo).</li>
+            <li><b>Cierre (día 1-5)</b>: pulsa <b>🔍 Auditar mes</b> aquí. Verás TODAS las líneas: cada cobro y a qué cubo va, cada gasto y si resta o no (inversión y nóminas no restan), y el IVA del mes. Si algo está mal, se corrige <b>en el Libro o en Ventas</b> (nunca aquí) y el reparto se recalcula solo.</li>
+            <li><b>Cuando la auditoría te cuadre</b>: retiráis las nóminas y marcáis <b>✓ pagado</b> escribiendo el <b>importe real</b> retirado (puede diferir del 80% teórico: se guarda el tuyo).</li>
+            <li><b>Hucha</b>: se alimenta sola con el 20%. El «Ajuste manual» de Ajustes es solo para cuadrarla con la realidad física (sobres/cuenta), no para corregir meses.</li>
+          </ol>
+          <p className="mt-2 text-[11px] text-zinc-500">
+            Regla de oro: el Reparto no se edita — se audita. Si un número no te cuadra, la auditoría te dice exactamente qué línea lo causa.
+          </p>
+        </div>
+      )}
 
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
       {ok && <p className="mb-3 rounded-xl bg-emerald-950 px-4 py-2 text-sm text-emerald-300">{ok}</p>}
@@ -237,7 +360,16 @@ export default function RepartoPage() {
                 const cabecera = (
                   <tr key={`${mes}-h`} className="border-y border-zinc-800/70 bg-gradient-to-r from-zinc-900 to-zinc-900/30">
                     <td colSpan={5} className="px-4 py-1.5 text-[10px] font-black uppercase tracking-[0.15em] text-zinc-500">
-                      <span className="capitalize">{MESLARGO(mes)}</span>
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="capitalize">{MESLARGO(mes)}</span>
+                        <button
+                          onClick={() => abrirAuditoria(mes)}
+                          title="Ver TODAS las líneas (cobros, gastos, IVA) que componen el reparto de este mes"
+                          className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-[10px] font-bold normal-case tracking-normal text-zinc-300 hover:bg-zinc-700 hover:text-white"
+                        >
+                          🔍 Auditar mes
+                        </button>
+                      </span>
                     </td>
                   </tr>
                 );
@@ -442,6 +574,137 @@ export default function RepartoPage() {
         Estimación sobre lo cobrado. El IVA solo resta si hay que pagarlo (si sale a compensar, no
         resta). Cuadra los definitivos con el gestor.
       </div>
+
+      {/* ============ AUDITORÍA DEL MES: cada línea del reparto ============ */}
+      <Modal
+        abierto={!!audMes}
+        onCerrar={() => setAudMes(null)}
+        titulo={audMes ? `Auditoría del reparto · ${MESLARGO(audMes)}` : ""}
+        ancho="max-w-4xl"
+      >
+        {audCargando || !auditoria ? (
+          <p className="py-8 text-center text-sm text-zinc-500">Cargando líneas…</p>
+        ) : (
+          <div className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto pr-1">
+            {/* Resumen: la cuenta completa, de las líneas al beneficio */}
+            <div className="overflow-x-auto rounded-xl border border-zinc-800">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
+                    <th className="px-3 py-1.5 text-left">La cuenta</th>
+                    <th className="px-3 py-1.5 text-right">Luis</th>
+                    <th className="px-3 py-1.5 text-right">David</th>
+                    <th className="px-3 py-1.5 text-right">Centro (÷2)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {([
+                    ["+ Cobrado", auditoria.cobrado.luis, auditoria.cobrado.david, auditoria.cobrado.centro, "text-emerald-400"],
+                    ["− IVA neto a reservar", auditoria.ivaNeto.luis, auditoria.ivaNeto.david, auditoria.ivaNeto.centro, "text-zinc-400"],
+                    ["− IRPF soportado", auditoria.irpf.luis, auditoria.irpf.david, auditoria.irpf.centro, "text-zinc-400"],
+                    ["− Gastos (sin inversión ni nóminas)", auditoria.gasto.luis, auditoria.gasto.david, auditoria.gasto.centro, "text-red-400"],
+                  ] as [string, number, number, number, string][]).map(([n, l, d, c, cls]) => (
+                    <tr key={n} className="border-b border-zinc-800/50">
+                      <td className="px-3 py-1.5 font-semibold text-zinc-300">{n}</td>
+                      <td className={`px-3 py-1.5 text-right tabular-nums ${cls}`}>{eur(l)}</td>
+                      <td className={`px-3 py-1.5 text-right tabular-nums ${cls}`}>{eur(d)}</td>
+                      <td className={`px-3 py-1.5 text-right tabular-nums ${cls}`}>{eur(c)}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-zinc-900/70 font-black">
+                    <td className="px-3 py-2 text-white">= Beneficio (propio + centro÷2)</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-white">{eur(auditoria.beneficio("luis"))}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-white">{eur(auditoria.beneficio("david"))}</td>
+                    <td className="px-3 py-2 text-right text-[10px] font-normal text-zinc-600">la mitad a cada uno</td>
+                  </tr>
+                  <tr className="bg-emerald-950/30 font-bold">
+                    <td className="px-3 py-1.5 text-emerald-400">→ Nómina (80%) · Hucha (20%)</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-emerald-400">
+                      {eur(Math.max(0, auditoria.beneficio("luis")) * 0.8)} · {eur(Math.max(0, auditoria.beneficio("luis")) * 0.2)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums text-emerald-400">
+                      {eur(Math.max(0, auditoria.beneficio("david")) * 0.8)} · {eur(Math.max(0, auditoria.beneficio("david")) * 0.2)}
+                    </td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Cobros línea a línea */}
+            <div>
+              <p className="mb-1 text-[11px] font-black uppercase tracking-wider text-emerald-400">
+                Cobros del mes ({auditoria.lineasCobro.length}) — por fecha de cobro
+              </p>
+              <div className="max-h-64 overflow-y-auto rounded-xl border border-zinc-800">
+                {auditoria.lineasCobro
+                  .slice()
+                  .sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+                  .map((l, i) => (
+                    <div key={i} className="flex items-center gap-2 border-b border-zinc-800/50 px-3 py-1 text-[11px] last:border-0">
+                      <span className="w-14 shrink-0 text-zinc-600">{l.fecha.slice(5)}</span>
+                      <span className={`w-14 shrink-0 rounded px-1 text-center text-[9px] font-bold ${
+                        l.cubo === "luis" ? "bg-emerald-950 text-emerald-400" : l.cubo === "david" ? "bg-sky-950 text-sky-400" : "bg-zinc-800 text-zinc-400"
+                      }`}>{l.cubo === "centro" ? (l.at.startsWith("alex") ? "alex→30%" : "centro") : l.cubo}</span>
+                      <span className="min-w-0 flex-1 truncate text-zinc-300">
+                        {l.facturas?.clientes?.nombre ? `${l.facturas.clientes.nombre} · ` : ""}{l.facturas?.concepto}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-zinc-500">{eur(Number(l.importe))}</span>
+                      <span className="w-20 shrink-0 text-right font-bold tabular-nums text-zinc-200">{eur(l.computa)}</span>
+                    </div>
+                  ))}
+              </div>
+              <p className="mt-1 text-[10px] text-zinc-600">
+                Última columna = lo que computa. En los Alex solo entra el 30% de su base (el resto es suyo).
+              </p>
+            </div>
+
+            {/* Gastos línea a línea */}
+            <div>
+              <p className="mb-1 text-[11px] font-black uppercase tracking-wider text-red-400">
+                Gastos del mes ({auditoria.lineasGasto.length})
+              </p>
+              <div className="max-h-64 overflow-y-auto rounded-xl border border-zinc-800">
+                {auditoria.lineasGasto
+                  .slice()
+                  .sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+                  .map((g, i) => (
+                    <div key={i} className={`flex items-center gap-2 border-b border-zinc-800/50 px-3 py-1 text-[11px] last:border-0 ${g.excluido ? "opacity-50" : ""}`}>
+                      <span className="w-14 shrink-0 text-zinc-600">{g.fecha.slice(5)}</span>
+                      <span className={`w-14 shrink-0 rounded px-1 text-center text-[9px] font-bold ${
+                        g.cubo === "luis" ? "bg-emerald-950 text-emerald-400" : g.cubo === "david" ? "bg-sky-950 text-sky-400" : "bg-zinc-800 text-zinc-400"
+                      }`}>{g.cubo}</span>
+                      <span className="min-w-0 flex-1 truncate text-zinc-300">{g.concepto} <span className="text-zinc-600">· {g.categorias?.nombre}</span></span>
+                      {g.excluido && (
+                        <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-bold text-zinc-500" title={g.excluido === "inversión" ? "La inversión sale de la hucha, no del beneficio del mes" : "Las nóminas son el propio reparto: no restan como gasto"}>
+                          {g.excluido} · no resta
+                        </span>
+                      )}
+                      <span className={`w-20 shrink-0 text-right font-bold tabular-nums ${g.excluido ? "text-zinc-600 line-through" : "text-zinc-200"}`}>{eur(Number(g.total))}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            {/* IVA del mes */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-[11px] text-zinc-400">
+              <p className="mb-1 font-black uppercase tracking-wider text-zinc-500">IVA del mes</p>
+              <p>
+                Repercutido (facturas emitidas): Luis {eur(auditoria.ivaRep.luis)} · David {eur(auditoria.ivaRep.david)} · Centro {eur(auditoria.ivaRep.centro)}
+                <br />
+                − Soportado (gastos deducibles): Luis {eur(auditoria.ivaSop.luis)} · David {eur(auditoria.ivaSop.david)} · Centro {eur(auditoria.ivaSop.centro)}
+                <br />
+                = <b className="text-zinc-200">A reservar (nunca negativo): Luis {eur(auditoria.ivaNeto.luis)} · David {eur(auditoria.ivaNeto.david)} · Centro {eur(auditoria.ivaNeto.centro)}</b>
+              </p>
+            </div>
+
+            <p className="text-[10px] leading-snug text-zinc-600">
+              Estos números salen de las mismas líneas que ves en el Libro y en Ventas: si algo está mal, corrígelo allí
+              y esta auditoría (y el reparto) cambian solos. Así la app se puede verificar igual que hacías con el Excel.
+            </p>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
