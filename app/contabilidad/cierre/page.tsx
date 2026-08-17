@@ -14,24 +14,28 @@ const NOMBRE: Record<string, string> = { luis: "Luis", david: "David" };
 const mesActualISO = () => new Date().toISOString().slice(0, 7);
 
 // ---------- Checklist del cierre (los ticks se guardan por mes) ----------
-const TAREAS_SEMANA = [
+const TAREAS_SEMANA: { clave: string; texto: string; href?: string }[] = [
   { clave: "sobres", texto: "Contar sobres y comparar con el Efectivo del Dashboard" },
-  { clave: "apuntar", texto: "Apuntar la semana: grupales efectivo/TPV y gastos sueltos" },
+  { clave: "apuntar", texto: "Apuntar gastos e ingresos de la semana (mirar: grupo de efectivo, Caixabank, facturas del carpesano, mail de tickets y BemadBox)" },
+  { clave: "pagosycobros", texto: "Actualizar Pagos y cobros: grupales, fisio, merchan, aguas, HSN, multas y los Alex", href: "/tesoreria/pagos-cobros" },
   { clave: "impagos", texto: "Revisar impagos (nota del lunes) y reclamar por WhatsApp" },
 ];
 const TAREAS_MES: { clave: string; texto: string; href?: string }[] = [
   { clave: "remesa", texto: "Aprobar la remesa de cuotas contra el banco", href: "/ventas" },
-  { clave: "fijos", texto: "Apuntar los gastos fijos de golpe", href: "/tesoreria/cashflow" },
+  { clave: "fijos", texto: "Apuntar los gastos fijos de golpe (solo cuando estén pagados)", href: "/tesoreria/cashflow" },
   { clave: "comisiones", texto: "Apuntar comisiones de fin de mes (Caixa, Stripe, BemadBox)" },
+  { clave: "cuadrar_clientes", texto: "Cuadrar Pagos y cobros con Google Calendar y los avisos de pago de BemadBox", href: "/tesoreria/pagos-cobros" },
+  { clave: "cuadre_total", texto: "Revisar que todo cuadra: P&G, Cash flow y Reparto (🔍 auditar el mes)", href: "/contabilidad/reparto" },
   { clave: "salud", texto: "Leer la nota «Cierre del mes» y la Salud financiera", href: "/tesoreria/cuentas" },
-  { clave: "nominas", texto: "Transferir nóminas y marcar PAGADO en Reparto", href: "/contabilidad/reparto" },
-  { clave: "kpis", texto: "Rellenar KPIs de tráfico (seguidores, anuncios…)", href: "/kpis" },
-  { clave: "escanear", texto: "Escanear facturas del mes y ordenar carpesano" },
+  { clave: "nominas", texto: "Transferir nóminas y marcar PAGADO con el importe real en Reparto", href: "/contabilidad/reparto" },
+  { clave: "kpis", texto: "Evaluar el mes y rellenar KPIs (tráfico, funnel, objetivos)", href: "/kpis" },
+  { clave: "escanear", texto: "Escanear facturas del mes, subirlas a Compras y ordenar carpesano", href: "/compras" },
 ];
 const TAREAS_TRIMESTRE: { clave: string; texto: string; href?: string }[] = [
   { clave: "xavi", texto: "Impuestos: revisar el trimestre y enviárselo a Xavi", href: "/contabilidad/impuestos" },
   { clave: "pagado_real", texto: "Apuntar el «pagado real» cuando liquide Hacienda", href: "/contabilidad/impuestos" },
   { clave: "bemadbox", texto: "Cuadrar facturas BEMADBOX / smetik" },
+  { clave: "facturas_propias", texto: "Cuadrar nuestras facturas emitidas (serie F y R) con la contabilidad", href: "/ventas" },
 ];
 // Sábados que caen dentro de un mes (para las columnas semanales)
 function sabadosDelMes(mesISO: string): number {
@@ -199,6 +203,8 @@ export default function CierrePage() {
         const clavesSemana = TAREAS_SEMANA.flatMap((t) => Array.from({ length: nSabados }, (_, w) => `sem:${t.clave}:${w + 1}`));
         const clavesMes = TAREAS_MES.map((t) => `mes:${t.clave}`);
         const esFinTrimestre = [3, 6, 9, 12].includes(Number(mes.split("-")[1]));
+        // Las trimestrales cuentan para el progreso solo cuando toca cerrarlas,
+        // pero se muestran siempre para tenerlas presentes
         const clavesTri = esFinTrimestre ? TAREAS_TRIMESTRE.map((t) => `tri:${t.clave}`) : [];
         const todas = [...clavesSemana, ...clavesMes, ...clavesTri];
         const hechasN = todas.filter((k) => hechas.has(k)).length;
@@ -263,9 +269,12 @@ export default function CierrePage() {
                 <p className="border-y border-zinc-800 bg-zinc-900 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-zinc-500">
                   Trimestre {esFinTrimestre ? <span className="ml-1 rounded-full bg-amber-950 px-2 py-0.5 text-amber-400">toca este mes</span> : <span className="normal-case text-zinc-600">(solo mar · jun · sep · dic)</span>}
                 </p>
-                {esFinTrimestre
-                  ? TAREAS_TRIMESTRE.map((t) => check(`tri:${t.clave}`, t.texto, t.href))
-                  : <p className="px-4 py-2 text-[11px] text-zinc-600">Este mes no cierra trimestre: nada que hacer aquí.</p>}
+                {TAREAS_TRIMESTRE.map((t) => check(`tri:${t.clave}`, t.texto, t.href))}
+                {!esFinTrimestre && (
+                  <p className="px-4 py-1.5 text-[10px] text-zinc-600">
+                    Este mes no cierra trimestre: quedan a la vista para tenerlas presentes (no cuentan en el progreso).
+                  </p>
+                )}
               </div>
             </div>
           </div>
