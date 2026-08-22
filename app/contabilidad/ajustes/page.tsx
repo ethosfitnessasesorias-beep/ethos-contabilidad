@@ -358,6 +358,53 @@ export default function Ajustes() {
             </div>
           </div>
 
+          {/* Copia de seguridad */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+            <p className="mb-1 text-xs font-bold uppercase tracking-wider text-zinc-500">Copia de seguridad</p>
+            <p className="mb-3 text-xs text-zinc-600">
+              El día 1 de cada mes llega sola por email (📦 con los CSV y las instrucciones de recuperación dentro).
+              Este botón descarga una copia completa ahora mismo.
+            </p>
+            <button
+              onClick={async (e) => {
+                const btn = e.currentTarget;
+                btn.disabled = true;
+                btn.textContent = "Preparando…";
+                try {
+                  const TABLAS = ["clientes", "facturas", "factura_lineas", "cobros", "gastos", "traspasos", "cuentas", "categorias", "cuotas", "remesas", "remesa_lineas", "deals", "embudos", "pipeline_columnas", "reparto_pagos", "pagos_cobros_filas", "personas", "arqueos", "config", "config_texto"];
+                  const { default: JSZip } = await import("jszip");
+                  const zip = new JSZip();
+                  for (const t of TABLAS) {
+                    const { data } = await supabase.from(t).select("*").limit(10000);
+                    const filas = (data as Record<string, unknown>[]) ?? [];
+                    if (!filas.length) continue;
+                    const claves: string[] = [];
+                    for (const f of filas) for (const k of Object.keys(f)) if (!claves.includes(k)) claves.push(k);
+                    const esc = (v: unknown) => {
+                      if (v === null || v === undefined) return "";
+                      const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+                      return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+                    };
+                    zip.file(`${t}.csv`, "﻿" + [claves.join(","), ...filas.map((f) => claves.map((k) => esc(f[k])).join(","))].join("\r\n"));
+                  }
+                  const blob = await zip.generateAsync({ type: "blob" });
+                  const a = document.createElement("a");
+                  a.href = URL.createObjectURL(blob);
+                  a.download = `backup_ethos_${new Date().toISOString().slice(0, 10)}.zip`;
+                  a.click();
+                  URL.revokeObjectURL(a.href);
+                  btn.textContent = "Descargado ✓";
+                } catch {
+                  btn.textContent = "Error, reintenta";
+                }
+                setTimeout(() => { btn.disabled = false; btn.textContent = "⬇ Descargar copia completa (ZIP)"; }, 2500);
+              }}
+              className="rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-bold text-zinc-200 hover:bg-zinc-700 disabled:opacity-60"
+            >
+              ⬇ Descargar copia completa (ZIP)
+            </button>
+          </div>
+
           {/* Objetivos de facturación */}
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
             <p className="mb-1 text-xs font-bold uppercase tracking-wider text-zinc-500">Objetivos de facturación mensual</p>

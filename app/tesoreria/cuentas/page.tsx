@@ -82,6 +82,59 @@ export default function FinanzasPage() {
   const [mesReparto, setMesReparto] = useState(new Date().toISOString().slice(0, 7));
   const [alarma, setAlarma] = useState(3);
 
+  // Arqueo de caja: recuento físico vs saldo de la app, con historial
+  const [arqueos, setArqueos] = useState<{ id: number; fecha: string; contado: number; saldo_app: number; descuadre: number; accion: string | null }[]>([]);
+  const [contado, setContado] = useState("");
+  const [arqueando, setArqueando] = useState(false);
+  const [avisoArqueo, setAvisoArqueo] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.from("arqueos").select("id, fecha, contado, saldo_app, descuadre, accion").order("id", { ascending: false }).limit(8)
+      .then(({ data }) => setArqueos((data as typeof arqueos) ?? []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Registra el arqueo; si ajustar=true, apunta el descuadre en el Libro para
+  // que la caja de la app quede igual que el dinero físico contado.
+  async function registrarArqueo(ajustar: boolean) {
+    const contadoNum = Number(contado.replace(",", "."));
+    if (!Number.isFinite(contadoNum) || contadoNum < 0) return setAvisoArqueo("Pon un importe válido.");
+    const saldoCaja = Number(saldos.find((s) => s.codigo === "caja")?.saldo ?? 0);
+    const desc = Math.round((contadoNum - saldoCaja) * 100) / 100;
+    const hoy = new Date().toISOString().slice(0, 10);
+    setArqueando(true);
+    let accion = Math.abs(desc) <= 0.005 ? "cuadra ✓" : "registrado sin ajustar";
+    if (ajustar && Math.abs(desc) > 0.005) {
+      const { data: cuentaCaja } = await supabase.from("cuentas").select("id").eq("codigo", "caja").single();
+      const cajaId = (cuentaCaja as { id: number } | null)?.id;
+      if (desc > 0) {
+        const { data: cat } = await supabase.from("categorias").select("id").eq("tipo", "ingreso").ilike("nombre", "otros").limit(1).maybeSingle();
+        const { data: f, error } = await supabase.from("facturas").insert({
+          categoria_id: (cat as { id: number } | null)?.id, atribucion: "ethos", fecha_emision: hoy,
+          concepto: `Arqueo ${hoy}: sobrante de caja`, base: Math.round((desc / 1.21) * 1e6) / 1e6,
+          iva_pct: 0.21, irpf_pct: 0, canal: "presencial", computa_reparto: true, computa_impuestos: true, es_recurrente: false,
+          notas: "Dinero físico sin apuntar detectado en el arqueo",
+        }).select("id").single();
+        if (error || !f) { setArqueando(false); return setAvisoArqueo(error?.message ?? "Error"); }
+        await supabase.from("cobros").insert({ factura_id: f.id, fecha: hoy, importe: desc, cuenta_id: cajaId, metodo: "efectivo", afecta_caja: true });
+        accion = `sobrante de ${desc.toFixed(2)} € apuntado como ingreso`;
+      } else {
+        const { data: cat } = await supabase.from("categorias").select("id").eq("tipo", "gasto").ilike("nombre", "otros").limit(1).maybeSingle();
+        const { error } = await supabase.from("gastos").insert({
+          fecha: hoy, concepto: `Arqueo ${hoy}: falta de caja`, base: -desc, iva_pct: 0, irpf_pct: 0,
+          categoria_id: (cat as { id: number } | null)?.id, cuenta_id: cajaId, canal: "presencial", imputado_a: "ethos",
+          deducible: false, tiene_factura: false, notas: "Descuadre negativo detectado en el arqueo",
+        });
+        if (error) { setArqueando(false); return setAvisoArqueo(error.message); }
+        accion = `falta de ${Math.abs(desc).toFixed(2)} € apuntada como gasto`;
+      }
+    }
+    await supabase.from("arqueos").insert({ fecha: hoy, contado: Math.round(contadoNum * 100) / 100, saldo_app: saldoCaja, accion });
+    setArqueando(false);
+    setAvisoArqueo("Arqueo registrado ✓ recargando…");
+    setTimeout(() => window.location.reload(), 900);
+  }
+
   useEffect(() => {
     (async () => {
       const [k, s, m, cfg] = await Promise.all([
@@ -244,6 +297,77 @@ export default function FinanzasPage() {
         />
         <Tarjeta titulo="Reservado" valor={eur(reservado)} detalle="impuestos + hucha (no tocar)" />
         <Tarjeta titulo="% efectivo" valor={kpis.pct_efectivo === null ? "—" : `${kpis.pct_efectivo}%`} detalle="tiende a 0" />
+      </div>
+
+      {/* Arqueo de caja: cuenta lo físico y ajusta en un clic */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-black text-white">Arqueo de caja</h3>
+            <p className="text-[11px] text-zinc-500">
+              La app dice que en efectivo hay <b className="text-zinc-200">{eur(Number(saldos.find((s) => s.codigo === "caja")?.saldo ?? 0))}</b>. Cuenta los sobres y teclea lo que hay de verdad.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              inputMode="decimal"
+              placeholder="Contado €"
+              value={contado}
+              onChange={(e) => setContado(e.target.value)}
+              className="w-28 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-right text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500"
+            />
+            {(() => {
+              const n = Number(contado.replace(",", "."));
+              if (!contado.trim() || !Number.isFinite(n)) return null;
+              const saldoCaja = Number(saldos.find((s) => s.codigo === "caja")?.saldo ?? 0);
+              const d = Math.round((n - saldoCaja) * 100) / 100;
+              if (Math.abs(d) <= 0.005)
+                return (
+                  <button onClick={() => registrarArqueo(false)} disabled={arqueando} className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                    ✓ Cuadra · registrar
+                  </button>
+                );
+              return (
+                <>
+                  <span className={`text-sm font-black tabular-nums ${d > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {d > 0 ? "+" : ""}{d.toFixed(2)} €
+                  </span>
+                  <button
+                    onClick={() => registrarArqueo(true)}
+                    disabled={arqueando}
+                    title={d > 0 ? "Apunta el sobrante como ingreso sin identificar y deja la caja cuadrada" : "Apunta la falta como gasto de descuadre y deja la caja cuadrada"}
+                    className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                  >
+                    {arqueando ? "…" : "Registrar y ajustar"}
+                  </button>
+                  <button onClick={() => registrarArqueo(false)} disabled={arqueando} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-300 disabled:opacity-50">
+                    Sin ajustar
+                  </button>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+        {avisoArqueo && <p className="mt-2 text-xs font-bold text-emerald-400">{avisoArqueo}</p>}
+        {arqueos.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {arqueos.map((a) => (
+              <span
+                key={a.id}
+                title={a.accion ?? ""}
+                className={`rounded-md px-2 py-1 text-[10px] font-bold ${
+                  Math.abs(Number(a.descuadre)) <= 0.005 ? "bg-emerald-950 text-emerald-400" : "bg-amber-950 text-amber-400"
+                }`}
+              >
+                {new Date(a.fecha + "T00:00:00").toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit" })} · {Number(a.descuadre) > 0 ? "+" : ""}{Number(a.descuadre).toFixed(2)} €
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="mt-2 text-[10px] leading-snug text-zinc-600">
+          Si el descuadre se repite con el mismo signo semana tras semana, algo no se está apuntando (aguas, clases sueltas…).
+          El ajuste queda en el Libro como «Arqueo: sobrante/falta de caja», con fecha, para que nada se acumule meses.
+        </p>
       </div>
 
       {/* Salud financiera + reinversión */}
