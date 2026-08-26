@@ -52,46 +52,9 @@ interface Cli {
   cuota_desde: string | null;
   cuota_periodicidad: string;
 }
-interface CuotaCat {
-  id: number;
-  nombre: string;
-  activa: boolean;
-  es_bono?: boolean;
-  negocio?: string | null;
-  precio_mensual: number | null;
-  precio_trimestral: number | null;
-  precio_semestral: number | null;
-  precio_anual: number | null;
-}
-const MODALIDADES = [
-  { valor: "mensual", etiqueta: "Mensual", campo: "precio_mensual" },
-  { valor: "trimestral", etiqueta: "Trimestral", campo: "precio_trimestral" },
-  { valor: "semestral", etiqueta: "Semestral", campo: "precio_semestral" },
-  { valor: "anual", etiqueta: "Anual", campo: "precio_anual" },
-] as const;
-const precioDe = (q: CuotaCat | undefined, modalidad: string): number | null => {
-  if (!q) return null;
-  const m = MODALIDADES.find((x) => x.valor === modalidad) ?? MODALIDADES[0];
-  const v = q[m.campo];
-  return v === null || v === undefined ? null : Number(v);
-};
-
 // Nombre normalizado para detectar duplicados (minúsculas, sin tildes)
 const normNombre = (s: string) =>
   s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
-
-const MESES_PERIODO: Record<string, number> = { mensual: 1, trimestral: 3, semestral: 6, anual: 12 };
-// Próximo mes en que le toca factura según su ciclo (desde + múltiplos del periodo)
-function proximaFactura(desde: string | null | undefined, periodicidad: string): Date {
-  const periodo = MESES_PERIODO[periodicidad] ?? 1;
-  const base = desde ? new Date(desde + "T00:00:00") : new Date();
-  const ancla = new Date(base.getFullYear(), base.getMonth(), 1);
-  const ahora = new Date();
-  const mesActual = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
-  const diff = (mesActual.getFullYear() - ancla.getFullYear()) * 12 + (mesActual.getMonth() - ancla.getMonth());
-  const k = diff < 0 ? 0 : Math.ceil(diff / periodo) * periodo;
-  return new Date(ancla.getFullYear(), ancla.getMonth() + k, 1);
-}
 
 const NOMBRE: Record<string, string> = {
   ethos: "Ethos", luis: "Luis", david: "David", alex_esteban: "Alex E.", alex_guerrero: "Alex G.",
@@ -131,7 +94,6 @@ export default function CrmPage() {
   const [saldos, setSaldos] = useState<Map<number, { cobrado: number; pendiente: number }>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
-  const [cuotasCat, setCuotasCat] = useState<CuotaCat[]>([]);
   // Editor de dinero (pagado/deuda) de un cliente
   const [dineroCli, setDineroCli] = useState<{ cli: Cli; facturas: FacSaldo[]; cobros: CobroRow[] } | null>(null);
   const [cuentas, setCuentas] = useState<CuentaMin[]>([]);
@@ -149,8 +111,6 @@ export default function CrmPage() {
       return;
     }
     setCli((data as Cli[]) ?? []);
-    const { data: qs } = await supabase.from("cuotas").select("id, nombre, activa, es_bono, negocio, precio_mensual, precio_trimestral, precio_semestral, precio_anual").order("nombre");
-    setCuotasCat((qs as CuotaCat[]) ?? []);
     const { data: sal } = await supabase.from("v_facturas_saldo").select("cliente_id, cobrado, pendiente");
     const m = new Map<number, { cobrado: number; pendiente: number }>();
     for (const s of (sal as { cliente_id: number | null; cobrado: number; pendiente: number }[]) ?? []) {
@@ -767,97 +727,17 @@ export default function CrmPage() {
             </div>
             <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Objetivo</span><textarea rows={2} value={fEd("objetivo")} onChange={(e) => setF({ ...f, objetivo: e.target.value })} className={inputCls} /></label>
 
-            {/* Cuota del centro (remesa de domiciliados) */}
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-sky-400">Cuota del centro</p>
-              <div className="grid gap-3 sm:grid-cols-5">
-                <label className="flex flex-col gap-1 sm:col-span-2"><span className="text-[10px] font-bold uppercase text-zinc-500">Plan</span>
-                  <select value={f.cuota_id ?? ""} onChange={(e) => setF({ ...f, cuota_id: Number(e.target.value) || null })} className={`${inputCls} appearance-none`}>
-                    <option value="">Sin cuota</option>
-                    {(["gym", "online", null] as (string | null)[]).map((neg) => {
-                      const grupo = cuotasCat.filter((q) => (q.activa || q.id === f.cuota_id) && !q.es_bono && (q.negocio ?? null) === neg);
-                      if (!grupo.length) return null;
-                      return (
-                        <optgroup key={neg ?? "otros"} label={neg === "gym" ? "GYM (planes)" : neg === "online" ? "ONLINE" : "Otros planes"}>
-                          {grupo.map((q) => <option key={q.id} value={q.id}>{q.nombre}</option>)}
-                        </optgroup>
-                      );
-                    })}
-                    <optgroup label="BONOS y pagos únicos">
-                      {cuotasCat.filter((q) => (q.activa || q.id === f.cuota_id) && q.es_bono).map((q) => (
-                        <option key={q.id} value={q.id}>{q.nombre}{q.precio_mensual !== null ? ` · ${Number(q.precio_mensual).toFixed(2).replace(".", ",")} €` : ""}</option>
-                      ))}
-                    </optgroup>
-                  </select>
-                </label>
-                {!cuotasCat.find((x) => x.id === f.cuota_id)?.es_bono && (
-                <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Modalidad</span>
-                  <select
-                    value={(f.cuota_periodicidad as string) ?? "mensual"}
-                    onChange={(e) => setF({ ...f, cuota_periodicidad: e.target.value })}
-                    className={`${inputCls} appearance-none`}
-                  >
-                    {(() => {
-                      const q = cuotasCat.find((x) => x.id === f.cuota_id);
-                      return MODALIDADES.filter((m) => !q || q[m.campo] !== null || m.valor === f.cuota_periodicidad).map((m) => {
-                        const p = precioDe(q, m.valor);
-                        return <option key={m.valor} value={m.valor}>{m.etiqueta}{p !== null ? ` · ${p.toFixed(2).replace(".", ",")} €` : ""}</option>;
-                      });
-                    })()}
-                  </select>
-                </label>
-                )}
-                <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Descuento %</span>
-                  <input inputMode="decimal" value={f.descuento_pct ?? 0} onChange={(e) => setF({ ...f, descuento_pct: Number(e.target.value.replace(",", ".")) || 0 })} className={inputCls} />
-                </label>
-                <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Descuento €</span>
-                  <input inputMode="decimal" value={f.descuento_eur ?? 0} onChange={(e) => setF({ ...f, descuento_eur: Number(e.target.value.replace(",", ".")) || 0 })} className={inputCls} />
-                </label>
-              </div>
-              <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                <label className="flex flex-col gap-1"><span className="text-[10px] font-bold uppercase text-zinc-500">Empieza a contar</span>
-                  <input type="date" value={f.cuota_desde ?? ""} onChange={(e) => setF({ ...f, cuota_desde: e.target.value || null })} className={inputCls} />
-                </label>
-                <label className="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
-                  <input type="checkbox" checked={!!f.domiciliado} onChange={(e) => setF({ ...f, domiciliado: e.target.checked })} className="h-4 w-4 accent-red-600" />
-                  Domiciliado <span className="text-[10px] text-zinc-600">(entra en la remesa)</span>
-                </label>
-              </div>
-              {(() => {
-                const q = cuotasCat.find((x) => x.id === f.cuota_id);
-                if (!q) return null;
-                if (q.es_bono) {
-                  const pb = Number(q.precio_mensual ?? 0);
-                  const precioBono = Math.max(0, Math.round((pb * (1 - (Number(f.descuento_pct) || 0) / 100) - (Number(f.descuento_eur) || 0)) * 100) / 100);
-                  return (
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-950/40 px-3 py-1.5">
-                      <span className="text-[11px] text-amber-300">
-                        <b>Bono · pago único.</b> No entra en la remesa: apunta la venta como factura cuando la cobres.
-                      </span>
-                      <span className="text-sm font-black text-amber-300">{precioBono.toFixed(2).replace(".", ",")} €</span>
-                    </div>
-                  );
-                }
-                const modalidad = (f.cuota_periodicidad as string) || "mensual";
-                const base = precioDe(q, modalidad);
-                if (base === null) {
-                  return <p className="mt-2 rounded-lg bg-amber-950/60 px-3 py-1.5 text-[11px] text-amber-300">Este plan no tiene precio {modalidad}: ponlo en Ajustes → Cuotas o elige otra modalidad.</p>;
-                }
-                const precio = Math.max(0, Math.round((base * (1 - (Number(f.descuento_pct) || 0) / 100) - (Number(f.descuento_eur) || 0)) * 100) / 100);
-                const periodo = MESES_PERIODO[modalidad] ?? 1;
-                const prox = proximaFactura(f.cuota_desde ?? f.fecha_inicio, modalidad);
-                return (
-                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-zinc-900/70 px-3 py-1.5">
-                    <span className="text-[11px] text-zinc-500">
-                      Próxima factura: <b className="capitalize text-white">{prox.toLocaleDateString("es-ES", { month: "long", year: "numeric" })}</b>
-                      {periodo > 1 ? ` · luego cada ${periodo} meses` : " · cada mes"}
-                      {!f.cuota_desde && <span className="text-zinc-600"> (ciclo desde su fecha de inicio; ponla arriba si es otra)</span>}
-                    </span>
-                    <span className="text-sm font-black text-emerald-400">{precio.toFixed(2).replace(".", ",")} €</span>
-                  </div>
-                );
-              })()}
-            </div>
+            {/* Plan contratado (texto libre; las cuotas se gestionan en BemadBox) */}
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-bold uppercase text-zinc-500">Plan contratado</span>
+              <input
+                value={fEd("tipo_plan")}
+                onChange={(e) => setF({ ...f, tipo_plan: e.target.value })}
+                placeholder="Ej: EG 3 días · Online semestral · Personal 8/mes"
+                className={inputCls}
+              />
+              <span className="text-[10px] text-zinc-600">El cobro se gestiona en BemadBox; aquí solo anotas qué tiene contratado.</span>
+            </label>
             <div className="flex items-center gap-2 border-t border-zinc-800 pt-3">
               <button onClick={guardarEditar} className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white">{creando ? "Crear cliente" : "Guardar"}</button>
               {!creando && (

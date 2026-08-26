@@ -75,13 +75,6 @@ const GRUPOS: { titulo: string | null; items: ItemNav[] }[] = [
       { href: "/notas", etiqueta: "Notas", icono: ic("M12 20h9|M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z|M4 8h6") },
     ],
   },
-  {
-    titulo: "Contenido",
-    items: [
-      { href: "/contenido", etiqueta: "Contenido", icono: ic("M15 10l4.55-2.28A1 1 0 0 1 21 8.62v6.76a1 1 0 0 1-1.45.9L15 14|M3 6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z") },
-      { href: "/contenido/calendario", etiqueta: "Calendario", icono: ic("M8 2v4|M16 2v4|M3 10h18|M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z") },
-    ],
-  },
 ];
 
 export function Shell({ children, titulo }: { children: React.ReactNode; titulo?: string }) {
@@ -90,9 +83,9 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
   const [abierta, setAbierta] = useState(false);
   const [plegados, setPlegados] = useState<Record<string, boolean>>({});
 
-  // "/contabilidad" y "/contenido" tienen subrutas propias: solo se iluminan en coincidencia exacta
+  // "/contabilidad" tiene subrutas propias: solo se ilumina en coincidencia exacta
   const activo = (href: string) =>
-    href === "/contabilidad" || href === "/contenido" ? ruta === href : ruta.startsWith(href);
+    href === "/contabilidad" ? ruta === href : ruta.startsWith(href);
 
   // El grupo que contiene la ruta actual se abre solo
   useEffect(() => {
@@ -197,7 +190,7 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
         <span className="font-black tracking-tight text-white">{titulo ?? "Ethos"}</span>
       </header>
 
-      {/* Contenido */}
+      {/* Contenido de la página */}
       <div className="md:pl-60">{children}</div>
     </div>
   );

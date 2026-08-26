@@ -45,18 +45,6 @@ interface ClienteFicha extends Cliente {
   domiciliado?: boolean;
 }
 
-interface CuotaCat {
-  id: number;
-  nombre: string;
-  activa: boolean;
-  es_bono: boolean;
-  negocio: string | null;
-  precio_mensual: number | null;
-  precio_trimestral: number | null;
-  precio_semestral: number | null;
-  precio_anual: number | null;
-}
-
 interface Actividad {
   id: number;
   titulo: string;
@@ -91,34 +79,6 @@ interface OtroCli {
 const inputCls =
   "rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-2.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
-const MODALIDADES = [
-  { valor: "mensual", etiqueta: "Mensual", campo: "precio_mensual" },
-  { valor: "trimestral", etiqueta: "Trimestral", campo: "precio_trimestral" },
-  { valor: "semestral", etiqueta: "Semestral", campo: "precio_semestral" },
-  { valor: "anual", etiqueta: "Anual", campo: "precio_anual" },
-] as const;
-
-const precioDe = (q: CuotaCat | undefined, modalidad: string): number | null => {
-  if (!q) return null;
-  const m = MODALIDADES.find((x) => x.valor === modalidad) ?? MODALIDADES[0];
-  const v = q[m.campo];
-  return v === null || v === undefined ? null : Number(v);
-};
-
-const MESES_PERIODO: Record<string, number> = { mensual: 1, trimestral: 3, semestral: 6, anual: 12 };
-function proximaFactura(desde: string | null | undefined, periodicidad: string): Date {
-  const periodo = MESES_PERIODO[periodicidad] ?? 1;
-  const base = desde ? new Date(desde + "T00:00:00") : new Date();
-  const ancla = new Date(base.getFullYear(), base.getMonth(), 1);
-  const ahora = new Date();
-  const mesActual = new Date(ahora.getFullYear(), ahora.getMonth(), 1);
-  const diff = (mesActual.getFullYear() - ancla.getFullYear()) * 12 + (mesActual.getMonth() - ancla.getMonth());
-  const falta = diff < 0 ? -diff : (periodo - (diff % periodo)) % periodo || periodo;
-  // si este mes toca y aún no ha pasado el día 1, cuenta este mes
-  const meses = diff >= 0 && diff % periodo === 0 && ahora.getDate() === 1 ? 0 : falta;
-  return new Date(mesActual.getFullYear(), mesActual.getMonth() + meses, 1);
-}
-
 const normNombre = (s: string) =>
   s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
 
@@ -151,7 +111,6 @@ export default function FichaCliente() {
   const [actividades, setActividades] = useState<Actividad[]>([]);
   const [deals, setDeals] = useState<DealCli[]>([]);
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
-  const [cuotas, setCuotas] = useState<CuotaCat[]>([]);
   const [otrosClientes, setOtrosClientes] = useState<OtroCli[]>([]);
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const [pestana, setPestana] = useState<Pestana>("facturas");
@@ -171,15 +130,6 @@ export default function FichaCliente() {
   const [nif, setNif] = useState("");
   const [direccion, setDireccion] = useState("");
 
-  // Edición de tarifa (cuota)
-  const [editandoCuota, setEditandoCuota] = useState(false);
-  const [fCuota, setFCuota] = useState<number | "">("");
-  const [fModalidad, setFModalidad] = useState("mensual");
-  const [fDescPct, setFDescPct] = useState("");
-  const [fDescEur, setFDescEur] = useState("");
-  const [fDesde, setFDesde] = useState("");
-  const [fDomiciliado, setFDomiciliado] = useState(false);
-
   // Mini-formulario cobrar/devolver/perdonar sobre una factura
   const [accion, setAccion] = useState<{ facturaId: number; modo: "cobrar" | "devolver" | "perdonar" } | null>(null);
   const [accionImporte, setAccionImporte] = useState("");
@@ -191,7 +141,7 @@ export default function FichaCliente() {
   }
 
   const cargar = useCallback(async () => {
-    const [cli, fac, cue, otros, act, dl, qs] = await Promise.all([
+    const [cli, fac, cue, otros, act, dl] = await Promise.all([
       supabase.from("clientes").select("*").eq("id", clienteId).single(),
       supabase
         .from("v_facturas_saldo")
@@ -211,7 +161,6 @@ export default function FichaCliente() {
         .select("id, titulo, etapa, importe_estimado, seguimiento, seguimiento_nota, fecha_alta, embudos(nombre), pipeline_columnas(titulo)")
         .eq("cliente_id", clienteId)
         .order("creado_en", { ascending: false }),
-      supabase.from("cuotas").select("id, nombre, activa, es_bono, negocio, precio_mensual, precio_trimestral, precio_semestral, precio_anual").order("negocio").order("nombre"),
     ]);
     if (cli.data) {
       const c = cli.data as ClienteFicha;
@@ -224,19 +173,12 @@ export default function FichaCliente() {
       setNotas(c.notas ?? "");
       setNif(c.nif ?? "");
       setDireccion(c.direccion ?? "");
-      setFCuota(c.cuota_id ?? "");
-      setFModalidad(c.cuota_periodicidad || "mensual");
-      setFDescPct(String(c.descuento_pct || ""));
-      setFDescEur(String(c.descuento_eur || ""));
-      setFDesde(c.cuota_desde ?? "");
-      setFDomiciliado(!!c.domiciliado);
     }
     setFacturas((fac.data as FacturaSaldo[]) ?? []);
     setCuentas((cue.data as Cuenta[]) ?? []);
     setOtrosClientes((otros.data as OtroCli[]) ?? []);
     setActividades((act.data as Actividad[]) ?? []);
     setDeals((dl.data as unknown as DealCli[]) ?? []);
-    setCuotas((qs.data as CuotaCat[]) ?? []);
   }, [clienteId]);
 
   useEffect(() => {
@@ -279,24 +221,6 @@ export default function FichaCliente() {
     const { error } = await supabase.from("clientes").update({ notas: notas.trim() || null }).eq("id", clienteId);
     if (error) return avisar("error", error.message);
     avisar("ok", "Notas guardadas ✓");
-  }
-
-  async function guardarCuota() {
-    const { error } = await supabase
-      .from("clientes")
-      .update({
-        cuota_id: fCuota === "" ? null : fCuota,
-        cuota_periodicidad: fModalidad,
-        descuento_pct: Number(fDescPct.replace(",", ".")) || 0,
-        descuento_eur: Number(fDescEur.replace(",", ".")) || 0,
-        cuota_desde: fDesde || null,
-        domiciliado: fDomiciliado,
-      })
-      .eq("id", clienteId);
-    if (error) return avisar("error", error.message);
-    setEditandoCuota(false);
-    avisar("ok", "Tarifa guardada ✓");
-    cargar();
   }
 
   async function cambiarBaja() {
@@ -399,16 +323,6 @@ export default function FichaCliente() {
     cargar();
   }
 
-  const cuotaActual = useMemo(() => cuotas.find((q) => q.id === cliente?.cuota_id), [cuotas, cliente]);
-
-  // Precio efectivo de la tarifa con descuentos
-  const precioEfectivo = useMemo(() => {
-    if (!cliente || !cuotaActual) return null;
-    const base = cuotaActual.es_bono ? Number(cuotaActual.precio_mensual ?? 0) : precioDe(cuotaActual, cliente.cuota_periodicidad || "mensual");
-    if (base === null) return null;
-    return Math.max(0, Math.round((base * (1 - Number(cliente.descuento_pct || 0) / 100) - Number(cliente.descuento_eur || 0)) * 100) / 100);
-  }, [cliente, cuotaActual]);
-
   if (sesionOk === null || !cliente) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-zinc-950 text-zinc-500">
@@ -424,18 +338,6 @@ export default function FichaCliente() {
   const msgRecordatorio = encodeURIComponent(
     `¡Hola ${cliente.nombre}! Te escribimos de Ethos 💪 Tienes ${deudaTotal.toFixed(2).replace(".", ",")} € pendientes de pago. ¿Puedes revisarlo cuando tengas un momento? ¡Gracias!`
   );
-
-  const proxima = (() => {
-    if (!cuotaActual || cliente.fecha_baja) return null;
-    if (cuotaActual.es_bono) return { texto: "Bono · pago único", detalle: "no entra en remesa" };
-    const p = precioEfectivo;
-    if (p === null) return null;
-    const fecha = proximaFactura(cliente.cuota_desde ?? cliente.fecha_inicio, cliente.cuota_periodicidad || "mensual");
-    return {
-      texto: fecha.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" }),
-      detalle: `${eur(p)}${cliente.domiciliado ? " · domiciliado" : " · sin domiciliar"}`,
-    };
-  })();
 
   const estadoChip = cliente.fecha_baja
     ? { t: "Baja", c: "bg-zinc-800 text-zinc-500" }
@@ -510,8 +412,8 @@ export default function FichaCliente() {
             ))}
           </p>
 
-          {/* Métricas + tarifa */}
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          {/* Métricas */}
+          <div className="mt-3 grid grid-cols-3 gap-2">
             <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Facturado</p>
               <p className="text-base font-black tabular-nums text-white">{eur(totalFacturado)}</p>
@@ -529,105 +431,7 @@ export default function FichaCliente() {
                 </a>
               )}
             </div>
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Próxima factura</p>
-              {proxima ? (
-                <>
-                  <p className="text-base font-black tabular-nums text-white">{proxima.texto}</p>
-                  <p className="text-[10px] text-zinc-500">{proxima.detalle}</p>
-                </>
-              ) : (
-                <p className="text-base font-black text-zinc-600">—</p>
-              )}
-            </div>
-            <div className="col-span-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2 sm:col-span-1">
-              <div className="flex items-start justify-between gap-1">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Tarifa</p>
-                <button onClick={() => setEditandoCuota(!editandoCuota)} title="Cambiar tarifa, modalidad o descuentos" className="text-xs text-zinc-500 hover:text-white">✎</button>
-              </div>
-              {cuotaActual ? (
-                <>
-                  <p className="truncate text-sm font-black text-white" title={cuotaActual.nombre}>{cuotaActual.nombre}</p>
-                  <p className="text-[10px] text-zinc-500">
-                    {cuotaActual.es_bono ? "bono" : cliente.cuota_periodicidad || "mensual"}
-                    {precioEfectivo !== null && ` · ${eur(precioEfectivo)}`}
-                    {(Number(cliente.descuento_pct) > 0 || Number(cliente.descuento_eur) > 0) && " · con dto"}
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm font-black text-zinc-600">Sin tarifa</p>
-              )}
-            </div>
           </div>
-
-          {/* Editor de tarifa */}
-          {editandoCuota && (
-            <div className="mt-3 flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <label className="flex min-w-56 flex-1 flex-col gap-1">
-                  <span className="text-[10px] font-bold uppercase text-zinc-500">Cuota / plan / bono</span>
-                  <select value={fCuota} onChange={(e) => setFCuota(e.target.value === "" ? "" : Number(e.target.value))} className={`${inputCls} appearance-none`}>
-                    <option value="">— Sin tarifa —</option>
-                    {(["gym", "online", null] as (string | null)[]).map((neg) => {
-                      const grupo = cuotas.filter((q) => q.activa && !q.es_bono && (q.negocio ?? null) === neg);
-                      if (!grupo.length) return null;
-                      return (
-                        <optgroup key={neg ?? "otros"} label={neg === "gym" ? "GYM (planes)" : neg === "online" ? "ONLINE" : "Otros planes"}>
-                          {grupo.map((q) => <option key={q.id} value={q.id}>{q.nombre}</option>)}
-                        </optgroup>
-                      );
-                    })}
-                    <optgroup label="BONOS y pagos únicos">
-                      {cuotas.filter((q) => q.activa && q.es_bono).map((q) => (
-                        <option key={q.id} value={q.id}>{q.nombre} — {eur(Number(q.precio_mensual ?? 0))}</option>
-                      ))}
-                    </optgroup>
-                  </select>
-                </label>
-                {(() => {
-                  const sel = cuotas.find((q) => q.id === fCuota);
-                  if (sel?.es_bono)
-                    return <p className="pb-2 text-[11px] text-amber-400">Bono: pago único, no entra en la remesa. Apunta la venta en Facturas.</p>;
-                  return (
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] font-bold uppercase text-zinc-500">Modalidad</span>
-                      <select value={fModalidad} onChange={(e) => setFModalidad(e.target.value)} className={`${inputCls} appearance-none`}>
-                        {MODALIDADES.map((m) => {
-                          const p = precioDe(sel, m.valor);
-                          return (
-                            <option key={m.valor} value={m.valor} disabled={p === null}>
-                              {m.etiqueta}{p !== null ? ` — ${eur(p)}` : " (n/d)"}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </label>
-                  );
-                })()}
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] font-bold uppercase text-zinc-500">Dto %</span>
-                  <input value={fDescPct} onChange={(e) => setFDescPct(e.target.value)} inputMode="decimal" placeholder="0" className={`${inputCls} w-20 text-right`} />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] font-bold uppercase text-zinc-500">Dto €</span>
-                  <input value={fDescEur} onChange={(e) => setFDescEur(e.target.value)} inputMode="decimal" placeholder="0" className={`${inputCls} w-20 text-right`} />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] font-bold uppercase text-zinc-500">Ciclo desde</span>
-                  <input type="date" value={fDesde} onChange={(e) => setFDesde(e.target.value)} className={inputCls} />
-                </label>
-                <label className="flex items-center gap-2 pb-2 text-xs text-zinc-300">
-                  <input type="checkbox" checked={fDomiciliado} onChange={(e) => setFDomiciliado(e.target.checked)} className="h-4 w-4 accent-red-600" />
-                  Domiciliado (entra en remesa)
-                </label>
-                <button onClick={guardarCuota} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">Guardar tarifa</button>
-              </div>
-              <p className="text-[10px] text-zinc-600">
-                El descuento vale para ofertas (Grand Slam, referidos, núcleo familiar…) o pagos fraccionados pactados: el
-                precio efectivo se aplica en cada remesa. Cambia «ciclo desde» si renegociáis el plan.
-              </p>
-            </div>
-          )}
         </div>
 
         {/* ============ PESTAÑAS ============ */}

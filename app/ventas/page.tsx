@@ -130,24 +130,10 @@ export default function FacturasPage() {
     setPersonas((per.data as Persona[]) ?? []);
     setCargando(false);
 
-    // Remesa pendiente (cuotas domiciliadas) + cuenta banco para los cobros
-    const [rem, cue] = await Promise.all([
-      supabase.from("remesas").select("id, mes, estado").eq("estado", "pendiente").order("mes", { ascending: false }).limit(1).maybeSingle(),
-      supabase.from("cuentas").select("id, codigo").eq("codigo", "banco").maybeSingle(),
-    ]);
-    setBancoId((cue.data as { id: number } | null)?.id ?? null);
-    const r = rem.data as Remesa | null;
-    setRemesa(r);
-    if (r) {
-      const { data: ls } = await supabase
-        .from("remesa_lineas")
-        .select("id, cliente_id, factura_id, importe, incluido, clientes(nombre, apellidos), facturas(iva_pct, concepto)")
-        .eq("remesa_id", r.id)
-        .order("id");
-      setLineas((ls as unknown as RemesaLinea[]) ?? []);
-    } else {
-      setLineas([]);
-    }
+    // Sistema de cuotas/remesas retirado (ago 2026): las cuotas se llevan en
+    // BemadBox. Ventas ya no genera ni muestra remesas.
+    setRemesa(null);
+    setLineas([]);
   }, []);
 
   useEffect(() => {
@@ -391,19 +377,10 @@ export default function FacturasPage() {
         </select>
         <input placeholder="Mín €" inputMode="decimal" value={fMin} onChange={(e) => setFMin(e.target.value)} className={`${inputCls} w-20`} />
         <input placeholder="Máx €" inputMode="decimal" value={fMax} onChange={(e) => setFMax(e.target.value)} className={`${inputCls} w-20`} />
-        {(!remesa || lineas.length === 0) && (
-          <button
-            onClick={generarRemesa}
-            title="Genera las facturas de los socios domiciliados con cuota (normalmente sale sola el día 1)"
-            className="ml-auto rounded-full bg-zinc-800 px-4 py-1.5 text-xs font-bold text-zinc-300 hover:bg-zinc-700"
-          >
-            ⟳ Generar remesa del mes
-          </button>
-        )}
         <button
           onClick={crearFactura}
           disabled={creandoFactura}
-          className={`${remesa && lineas.length > 0 ? "ml-auto" : ""} rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50`}
+          className="ml-auto rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white disabled:opacity-50"
         >
           {creandoFactura ? "Abriendo…" : "+ Nueva factura"}
         </button>
