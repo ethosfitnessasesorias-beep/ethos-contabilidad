@@ -108,8 +108,10 @@ export default function LibroPage() {
   const cargar = useCallback(async () => {
     setCargando(true);
     const desde = `${mes}-01`;
-    const d = new Date(desde);
-    const hasta = new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString().slice(0, 10);
+    // Primer día del mes siguiente por aritmética de cadena (sin Date/UTC, que
+    // se comía el último día del mes en horario de verano: bug del 31 de agosto)
+    const [y, mm] = mes.split("-").map(Number);
+    const hasta = mm === 12 ? `${y + 1}-01-01` : `${y}-${String(mm + 1).padStart(2, "0")}-01`;
     const cuentaObj = cuentas.find((c) => c.codigo === cuentaSel);
     const filtroCuenta = cuentaObj?.id;
 

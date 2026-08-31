@@ -151,8 +151,10 @@ export default function RepartoPage() {
     setAudMes(mes);
     setAudCargando(true);
     const desde = mes.slice(0, 7) + "-01";
-    const d = new Date(desde + "T00:00:00");
-    const hasta = new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString().slice(0, 10);
+    // Primer día del mes siguiente por aritmética de cadena (sin Date/UTC, que
+    // se comía el último día del mes en horario de verano)
+    const [y, mm] = mes.slice(0, 7).split("-").map(Number);
+    const hasta = mm === 12 ? `${y + 1}-01-01` : `${y}-${String(mm + 1).padStart(2, "0")}-01`;
     const [co, ga, fa] = await Promise.all([
       supabase
         .from("cobros")

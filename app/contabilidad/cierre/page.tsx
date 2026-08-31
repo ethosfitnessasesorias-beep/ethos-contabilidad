@@ -66,11 +66,14 @@ export default function CierrePage() {
 
   const cargar = useCallback(async () => {
     const desde = `${mes}-01`;
-    const d = new Date(desde);
-    const hasta = new Date(d.getFullYear(), d.getMonth() + 1, 1).toISOString().slice(0, 10);
-    const iniMesPasado = new Date(d.getFullYear(), d.getMonth() - 1, 1).toISOString().slice(0, 10);
-    const trim = Math.floor(d.getMonth() / 3) + 1;
-    const anyo = d.getFullYear();
+    // Rangos por aritmética de cadena, sin Date/UTC (que se comía el último día
+    // del mes en horario de verano). mes = "YYYY-MM".
+    const [y, mm] = mes.split("-").map(Number); // mm: 1-12
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const hasta = mm === 12 ? `${y + 1}-01-01` : `${y}-${pad(mm + 1)}-01`;
+    const iniMesPasado = mm === 1 ? `${y - 1}-12-01` : `${y}-${pad(mm - 1)}-01`;
+    const trim = Math.floor((mm - 1) / 3) + 1;
+    const anyo = y;
 
     const [rep, cob, gas, mor, sinFac, cue, cat, decl, gPasado] = await Promise.all([
       supabase.from("v_reparto_beneficios").select("socio, beneficio").eq("mes", desde),
