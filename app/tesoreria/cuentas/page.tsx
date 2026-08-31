@@ -31,13 +31,11 @@ interface Moroso {
   fecha_emision: string;
   pendiente: number;
 }
+// Misma fuente que Contabilidad → Reparto (v_reparto_beneficios), para que
+// ambas pantallas digan lo mismo: nómina = 80% del beneficio, hucha = 20%.
 interface RepartoFila {
-  atribucion: Atribucion;
-  cobrado: number;
-  gasto: number;
-  balance: number;
-  a_entrenador: number;
-  a_hucha: number;
+  socio: string;
+  beneficio: number;
 }
 
 const eur = (n: number | null | undefined) =>
@@ -81,6 +79,39 @@ export default function FinanzasPage() {
   const [reparto, setReparto] = useState<RepartoFila[]>([]);
   const [mesReparto, setMesReparto] = useState(new Date().toISOString().slice(0, 7));
   const [alarma, setAlarma] = useState(3);
+  // Gestión rápida de un moroso (cobrar / perdonar) sin entrar a la ficha
+  const [gestMoroso, setGestMoroso] = useState<{ id: number; modo: "cobrar" | "perdonar"; pendiente: number } | null>(null);
+  const [gestImporte, setGestImporte] = useState("");
+  const [gestCuenta, setGestCuenta] = useState("banco");
+  const [gestAviso, setGestAviso] = useState<string | null>(null);
+
+  // Cobra (apunta el cobro en la factura) o perdona (condona) el pendiente.
+  // Al saldar el total, la factura desaparece de "Pendiente de cobro".
+  async function ejecutarGestion() {
+    if (!gestMoroso) return;
+    const n = Number(gestImporte.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) return setGestAviso("Importe no válido.");
+    if (n > gestMoroso.pendiente + 0.005) return setGestAviso(`Solo quedan ${eur(gestMoroso.pendiente)} pendientes.`);
+    const hoy = new Date().toISOString().slice(0, 10);
+    if (gestMoroso.modo === "cobrar") {
+      const { data: cuenta } = await supabase.from("cuentas").select("id").eq("codigo", gestCuenta).maybeSingle();
+      const { error } = await supabase.from("cobros").insert({
+        factura_id: gestMoroso.id, fecha: hoy, importe: Math.round(n * 100) / 100,
+        cuenta_id: (cuenta as { id: number } | null)?.id,
+        metodo: gestCuenta === "caja" ? "efectivo" : "transferencia", afecta_caja: true,
+      });
+      if (error) return setGestAviso(error.message);
+    } else {
+      const { data: fac } = await supabase.from("facturas").select("condonado").eq("id", gestMoroso.id).single();
+      const cond = Number((fac as { condonado: number } | null)?.condonado ?? 0) + n;
+      const { error } = await supabase.from("facturas").update({ condonado: Math.round(cond * 100) / 100 }).eq("id", gestMoroso.id);
+      if (error) return setGestAviso(error.message);
+    }
+    setGestMoroso(null);
+    setGestImporte("");
+    setGestAviso(null);
+    window.location.reload();
+  }
 
   // Arqueo de caja: recuento físico vs saldo de la app, con historial
   const [arqueos, setArqueos] = useState<{ id: number; fecha: string; contado: number; saldo_app: number; descuadre: number; accion: string | null }[]>([]);
@@ -214,8 +245,8 @@ export default function FinanzasPage() {
 
   useEffect(() => {
     supabase
-      .from("v_reparto_mensual")
-      .select("*")
+      .from("v_reparto_beneficios")
+      .select("socio, beneficio")
       .eq("mes", `${mesReparto}-01`)
       .then(({ data }) => setReparto((data as RepartoFila[]) ?? []));
   }, [mesReparto]);
@@ -457,34 +488,34 @@ export default function FinanzasPage() {
             className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-xs text-white outline-none focus:border-red-500"
           />
         </div>
-        {reparto.filter((r) => r.atribucion !== "ethos").length === 0 ? (
+        {reparto.filter((r) => r.socio === "luis" || r.socio === "david").length === 0 ? (
           <p className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-500">
-            Sin cobros en este mes.
+            Sin datos de reparto en este mes.
           </p>
         ) : (
           <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
-            <div className="grid grid-cols-[1fr_1.4fr_1fr_1fr] bg-zinc-900 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-zinc-500">
-              <span>Socio</span><span className="text-right">Cobrado − gastos</span><span className="text-right">Nómina</span><span className="text-right">A hucha</span>
+            <div className="grid grid-cols-[1fr_1.2fr_1fr_1fr] bg-zinc-900 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-zinc-500">
+              <span>Socio</span><span className="text-right">Beneficio</span><span className="text-right">Nómina (80%)</span><span className="text-right">A hucha (20%)</span>
             </div>
             {reparto
-              .filter((r) => r.atribucion !== "ethos")
+              .filter((r) => r.socio === "luis" || r.socio === "david")
               .map((r) => {
-                const colaborador = r.atribucion === "alex_esteban" || r.atribucion === "alex_guerrero";
+                const ben = Math.max(0, Number(r.beneficio));
                 return (
-                  <div key={r.atribucion} className="grid grid-cols-[1fr_1.4fr_1fr_1fr] items-center border-t border-zinc-800 px-3 py-2 text-[13px]">
-                    <span className="font-bold text-white">{NOMBRES[r.atribucion]}</span>
-                    <span className="text-right text-zinc-400">
-                      {colaborador ? eur(r.cobrado) : `${eur(r.cobrado)} − ${eur(r.gasto)}`}
-                    </span>
-                    <span className="text-right font-bold text-emerald-400">{eur(r.a_entrenador)}</span>
-                    <span className="text-right text-zinc-400">{eur(r.a_hucha)}</span>
+                  <div key={r.socio} className="grid grid-cols-[1fr_1.2fr_1fr_1fr] items-center border-t border-zinc-800 px-3 py-2 text-[13px]">
+                    <span className="font-bold text-white">{NOMBRES[r.socio]}</span>
+                    <span className="text-right text-zinc-400">{eur(ben)}</span>
+                    <span className="text-right font-bold text-emerald-400">{eur(ben * 0.8)}</span>
+                    <span className="text-right text-zinc-400">{eur(ben * 0.2)}</span>
                   </div>
                 );
               })}
           </div>
         )}
         <p className="mt-1.5 px-1 text-[11px] text-zinc-600">
-          Nómina = 80% del balance; el 20% va a la hucha. Los Alex aportan a ETHOS; no tienen reparto propio.
+          Nómina = 80% del beneficio; el 20% va a la hucha. Estos números son los mismos que en{" "}
+          <Link href="/contabilidad/reparto" className="font-bold text-sky-400 hover:text-sky-300">Contabilidad → Reparto</Link>,
+          donde puedes auditar el detalle y marcar el pagado real.
         </p>
       </section>
 
@@ -504,29 +535,61 @@ export default function FinanzasPage() {
               const telLimpio = tel ? tel.replace(/\D/g, "") : null;
               const waTel = telLimpio ? (telLimpio.length === 9 ? `34${telLimpio}` : telLimpio) : null;
               const msg = `¡Hola ${(m.cliente ?? "").split(" ")[0]}! Somos Ethos Fitness 💪 Nos consta pendiente el pago de "${m.concepto}" (${eur(Number(m.pendiente))}). ¿Puedes revisarlo cuando tengas un momento? ¡Gracias!`;
+              const abierto = gestMoroso?.id === m.id;
               return (
-                <div key={m.id} className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 last:border-0 hover:bg-zinc-900">
-                  <Link href={`/facturas/${m.id}`} className="flex min-w-0 flex-1 items-center justify-between gap-3">
-                    <div className="min-w-0">
+                <div key={m.id} className="border-b border-zinc-800 last:border-0">
+                  <div className="flex items-center gap-2 px-3 py-2 hover:bg-zinc-900">
+                    <div className="min-w-0 flex-1">
                       <p className="truncate text-[13px] font-semibold text-white">{m.cliente ?? m.concepto}</p>
                       <p className="truncate text-[11px] text-zinc-500">
-                        Factura · {m.concepto} · {new Date(m.fecha_emision).toLocaleDateString("es-ES")}
+                        <Link href={`/facturas/${m.id}`} className="hover:text-sky-400">Factura</Link> · {m.concepto} · {new Date(m.fecha_emision).toLocaleDateString("es-ES")}
                       </p>
                     </div>
                     <span className="shrink-0 text-[13px] font-bold text-amber-400">{eur(Number(m.pendiente))}</span>
-                  </Link>
-                  {waTel ? (
-                    <a
-                      href={`https://wa.me/${waTel}?text=${encodeURIComponent(msg)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Reclamar por WhatsApp"
-                      className="shrink-0 rounded-lg bg-emerald-950 px-2.5 py-1.5 text-[11px] font-bold text-emerald-400 hover:bg-emerald-900"
+                    <button
+                      onClick={() => { setGestMoroso({ id: m.id, modo: "cobrar", pendiente: Number(m.pendiente) }); setGestImporte(String(Number(m.pendiente))); setGestAviso(null); }}
+                      className="shrink-0 rounded-lg bg-emerald-700 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-600"
                     >
-                      WhatsApp
-                    </a>
-                  ) : (
-                    <span className="shrink-0 text-[10px] text-zinc-700" title="Sin teléfono en el CRM">sin tel.</span>
+                      Cobrar
+                    </button>
+                    <button
+                      onClick={() => { setGestMoroso({ id: m.id, modo: "perdonar", pendiente: Number(m.pendiente) }); setGestImporte(String(Number(m.pendiente))); setGestAviso(null); }}
+                      title="Perdonar la deuda (no entra dinero en caja)"
+                      className="shrink-0 rounded-lg bg-zinc-800 px-2.5 py-1.5 text-[11px] font-bold text-amber-300 hover:bg-zinc-700"
+                    >
+                      Perdonar
+                    </button>
+                    {waTel ? (
+                      <a
+                        href={`https://wa.me/${waTel}?text=${encodeURIComponent(msg)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Reclamar por WhatsApp"
+                        className="shrink-0 rounded-lg bg-emerald-950 px-2.5 py-1.5 text-[11px] font-bold text-emerald-400 hover:bg-emerald-900"
+                      >
+                        💬
+                      </a>
+                    ) : (
+                      <span className="shrink-0 text-[10px] text-zinc-700" title="Sin teléfono en el CRM">sin tel.</span>
+                    )}
+                  </div>
+                  {abierto && (
+                    <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/60 bg-zinc-950/60 px-3 py-2">
+                      <span className="text-[11px] font-bold uppercase text-zinc-500">
+                        {gestMoroso!.modo === "cobrar" ? "Apuntar cobro" : "Perdonar deuda (no toca caja)"}
+                      </span>
+                      <input inputMode="decimal" value={gestImporte} onChange={(e) => setGestImporte(e.target.value)} className="w-24 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-right text-xs tabular-nums text-white outline-none focus:border-red-500" autoFocus />
+                      {gestMoroso!.modo === "cobrar" && (
+                        <>
+                          {["banco", "caja"].map((c) => (
+                            <button key={c} onClick={() => setGestCuenta(c)} className={`rounded-full px-2.5 py-1 text-[11px] font-bold capitalize ${gestCuenta === c ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>{c === "banco" ? "Banco" : "Efectivo"}</button>
+                          ))}
+                        </>
+                      )}
+                      <button onClick={ejecutarGestion} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">Confirmar</button>
+                      <button onClick={() => setGestMoroso(null)} className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs font-bold text-zinc-400">✕</button>
+                      {gestAviso && <span className="text-[11px] text-red-400">{gestAviso}</span>}
+                    </div>
                   )}
                 </div>
               );

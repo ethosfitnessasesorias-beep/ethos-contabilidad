@@ -444,7 +444,12 @@ export default function LibroPage() {
           </span>
           <span className="rounded-lg bg-zinc-900 px-3 py-1.5 font-bold text-white">Neto {eur(totales.neto)}</span>
           {totales.reparto > 0 && (
-            <span className="rounded-lg bg-zinc-900 px-3 py-1.5 text-violet-400">Reparto (nóminas) {eur(totales.reparto)}</span>
+            <span
+              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-violet-400"
+              title="Nóminas realmente pagadas este mes (salida de caja). El reparto teórico del mes se calcula en Contabilidad → Reparto."
+            >
+              Nóminas pagadas {eur(totales.reparto)}
+            </span>
           )}
           {cuentaSel !== "todas" && (
             <span className="self-center text-xs text-zinc-500">— filtrando {cuentaSel}, toca la tarjeta para quitar</span>
