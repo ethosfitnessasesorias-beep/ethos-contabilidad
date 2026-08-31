@@ -133,7 +133,7 @@ export default function LibroPage() {
     const [cobros, gastos, traspasos, pedir] = await Promise.all([
       supabase
         .from("cobros")
-        .select("id, fecha, importe, cuenta_id, metodo, afecta_caja, facturas(concepto, canal, categoria_id, clientes(nombre))")
+        .select("id, fecha, importe, cuenta_id, metodo, afecta_caja, facturas(concepto, canal, categoria_id, clientes(nombre, apellidos))")
         .gte("fecha", desde)
         .lt("fecha", hasta),
       supabase
@@ -159,11 +159,12 @@ export default function LibroPage() {
     const lista: Movimiento[] = [];
     for (const c of (cobros.data as unknown as Array<{
       id: number; fecha: string; importe: number; cuenta_id: number; metodo: string | null; afecta_caja: boolean | null;
-      facturas: { concepto: string; canal: string | null; categoria_id: number | null; clientes: { nombre: string } | null } | null;
+      facturas: { concepto: string; canal: string | null; categoria_id: number | null; clientes: { nombre: string; apellidos: string | null } | null } | null;
     }>) ?? []) {
+      const cli = c.facturas?.clientes;
       lista.push({
         key: `c${c.id}`, tipo: "ingreso", fecha: c.fecha, concepto: c.facturas?.concepto ?? "Cobro",
-        detalle: c.facturas?.clientes?.nombre ?? "", cuentaId: c.cuenta_id,
+        detalle: cli ? `${cli.nombre} ${cli.apellidos ?? ""}`.trim() : "", cuentaId: c.cuenta_id,
         categoriaId: c.facturas?.categoria_id ?? null,
         importe: Number(c.importe), canal: c.facturas?.canal,
         metodo: c.metodo ?? metodoPorCuenta.get(c.cuenta_id) ?? null,

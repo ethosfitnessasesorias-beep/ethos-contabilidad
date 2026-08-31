@@ -221,7 +221,7 @@ export default function EntradaRapida() {
       const [cat, cue, cli, cfg, per, met, imp] = await Promise.all([
         supabase.from("categorias").select("*").eq("activa", true).order("grupo").order("nombre"),
         supabase.from("cuentas").select("*").eq("activa", true).order("id"),
-        supabase.from("clientes").select("id, nombre, entrenador").is("fecha_baja", null).order("nombre"),
+        supabase.from("clientes").select("id, nombre, apellidos, entrenador").is("fecha_baja", null).order("nombre"),
         supabase.from("config").select("clave, valor").eq("clave", "iva_general").single(),
         supabase.from("personas").select("codigo, nombre").eq("activa", true).order("orden"),
         supabase.from("metodos_pago").select("codigo, nombre").eq("activo", true).order("orden"),
@@ -345,9 +345,15 @@ export default function EntradaRapida() {
     const ivaPct = ivaPctIngreso;
     const irpfPct = irpfPctIngreso;
     const base = Math.round((imp / (1 + ivaPct - irpfPct)) * 100) / 100;
-    const cliente = clientes.find((c) => c.nombre.toLowerCase() === clienteNombre.trim().toLowerCase());
+    // Empareja por "Nombre Apellidos" completo (así 3 Silvias no se confunden);
+    // si escriben solo el nombre y hay uno único, también lo acepta.
+    const escrito = clienteNombre.trim().toLowerCase();
+    const nomCompleto = (c: Cliente) => `${c.nombre} ${c.apellidos ?? ""}`.trim().toLowerCase();
+    const exactos = clientes.filter((c) => nomCompleto(c) === escrito);
+    const soloNombre = clientes.filter((c) => c.nombre.trim().toLowerCase() === escrito);
+    const cliente = exactos[0] ?? (soloNombre.length === 1 ? soloNombre[0] : undefined);
     const nombreCat = catIngreso.find((c) => c.id === categoriaIngresoId)?.nombre ?? "Ingreso";
-    const conceptoFinal = concepto.trim() || (cliente ? `${nombreCat} — ${cliente.nombre}` : nombreCat);
+    const conceptoFinal = concepto.trim() || (cliente ? `${nombreCat} — ${nomCompleto(cliente).replace(/\b\w/g, (l) => l.toUpperCase())}` : nombreCat);
 
     setGuardando(true);
     const { data: factura, error: e1 } = await supabase
@@ -619,10 +625,10 @@ export default function EntradaRapida() {
                   </Campo>
 
                   <Campo etiqueta="Cliente (opcional)">
-                    <input list="lista-clientes" placeholder="Buscar cliente…" value={clienteNombre} onChange={(e) => setClienteNombre(e.target.value)} className={inputCls} />
+                    <input list="lista-clientes" placeholder="Buscar cliente (nombre y apellidos)…" value={clienteNombre} onChange={(e) => setClienteNombre(e.target.value)} className={inputCls} />
                     <datalist id="lista-clientes">
                       {clientes.map((c) => (
-                        <option key={c.id} value={c.nombre} />
+                        <option key={c.id} value={`${c.nombre} ${c.apellidos ?? ""}`.trim()} />
                       ))}
                     </datalist>
                   </Campo>

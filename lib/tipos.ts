@@ -24,6 +24,7 @@ export interface Cuenta {
 export interface Cliente {
   id: number;
   nombre: string;
+  apellidos?: string | null;
   entrenador: Atribucion;
   telefono?: string | null;
   email?: string | null;

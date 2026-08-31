@@ -14,7 +14,7 @@ interface Factura {
   total: number;
   canal: string | null;
   atribucion: string | null;
-  clientes: { nombre: string } | null;
+  clientes: { nombre: string; apellidos: string | null } | null;
 }
 
 // Edición completa de una factura
@@ -110,7 +110,7 @@ export default function FacturasPage() {
     const [f, cli, cat, per] = await Promise.all([
       supabase
         .from("facturas")
-        .select("id, numero, fecha_emision, concepto, total, canal, atribucion, clientes(nombre)")
+        .select("id, numero, fecha_emision, concepto, total, canal, atribucion, clientes(nombre, apellidos)")
         .order("fecha_emision", { ascending: false })
         .limit(500),
       supabase.from("clientes").select("id, nombre").is("fecha_baja", null).order("nombre"),
@@ -306,7 +306,7 @@ export default function FacturasPage() {
       if (min !== null && Number.isFinite(min) && t < min) return false;
       if (max !== null && Number.isFinite(max) && t > max) return false;
       if (q) {
-        const texto = `${f.numero ?? ""} ${f.clientes?.nombre ?? ""} ${f.concepto}`.toLowerCase();
+        const texto = `${f.numero ?? ""} ${f.clientes?.nombre ?? ""} ${f.clientes?.apellidos ?? ""} ${f.concepto}`.toLowerCase();
         if (!texto.includes(q)) return false;
       }
       return true;
@@ -477,7 +477,7 @@ export default function FacturasPage() {
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold text-white">
-                    {f.clientes?.nombre ?? (f.concepto || "(borrador sin concepto)")}
+                    {f.clientes ? `${f.clientes.nombre} ${f.clientes.apellidos ?? ""}`.trim() : (f.concepto || "(borrador sin concepto)")}
                   </span>
                   <span className="block truncate text-xs text-zinc-500 md:hidden">
                     {f.numero ?? "borrador"} · {fechaCorta(f.fecha_emision)}
