@@ -96,6 +96,28 @@ export default function PagosCobrosPage() {
   const [altaEntrenador, setAltaEntrenador] = useState("ethos");
   const [altaPlan, setAltaPlan] = useState("");
 
+  // ---- Esquema manual (verde/rojo): capa de control que NO toca las cuentas ----
+  // Marcas: clave "filaId-mesIdx" -> { estado, nota }
+  const [marcas, setMarcas] = useState<Map<string, { estado: string; nota: string | null }>>(new Map());
+  const [modoEsquema, setModoEsquema] = useState(false);
+  // Selección por arrastre: rectángulo entre inicio y fin (índices de fila y mes)
+  const [selIni, setSelIni] = useState<{ fi: number; mi: number } | null>(null);
+  const [selFin, setSelFin] = useState<{ fi: number; mi: number } | null>(null);
+  const [arrastrando, setArrastrando] = useState(false);
+  const [barra, setBarra] = useState<{ celdas: { filaId: number; mesIdx: number }[] } | null>(null);
+  const [notaBarra, setNotaBarra] = useState("");
+
+  const mesISO = (mesIdx: number) => `${anyo}-${String(mesIdx + 1).padStart(2, "0")}-01`;
+  const claveMarca = (filaId: number, mesIdx: number) => `${filaId}-${mesIdx}`;
+  const METODO_ESTADO = (e: string) => (e === "pagado" ? "Pagado ✓" : e === "no_pagado" ? "No pagado ✕" : e);
+
+  // ¿está la casilla (fi, mi) dentro del rectángulo de selección en curso?
+  const enSeleccion = (fi: number, mi: number) => {
+    if (!selIni || !selFin) return false;
+    return fi >= Math.min(selIni.fi, selFin.fi) && fi <= Math.max(selIni.fi, selFin.fi) &&
+      mi >= Math.min(selIni.mi, selFin.mi) && mi <= Math.max(selIni.mi, selFin.mi);
+  };
+
   const cargar = useCallback(async () => {
     const desde = `${anyo}-01-01`;
     const hasta = `${anyo + 1}-01-01`;
@@ -114,6 +136,16 @@ export default function PagosCobrosPage() {
     setCobros((cob.data as unknown as CobroRow[]) ?? []);
     setCuotas((q.data as CuotaCat[]) ?? []);
     setBancoId((cue.data as { id: number } | null)?.id ?? null);
+    // Marcas manuales del esquema (verde/rojo) del año
+    const { data: mk } = await supabase
+      .from("pagos_cobros_marcas")
+      .select("fila_id, mes, estado, nota")
+      .gte("mes", desde).lt("mes", hasta);
+    const mm = new Map<string, { estado: string; nota: string | null }>();
+    for (const x of (mk as { fila_id: number; mes: string; estado: string; nota: string | null }[]) ?? []) {
+      mm.set(`${x.fila_id}-${new Date(x.mes + "T00:00:00").getMonth()}`, { estado: x.estado, nota: x.nota });
+    }
+    setMarcas(mm);
     const p = new Map<number, number>();
     for (const s of (sal.data as { cliente_id: number | null; pendiente: number }[]) ?? []) {
       if (s.cliente_id && Number(s.pendiente) > 0.01) p.set(s.cliente_id, (p.get(s.cliente_id) ?? 0) + Number(s.pendiente));
@@ -374,6 +406,46 @@ export default function PagosCobrosPage() {
   const celdaNum = (v: number, cls = "text-zinc-300") =>
     Math.abs(v) < 0.005 ? <td className="px-2 py-1 text-right text-zinc-800">·</td> : <td className={`px-2 py-1 text-right tabular-nums ${cls}`}>{n2(v)}</td>;
 
+  // ---- Esquema: arrastre de selección y aplicación de marca ----
+  function inicioArrastre(fi: number, mi: number) {
+    if (!modoEsquema) return;
+    setSelIni({ fi, mi }); setSelFin({ fi, mi }); setArrastrando(true); setBarra(null);
+  }
+  function entraArrastre(fi: number, mi: number) {
+    if (arrastrando) setSelFin({ fi, mi });
+  }
+  function finArrastre() {
+    if (!arrastrando || !selIni || !selFin) { setArrastrando(false); return; }
+    setArrastrando(false);
+    const celdas: { filaId: number; mesIdx: number }[] = [];
+    for (let fi = Math.min(selIni.fi, selFin.fi); fi <= Math.max(selIni.fi, selFin.fi); fi++) {
+      const fila = filas[fi];
+      if (!fila) continue;
+      for (let mi = Math.min(selIni.mi, selFin.mi); mi <= Math.max(selIni.mi, selFin.mi); mi++) {
+        celdas.push({ filaId: fila.f.id, mesIdx: mi });
+      }
+    }
+    // Nota por defecto: si el bloque abarca varios meses, sugiere la periodicidad
+    const nMeses = Math.abs(selFin.mi - selIni.mi) + 1;
+    setNotaBarra(nMeses === 3 ? "Trimestral" : nMeses === 6 ? "Semestral" : nMeses === 12 ? "Anual" : "");
+    setBarra({ celdas });
+  }
+
+  async function aplicarMarca(estado: "pagado" | "no_pagado" | "borrar") {
+    if (!barra) return;
+    if (estado === "borrar") {
+      for (const cel of barra.celdas) {
+        await supabase.from("pagos_cobros_marcas").delete().eq("fila_id", cel.filaId).eq("mes", mesISO(cel.mesIdx));
+      }
+    } else {
+      const filasSQL = barra.celdas.map((cel) => ({ fila_id: cel.filaId, mes: mesISO(cel.mesIdx), estado, nota: notaBarra.trim() || null, actualizado_en: new Date().toISOString() }));
+      const { error } = await supabase.from("pagos_cobros_marcas").upsert(filasSQL, { onConflict: "fila_id,mes" });
+      if (error) return setError(error.message);
+    }
+    setBarra(null); setSelIni(null); setSelFin(null); setNotaBarra("");
+    cargar();
+  }
+
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -387,7 +459,14 @@ export default function PagosCobrosPage() {
         <select value={anyo} onChange={(e) => setAnyo(Number(e.target.value))} className={`${inputCls} appearance-none`}>
           {[new Date().getFullYear(), new Date().getFullYear() - 1].map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
-        <button onClick={() => setGestionando(!gestionando)} className="ml-auto rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white">
+        <button
+          onClick={() => { setModoEsquema(!modoEsquema); setBarra(null); setSelIni(null); setSelFin(null); }}
+          title="Pintar casillas a mano (verde=pagado, rojo=no pagado). No toca las cuentas: es solo vuestro esquema de control."
+          className={`ml-auto rounded-full px-4 py-1.5 text-xs font-bold ${modoEsquema ? "bg-sky-600 text-white" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"}`}
+        >
+          {modoEsquema ? "✓ Modo esquema" : "🎨 Modo esquema"}
+        </button>
+        <button onClick={() => setGestionando(!gestionando)} className="rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold text-white">
           {gestionando ? "Cerrar" : "+ Añadir fila"}
         </button>
       </div>
@@ -448,9 +527,34 @@ export default function PagosCobrosPage() {
         </table>
       </div>
 
+      {modoEsquema && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-sky-900 bg-sky-950/20 px-3 py-2 text-[11px] text-zinc-400">
+          <b className="text-sky-400">Modo esquema activo.</b> Arrastra el ratón sobre las casillas para seleccionarlas
+          (varios meses = un pago trimestral/semestral/anual). Al soltar eliges color y nota.
+          <span className="text-zinc-600">Verde = pagado · Rojo = no pagado. No afecta a las cuentas.</span>
+        </div>
+      )}
+
+      {/* Barra de acción tras seleccionar un rango */}
+      {barra && (
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2">
+          <span className="text-xs font-bold text-white">{barra.celdas.length} casilla(s) seleccionada(s)</span>
+          <input
+            placeholder="Nota (ej: Trimestral, pagó en enero…)"
+            value={notaBarra}
+            onChange={(e) => setNotaBarra(e.target.value)}
+            className="min-w-40 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-white outline-none focus:border-red-500"
+          />
+          <button onClick={() => aplicarMarca("pagado")} className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600">✓ Pagado</button>
+          <button onClick={() => aplicarMarca("no_pagado")} className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-600">✕ No pagado</button>
+          <button onClick={() => aplicarMarca("borrar")} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-400 hover:bg-zinc-700">Quitar color</button>
+          <button onClick={() => { setBarra(null); setSelIni(null); setSelFin(null); }} className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs font-bold text-zinc-500">Cancelar</button>
+        </div>
+      )}
+
       {/* Matriz fila × mes */}
       <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
-        <table className="w-full text-xs">
+        <table className="w-full select-none text-xs" onMouseLeave={() => arrastrando && finArrastre()} onMouseUp={finArrastre}>
           <thead>
             <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
               <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-1.5 text-left">Fila</th>
@@ -463,7 +567,7 @@ export default function PagosCobrosPage() {
             </tr>
           </thead>
           <tbody>
-            {filas.map(({ f, c, vals }) => {
+            {filas.map(({ f, c, vals }, fi) => {
               const pend = c ? pendientes.get(c.id) ?? 0 : 0;
               return (
                 <tr key={f.id} className="group border-b border-zinc-800/40 last:border-0 hover:bg-zinc-900/40">
@@ -482,18 +586,35 @@ export default function PagosCobrosPage() {
                   </td>
                   <td className="px-2 py-1 text-[10px] text-zinc-500">{c ? GRUPO[c.entrenador] ?? "Emp." : "Emp."}</td>
                   {vals.map((v: number, i: number) => {
-                    const click = { onClick: () => abrirCelda(f, i), className: "cursor-pointer hover:bg-zinc-800/60", title: "Clic para apuntar o corregir pagos de este mes" };
+                    const marca = marcas.get(claveMarca(f.id, i));
+                    const sel = modoEsquema && enSeleccion(fi, i);
+                    // Fondo de la marca manual (esquema): verde=pagado, rojo=no pagado
+                    const bgMarca = marca?.estado === "pagado" ? "bg-emerald-900/50" : marca?.estado === "no_pagado" ? "bg-red-900/50" : "";
+                    const borde = sel ? "ring-1 ring-inset ring-sky-400 bg-sky-500/20" : "";
+                    // En modo esquema: eventos de arrastre y sin abrir el pago real
+                    const props = modoEsquema
+                      ? {
+                          onMouseDown: (e: React.MouseEvent) => { e.preventDefault(); inicioArrastre(fi, i); },
+                          onMouseEnter: () => entraArrastre(fi, i),
+                          className: `cursor-cell ${bgMarca} ${borde}`,
+                          title: marca?.nota ?? (marca ? METODO_ESTADO(marca.estado) : "Arrastra para marcar"),
+                        }
+                      : {
+                          onClick: () => abrirCelda(f, i),
+                          className: `cursor-pointer hover:bg-zinc-800/60 ${bgMarca}`,
+                          title: marca?.nota ? `${METODO_ESTADO(marca.estado)} · ${marca.nota}` : "Clic para apuntar o corregir pagos de este mes",
+                        };
                     if (bajaEnMes(c, i) && Math.abs(v) < 0.005)
-                      return <td key={i} {...click} className={`${click.className} px-2 py-1 text-center text-[9px] font-bold uppercase text-zinc-700`}>baja</td>;
+                      return <td key={i} {...props} className={`${props.className} px-2 py-1 text-center text-[9px] font-bold uppercase text-zinc-700`}>baja</td>;
                     if (Math.abs(v) > 0.005)
-                      return <td key={i} {...click} className={`${click.className} px-2 py-1 text-right tabular-nums ${i === mesActualIdx ? "font-bold text-white" : "text-zinc-300"}`}>{n2(v)}</td>;
+                      return <td key={i} {...props} className={`${props.className} px-2 py-1 text-right tabular-nums ${i === mesActualIdx ? "font-bold text-white" : "text-zinc-300"}`}>{n2(v)}</td>;
                     // Sin cobro: si es un mes futuro y tiene cuota, enseña lo previsto atenuado
-                    if (c && i > mesActualIdx && anyo >= hoy.getFullYear()) {
+                    if (!modoEsquema && c && i > mesActualIdx && anyo >= hoy.getFullYear()) {
                       const prev = previstoDe(c, i);
                       if (prev !== null && prev > 0)
-                        return <td key={i} {...click} className={`${click.className} px-2 py-1 text-right italic tabular-nums text-zinc-600`}>{n2(prev)}</td>;
+                        return <td key={i} {...props} className={`${props.className} px-2 py-1 text-right italic tabular-nums text-zinc-600`}>{n2(prev)}</td>;
                     }
-                    return <td key={i} {...click} className={`${click.className} px-2 py-1 text-right text-zinc-800`}>·</td>;
+                    return <td key={i} {...props} className={`${props.className} px-2 py-1 text-right text-zinc-800`}>·</td>;
                   })}
                   <td className="border-l border-zinc-800 px-3 py-1 text-right font-bold tabular-nums text-zinc-200">{n2(suma(vals))}</td>
                   <td className="px-1 py-1 text-center">
@@ -527,6 +648,10 @@ export default function PagosCobrosPage() {
         <b> baja</b> = meses posteriores a su baja · <span className="italic">cursiva</span> = previsto por su cuota ·
         <b className="text-amber-500"> debe</b> = pendiente de cobro · <b>agregado</b> = suma ingresos sin ficha por concepto
         (grupales, merchan…). <b>Otros sin fila</b> = ingresos sin cliente que no casan con ningún agregado.
+        <br />
+        <b className="text-sky-400">🎨 Modo esquema</b>: fondo <span className="rounded bg-emerald-900/50 px-1 text-emerald-300">verde = pagado</span> ·
+        <span className="rounded bg-red-900/50 px-1 text-red-300"> rojo = no pagado</span>. Arrastra sobre varios meses para marcar un pago
+        trimestral/semestral/anual con su nota. Este esquema es solo vuestro control de previsión: <b>no afecta a las cuentas</b>.
       </p>
 
       {/* Celda abierta: pagos de la fila en ese mes */}
