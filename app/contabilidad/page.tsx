@@ -36,9 +36,22 @@ interface Movimiento {
   categoriaId: number | null;
   importe: number; // efecto en caja, con signo
   canal?: string | null;
+  metodo?: string | null; // forma de pago: efectivo, tpv, transferencia, bizum, stripe, domiciliado
   saldoTras?: number; // saldo de la cuenta tras el movimiento (si hay cuenta filtrada)
   historico?: boolean; // factura antigua: no afecta al saldo de la cuenta
 }
+
+// Etiquetas legibles de la forma de pago
+const METODOS: { valor: string; etiqueta: string }[] = [
+  { valor: "efectivo", etiqueta: "Efectivo" },
+  { valor: "tpv", etiqueta: "TPV" },
+  { valor: "transferencia", etiqueta: "Transferencia" },
+  { valor: "bizum", etiqueta: "Bizum" },
+  { valor: "stripe", etiqueta: "Stripe" },
+  { valor: "domiciliado", etiqueta: "Domiciliado" },
+];
+const METODO_ET = (m: string | null | undefined) =>
+  METODOS.find((x) => x.valor === m)?.etiqueta ?? (m ? m[0].toUpperCase() + m.slice(1) : null);
 
 // Estado del modal de edición de un movimiento (según su tipo)
 interface EdIngreso {
@@ -82,6 +95,7 @@ export default function LibroPage() {
   const [fTexto, setFTexto] = useState("");
   const [fTipo, setFTipo] = useState<"todos" | TipoMov>("todos");
   const [fCanal, setFCanal] = useState<"todos" | "online" | "presencial">("todos");
+  const [fMetodo, setFMetodo] = useState<string>("todos");
   const [fCats, setFCats] = useState<Set<number>>(new Set());
   const [catAbierto, setCatAbierto] = useState(false);
   const [fMin, setFMin] = useState("");
@@ -119,7 +133,7 @@ export default function LibroPage() {
     const [cobros, gastos, traspasos, pedir] = await Promise.all([
       supabase
         .from("cobros")
-        .select("id, fecha, importe, cuenta_id, afecta_caja, facturas(concepto, canal, categoria_id, clientes(nombre))")
+        .select("id, fecha, importe, cuenta_id, metodo, afecta_caja, facturas(concepto, canal, categoria_id, clientes(nombre))")
         .gte("fecha", desde)
         .lt("fecha", hasta),
       supabase
@@ -139,9 +153,12 @@ export default function LibroPage() {
     const inv = await supabase.from("v_inversion_mensual").select("inversion").eq("mes", desde).maybeSingle();
     setInversionMes(Number((inv.data as { inversion: number } | null)?.inversion ?? 0));
 
+    // Método de pago derivado de la cuenta (para gastos, que no lo guardan)
+    const metodoPorCuenta = new Map(cuentas.map((c) => [c.id, c.codigo === "caja" ? "efectivo" : c.codigo === "banco" ? "transferencia" : c.codigo]));
+
     const lista: Movimiento[] = [];
     for (const c of (cobros.data as unknown as Array<{
-      id: number; fecha: string; importe: number; cuenta_id: number; afecta_caja: boolean | null;
+      id: number; fecha: string; importe: number; cuenta_id: number; metodo: string | null; afecta_caja: boolean | null;
       facturas: { concepto: string; canal: string | null; categoria_id: number | null; clientes: { nombre: string } | null } | null;
     }>) ?? []) {
       lista.push({
@@ -149,6 +166,7 @@ export default function LibroPage() {
         detalle: c.facturas?.clientes?.nombre ?? "", cuentaId: c.cuenta_id,
         categoriaId: c.facturas?.categoria_id ?? null,
         importe: Number(c.importe), canal: c.facturas?.canal,
+        metodo: c.metodo ?? metodoPorCuenta.get(c.cuenta_id) ?? null,
         historico: c.afecta_caja === false,
       });
     }
@@ -160,6 +178,7 @@ export default function LibroPage() {
         key: `g${g.id}`, tipo: "gasto", fecha: g.fecha, concepto: g.concepto, detalle: g.proveedor ?? "",
         cuentaId: g.cuenta_id, categoriaId: g.categoria_id,
         importe: -(Number(g.total) - Number(g.irpf_soportado)), canal: g.canal,
+        metodo: metodoPorCuenta.get(g.cuenta_id) ?? null,
       });
     }
     for (const t of (traspasos.data as Array<{
@@ -341,6 +360,7 @@ export default function LibroPage() {
     return movs.filter((m) => {
       if (fTipo !== "todos" && m.tipo !== fTipo) return false;
       if (fCanal !== "todos" && m.canal !== fCanal) return false;
+      if (fMetodo !== "todos" && m.metodo !== fMetodo) return false;
       if (fCats.size > 0 && (m.categoriaId === null || !fCats.has(m.categoriaId))) return false;
       const abs = Math.abs(m.importe);
       if (min !== null && Number.isFinite(min) && abs < min) return false;
@@ -348,7 +368,7 @@ export default function LibroPage() {
       if (q && !`${m.concepto} ${m.detalle}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [movs, fTexto, fTipo, fCanal, fCats, fMin, fMax]);
+  }, [movs, fTexto, fTipo, fCanal, fMetodo, fCats, fMin, fMax]);
 
   // Totales por naturaleza: los traspasos entre cuentas propias NO son ni
   // ingreso ni gasto (antes inflaban ambos lados); un cobro negativo
@@ -367,7 +387,7 @@ export default function LibroPage() {
   }, [filtrados, nominaIds]);
 
   const hayFiltros =
-    fTexto.trim() !== "" || fTipo !== "todos" || fCanal !== "todos" || fCats.size > 0 || fMin !== "" || fMax !== "";
+    fTexto.trim() !== "" || fTipo !== "todos" || fCanal !== "todos" || fMetodo !== "todos" || fCats.size > 0 || fMin !== "" || fMax !== "";
 
   const saldoDe = (codigo: string) => Number(saldos.find((s) => s.codigo === codigo)?.saldo ?? 0);
 
@@ -476,6 +496,12 @@ export default function LibroPage() {
           <option value="online">Online</option>
           <option value="presencial">GYM</option>
         </select>
+        <select value={fMetodo} onChange={(e) => setFMetodo(e.target.value)} className={`${inputCls} appearance-none`}>
+          <option value="todos">Pago: todos</option>
+          {METODOS.map((m) => (
+            <option key={m.valor} value={m.valor}>{m.etiqueta}</option>
+          ))}
+        </select>
         <div className="relative">
           <button
             onClick={() => setCatAbierto(!catAbierto)}
@@ -529,6 +555,7 @@ export default function LibroPage() {
               setFTexto("");
               setFTipo("todos");
               setFCanal("todos");
+              setFMetodo("todos");
               setFCats(new Set());
               setFMin("");
               setFMax("");
@@ -573,6 +600,7 @@ export default function LibroPage() {
                     {new Date(m.fecha).toLocaleDateString("es-ES")}
                     {m.detalle ? ` · ${m.detalle}` : ""}
                     {m.canal ? ` · ${m.canal}` : ""}
+                    {METODO_ET(m.metodo) && <span className="ml-1.5 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400">{METODO_ET(m.metodo)}</span>}
                     {m.historico && <span className="ml-1.5 rounded bg-sky-950 px-1.5 py-0.5 text-[10px] font-bold text-sky-400">histórico · no afecta caja</span>}
                   </p>
                 </div>
