@@ -59,6 +59,7 @@ interface EdIngreso {
   fecha: string; importe: string; cuenta_id: number;
   concepto: string; canal: string; categoria_id: number | "";
   atribucion: string; es_recurrente: boolean; computa_reparto: boolean;
+  cliente_id: number | "";
 }
 interface EdGasto {
   tipo: "gasto"; id: number;
@@ -89,6 +90,7 @@ export default function LibroPage() {
   const [porPedir, setPorPedir] = useState(0);
   const [inversionMes, setInversionMes] = useState(0);
   const [nominaIds, setNominaIds] = useState<Set<number>>(new Set());
+  const [clientesLista, setClientesLista] = useState<{ id: number; nombre: string; apellidos: string | null }[]>([]);
   const [cargando, setCargando] = useState(true);
 
   // Filtros
@@ -106,13 +108,15 @@ export default function LibroPage() {
   const [edError, setEdError] = useState<string | null>(null);
 
   const cargarCuentas = useCallback(async () => {
-    const [cu, sa, cat] = await Promise.all([
+    const [cu, sa, cat, cli] = await Promise.all([
       supabase.from("cuentas").select("id, codigo, nombre, es_transito, saldo_inicial").eq("activa", true).order("id"),
       supabase.from("v_saldo_cuentas").select("codigo, saldo"),
       supabase.from("categorias").select("id, tipo, grupo, nombre").order("tipo").order("grupo").order("nombre"),
+      supabase.from("clientes").select("id, nombre, apellidos").order("nombre"),
     ]);
     setCuentas((cu.data as Cuenta[]) ?? []);
     setSaldos((sa.data as Saldo[]) ?? []);
+    setClientesLista((cli.data as { id: number; nombre: string; apellidos: string | null }[]) ?? []);
     const cats = (cat.data as Categoria[]) ?? [];
     setCategorias(cats);
     // Las nóminas son reparto de beneficio, no un gasto: se separan del total
@@ -240,11 +244,11 @@ export default function LibroPage() {
     if (m.tipo === "ingreso") {
       const { data, error } = await supabase
         .from("cobros")
-        .select("id, fecha, importe, cuenta_id, factura_id, facturas(id, concepto, canal, categoria_id, atribucion, es_recurrente, computa_reparto)")
+        .select("id, fecha, importe, cuenta_id, factura_id, facturas(id, concepto, canal, categoria_id, atribucion, es_recurrente, computa_reparto, cliente_id)")
         .eq("id", id)
         .single();
       if (error || !data) return setEdError(error?.message ?? "No encontrado");
-      const c = data as unknown as { id: number; fecha: string; importe: number; cuenta_id: number; factura_id: number | null; facturas: { id: number; concepto: string; canal: string | null; categoria_id: number | null; atribucion: string | null; es_recurrente: boolean | null; computa_reparto: boolean | null } | null };
+      const c = data as unknown as { id: number; fecha: string; importe: number; cuenta_id: number; factura_id: number | null; facturas: { id: number; concepto: string; canal: string | null; categoria_id: number | null; atribucion: string | null; es_recurrente: boolean | null; computa_reparto: boolean | null; cliente_id: number | null } | null };
       setEd({
         tipo: "ingreso", id: c.id, facturaId: c.facturas?.id ?? c.factura_id,
         fecha: c.fecha, importe: String(c.importe), cuenta_id: c.cuenta_id,
@@ -253,6 +257,7 @@ export default function LibroPage() {
         atribucion: c.facturas?.atribucion ?? "ethos",
         es_recurrente: c.facturas?.es_recurrente ?? false,
         computa_reparto: c.facturas?.computa_reparto ?? true,
+        cliente_id: c.facturas?.cliente_id ?? "",
       });
     } else if (m.tipo === "gasto") {
       const { data, error } = await supabase
@@ -299,6 +304,7 @@ export default function LibroPage() {
           .update({
             concepto: ed.concepto, canal: ed.canal || null,
             atribucion: ed.atribucion, es_recurrente: ed.es_recurrente, computa_reparto: ed.computa_reparto,
+            cliente_id: ed.cliente_id === "" ? null : ed.cliente_id,
             ...(ed.categoria_id ? { categoria_id: ed.categoria_id } : {}),
           })
           .eq("id", ed.facturaId);
@@ -642,6 +648,19 @@ export default function LibroPage() {
 
             {ed.tipo === "ingreso" && (
               <>
+                <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Cliente asociado</span>
+                  <select
+                    value={ed.cliente_id}
+                    onChange={(e) => setEd({ ...ed, cliente_id: e.target.value === "" ? "" : Number(e.target.value) })}
+                    className={`${inputCls} appearance-none`}
+                  >
+                    <option value="">— Sin cliente / venta suelta —</option>
+                    {clientesLista.map((c) => (
+                      <option key={c.id} value={c.id}>{c.nombre} {c.apellidos ?? ""}</option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-zinc-600">Corrige aquí si apuntaste el cobro al cliente equivocado.</span>
+                </label>
                 <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Concepto</span>
                   <input value={ed.concepto} onChange={(e) => setEd({ ...ed, concepto: e.target.value })} className={inputCls} />
                 </label>
