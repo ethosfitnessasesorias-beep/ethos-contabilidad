@@ -389,7 +389,10 @@ export default function Actividades() {
 
   // ---------- Tarjetas ----------
 
-  function abrirCrear() {
+  // Al crear con el "+" de una columna: recuerda dónde insertar (colId + posición)
+  const [insercion, setInsercion] = useState<{ colId: number; idx: number } | null>(null);
+
+  function abrirCrear(colId?: number, idx?: number) {
     setEditando(null);
     setFTitulo("");
     setFTipo("tarea");
@@ -397,9 +400,10 @@ export default function Actividades() {
     setFResponsable(personas[0]?.codigo ?? "ethos");
     setFCuando(new Date().toISOString().slice(0, 16));
     setFNotas("");
-    setFColumna(columnas[0]?.id ?? null);
+    setFColumna(colId ?? columnas[0]?.id ?? null);
     setFEtiquetas([]);
     setGestionandoEtiquetas(false);
+    setInsercion(colId != null && idx != null ? { colId, idx } : null);
     setModalAbierto(true);
   }
 
@@ -420,6 +424,7 @@ export default function Actividades() {
   function cerrarModal() {
     setModalAbierto(false);
     setEditando(null);
+    setInsercion(null);
   }
 
   async function guardarTarjeta() {
@@ -437,10 +442,19 @@ export default function Actividades() {
       etiquetas: fEtiquetas,
       hecha: col?.es_final ?? false,
     };
-    const res = editando
-      ? await supabase.from("actividades").update(datos).eq("id", editando.id)
-      : await supabase.from("actividades").insert({ ...datos, archivada_en: null, orden: 0 });
-    if (res.error) return setError(res.error.message);
+    if (editando) {
+      const res = await supabase.from("actividades").update(datos).eq("id", editando.id);
+      if (res.error) return setError(res.error.message);
+    } else {
+      const res = await supabase.from("actividades").insert({ ...datos, archivada_en: null, orden: 0 }).select("id").single();
+      if (res.error || !res.data) return setError(res.error?.message ?? "No se pudo crear.");
+      // Insertar en la posición pulsada con el "+": renumerar esa columna
+      if (insercion && insercion.colId === fColumna) {
+        const ids = [...(orden[fColumna] ?? [])];
+        ids.splice(Math.min(insercion.idx, ids.length), 0, res.data.id);
+        await Promise.all(ids.map((id, i) => supabase.from("actividades").update({ orden: i }).eq("id", id)));
+      }
+    }
     cerrarModal();
     cargar();
   }
@@ -803,7 +817,7 @@ export default function Actividades() {
             >
               📦 Archivo{archivadas.length > 0 ? ` (${archivadas.length})` : ""}
             </button>
-            <button onClick={abrirCrear} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">
+            <button onClick={() => abrirCrear()} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">
               + Nueva tarjeta
             </button>
           </div>
@@ -827,7 +841,7 @@ export default function Actividades() {
                 return (
                   <div
                     key={col.id}
-                    className="w-[85vw] max-w-xs shrink-0 snap-start rounded-2xl border border-zinc-800 bg-zinc-900/40 md:w-72"
+                    className="group/col w-[85vw] max-w-xs shrink-0 snap-start rounded-2xl border border-zinc-800 bg-zinc-900/40 md:w-72"
                   >
                     <div className="flex items-center justify-between gap-2 px-4 py-3">
                       <h2 className="truncate text-sm font-black uppercase tracking-wide text-zinc-300">
@@ -864,23 +878,49 @@ export default function Actividades() {
 
                     <ColumnaDrop col={col}>
                       <SortableContext items={ids.map(cardDnd)} strategy={verticalListSortingStrategy}>
-                        {ids.map((id) => {
+                        {ids.map((id, k) => {
                           const t = tarjetaPorId.get(id);
                           if (!t) return null;
                           return (
-                            <SortableCard
-                              key={t.id}
-                              t={t}
-                              etiquetas={etiquetas}
-                              nombres={nombres}
-                              onAbrir={() => abrirEditar(t)}
-                              onArchivar={() => archivarTarjeta(t)}
-                              onHecho={() => marcarHecha(t)}
-                            />
+                            <div key={t.id} className="group/ins">
+                              <SortableCard
+                                t={t}
+                                etiquetas={etiquetas}
+                                nombres={nombres}
+                                onAbrir={() => abrirEditar(t)}
+                                onArchivar={() => archivarTarjeta(t)}
+                                onHecho={() => marcarHecha(t)}
+                              />
+                              {/* + para crear una tarjeta justo debajo de esta */}
+                              <button
+                                onClick={() => abrirCrear(col.id, k + 1)}
+                                title="Nueva tarjeta aquí"
+                                className="mx-auto my-0.5 flex h-5 w-full items-center justify-center rounded text-zinc-600 opacity-0 transition hover:bg-zinc-800/60 hover:text-white group-hover/ins:opacity-100"
+                              >
+                                <span className="text-sm font-bold leading-none">+</span>
+                              </button>
+                            </div>
                           );
                         })}
-                        {ids.length === 0 && <p className="py-4 text-center text-xs text-zinc-700">Suelta tarjetas aquí</p>}
+                        {ids.length === 0 && (
+                          <button
+                            onClick={() => abrirCrear(col.id, 0)}
+                            className="w-full rounded-lg border border-dashed border-zinc-800 py-4 text-center text-xs font-bold text-zinc-600 hover:border-zinc-600 hover:text-zinc-300"
+                          >
+                            + Nueva tarjeta
+                          </button>
+                        )}
                       </SortableContext>
+                      {/* + al final de la columna: aparece al pasar el ratón por la columna */}
+                      {ids.length > 0 && (
+                        <button
+                          onClick={() => abrirCrear(col.id, ids.length)}
+                          title="Nueva tarjeta al final"
+                          className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-zinc-800 py-1.5 text-xs font-bold text-zinc-600 opacity-0 transition hover:border-zinc-600 hover:text-zinc-300 group-hover/col:opacity-100"
+                        >
+                          + Nueva tarjeta
+                        </button>
+                      )}
                     </ColumnaDrop>
                   </div>
                 );
