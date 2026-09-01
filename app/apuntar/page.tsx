@@ -173,6 +173,9 @@ export default function EntradaRapida() {
   const [canal, setCanal] = useState<Canal>("presencial");
   const [clienteNombre, setClienteNombre] = useState("");
   const [concepto, setConcepto] = useState("");
+  // Facturas pendientes del cliente elegido, para poder ABONAR una en vez de crear otra
+  const [facturasPend, setFacturasPend] = useState<{ id: number; concepto: string; pendiente: number }[]>([]);
+  const [abonarId, setAbonarId] = useState<number | "nueva">("nueva");
   const [ivaPctIngreso, setIvaPctIngreso] = useState<number>(0.21);
   const [irpfPctIngreso, setIrpfPctIngreso] = useState<number>(0);
   const [cobrado, setCobrado] = useState(true);
@@ -280,6 +283,36 @@ export default function EntradaRapida() {
     } catch {}
   }, []);
 
+  // Cliente resuelto del texto escrito (por nombre+apellidos, con fallback a solo nombre único)
+  const clienteElegido = useMemo(() => {
+    const escrito = clienteNombre.trim().toLowerCase();
+    if (!escrito) return null;
+    const nom = (c: Cliente) => `${c.nombre} ${c.apellidos ?? ""}`.trim().toLowerCase();
+    const exacto = clientes.find((c) => nom(c) === escrito);
+    if (exacto) return exacto;
+    const soloNom = clientes.filter((c) => c.nombre.trim().toLowerCase() === escrito);
+    return soloNom.length === 1 ? soloNom[0] : null;
+  }, [clienteNombre, clientes]);
+
+  // Al elegir cliente, cargar sus facturas pendientes (para poder abonar una)
+  useEffect(() => {
+    if (!clienteElegido) { setFacturasPend([]); setAbonarId("nueva"); return; }
+    let vivo = true;
+    (async () => {
+      const { data } = await supabase
+        .from("v_facturas_saldo")
+        .select("id, concepto, pendiente, fecha_emision")
+        .eq("cliente_id", clienteElegido.id)
+        .order("fecha_emision", { ascending: false });
+      if (!vivo) return;
+      const pend = ((data as { id: number; concepto: string; pendiente: number }[]) ?? [])
+        .filter((f) => Number(f.pendiente) > 0.01);
+      setFacturasPend(pend);
+      setAbonarId("nueva");
+    })();
+    return () => { vivo = false; };
+  }, [clienteElegido]);
+
   const catIngreso = useMemo(() => categorias.filter((c) => c.tipo === "ingreso"), [categorias]);
   const catGasto = useMemo(() => categorias.filter((c) => c.tipo === "gasto"), [categorias]);
   const gruposGasto = useMemo(() => {
@@ -356,6 +389,26 @@ export default function EntradaRapida() {
     const conceptoFinal = concepto.trim() || (cliente ? `${nombreCat} — ${nomCompleto(cliente).replace(/\b\w/g, (l) => l.toUpperCase())}` : nombreCat);
 
     setGuardando(true);
+
+    // MODO ABONO: en vez de crear factura, apunta el cobro sobre una factura
+    // pendiente existente del cliente (la va tachando). Requiere que esté cobrado.
+    if (abonarId !== "nueva") {
+      const objetivo = facturasPend.find((f) => f.id === abonarId);
+      if (objetivo && imp > objetivo.pendiente + 0.005) {
+        setGuardando(false);
+        return avisar("error", `Esa factura solo debe ${objetivo.pendiente.toFixed(2)} €. Pon ese importe o menos.`);
+      }
+      const { error } = await supabase.from("cobros").insert({
+        factura_id: abonarId, fecha, importe: imp, cuenta_id: cuentaId(cuentaCodigo), metodo,
+      });
+      setGuardando(false);
+      if (error) return avisar("error", `No se pudo apuntar el abono: ${error.message}`);
+      const resto = objetivo ? Math.max(0, Math.round((objetivo.pendiente - imp) * 100) / 100) : 0;
+      avisar("ok", resto > 0.005 ? `Abono de ${imp} € apuntado ✓ (le quedan ${resto.toFixed(2).replace(".", ",")} €)` : `Factura saldada con ${imp} € ✓`);
+      limpiarTrasGuardar();
+      return;
+    }
+
     const { data: factura, error: e1 } = await supabase
       .from("facturas")
       .insert({
@@ -633,6 +686,22 @@ export default function EntradaRapida() {
                     </datalist>
                   </Campo>
 
+                  {facturasPend.length > 0 && (
+                    <Campo etiqueta="Este pago…">
+                      <select value={abonarId} onChange={(e) => setAbonarId(e.target.value === "nueva" ? "nueva" : Number(e.target.value))} className={`${inputCls} appearance-none`}>
+                        <option value="nueva">Crea una factura nueva</option>
+                        {facturasPend.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            Abona: {f.concepto} (debe {f.pendiente.toFixed(2).replace(".", ",")} €)
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block text-[10px] text-zinc-600">
+                        {clienteElegido?.nombre} tiene {facturasPend.length} factura(s) sin cobrar. Si abonas una, este ingreso la va tachando en vez de crear otra.
+                      </span>
+                    </Campo>
+                  )}
+
                   <Campo etiqueta="IVA">
                     <select value={ivaPctIngreso} onChange={(e) => elegirIvaIngreso(Number(e.target.value))} className={`${inputCls} appearance-none`}>
                       {ivaIngreso.map((i) => (
@@ -655,7 +724,11 @@ export default function EntradaRapida() {
                 </Campo>
 
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <Toggle etiqueta="Cobrado ya" activo={cobrado} onCambio={setCobrado} />
+                  {abonarId === "nueva" ? (
+                    <Toggle etiqueta="Cobrado ya" activo={cobrado} onCambio={setCobrado} />
+                  ) : (
+                    <p className="rounded-lg bg-emerald-950 px-3 py-2 text-xs text-emerald-300">Abonando una factura pendiente: se apunta como cobro.</p>
+                  )}
                   <Toggle etiqueta="Cuenta para impuestos" activo={computaImpuestos} onCambio={setComputaImpuestos} />
                 </div>
                 {!computaImpuestos && (
@@ -664,7 +737,7 @@ export default function EntradaRapida() {
                   </p>
                 )}
 
-                {cobrado && (
+                {(cobrado || abonarId !== "nueva") && (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Campo etiqueta="¿Dónde ha entrado?">
                       <Chips opciones={opcCuentas} valor={cuentaCodigo} onCambio={elegirCuenta} pequeno />

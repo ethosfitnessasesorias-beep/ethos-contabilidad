@@ -113,6 +113,7 @@ export default function FichaCliente() {
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
   const [otrosClientes, setOtrosClientes] = useState<OtroCli[]>([]);
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  const [creandoFactura, setCreandoFactura] = useState(false);
   const [pestana, setPestana] = useState<Pestana>("facturas");
 
   // Fusión con vista previa del destino y elección de quién sobrevive
@@ -323,6 +324,28 @@ export default function FichaCliente() {
     cargar();
   }
 
+  // Crea una factura pendiente ya asociada a este cliente y abre su editor
+  async function crearFacturaCliente() {
+    if (!cliente) return;
+    setCreandoFactura(true);
+    const { data: cat } = await supabase.from("categorias").select("id").eq("tipo", "ingreso").ilike("nombre", "otros").limit(1).maybeSingle();
+    const catId = (cat as { id: number } | null)?.id;
+    if (!catId) { setCreandoFactura(false); return avisar("error", "No hay categoría de ingreso 'Otros'."); }
+    const { data, error } = await supabase
+      .from("facturas")
+      .insert({
+        cliente_id: clienteId, categoria_id: catId,
+        atribucion: ["luis", "david"].includes(cliente.entrenador) ? cliente.entrenador : "ethos",
+        fecha_emision: new Date().toISOString().slice(0, 10),
+        concepto: "", base: 0, iva_pct: 0.21, irpf_pct: 0,
+        canal: cliente.canal ?? "presencial",
+      })
+      .select("id").single();
+    setCreandoFactura(false);
+    if (error || !data) return avisar("error", error?.message ?? "No se pudo crear.");
+    router.push(`/facturas/${data.id}`);
+  }
+
   if (sesionOk === null || !cliente) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-zinc-950 text-zinc-500">
@@ -452,6 +475,12 @@ export default function FichaCliente() {
         <div className="mt-4">
           {/* ---------- FACTURAS ---------- */}
           {pestana === "facturas" && (
+            <>
+            <div className="mb-2 flex justify-end">
+              <button onClick={crearFacturaCliente} disabled={creandoFactura} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+                {creandoFactura ? "Abriendo…" : "+ Nueva factura"}
+              </button>
+            </div>
             <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/40">
               <div className="hidden grid-cols-[110px_1fr_110px_130px_110px_auto] items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-4 py-2 md:grid">
                 {["Fecha", "Concepto", "Cobrado", "Estado", "Total", ""].map((h, i) => (
@@ -510,6 +539,7 @@ export default function FichaCliente() {
                 );
               })}
             </div>
+            </>
           )}
 
           {/* ---------- PROMOS / OPORTUNIDADES ---------- */}

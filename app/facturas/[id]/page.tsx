@@ -81,6 +81,13 @@ export default function PaginaFactura() {
   const [vistaPrevia, setVistaPrevia] = useState(false);
   const [avisoOk, setAvisoOk] = useState<string | null>(null);
   const [rectificaDe, setRectificaDe] = useState<string | null>(null);
+  // Cobros de la factura: para mostrar cobrado/pendiente y poder cobrar aquí
+  const [cobros, setCobros] = useState<{ id: number; fecha: string; importe: number; metodo: string | null }[]>([]);
+  const [cuentasCobro, setCuentasCobro] = useState<{ id: number; codigo: string; nombre: string }[]>([]);
+  const [cobrarAbierto, setCobrarAbierto] = useState(false);
+  const [cobroImporte, setCobroImporte] = useState("");
+  const [cobroCuenta, setCobroCuenta] = useState("banco");
+  const [cobrando, setCobrando] = useState(false);
 
   // Estado editable del borrador
   const [lineas, setLineas] = useState<Linea[]>([]);
@@ -97,7 +104,7 @@ export default function PaginaFactura() {
   const [inicializado, setInicializado] = useState(false);
 
   const cargar = useCallback(async () => {
-    const [f, l, c, cli, cat, per] = await Promise.all([
+    const [f, l, c, cli, cat, per, co, cue] = await Promise.all([
       supabase
         .from("facturas")
         .select("id, numero, cliente_id, categoria_id, canal, atribucion, rectifica_id, fecha_emision, fecha_vencimiento, concepto, base, iva_pct, irpf_pct, iva_importe, irpf_importe, total, clientes(nombre, apellidos, nif, direccion)")
@@ -108,7 +115,11 @@ export default function PaginaFactura() {
       supabase.from("clientes").select("id, nombre, apellidos, nif, direccion").order("nombre"),
       supabase.from("categorias").select("id, nombre").eq("tipo", "ingreso").eq("activa", true).order("nombre"),
       supabase.from("personas").select("codigo, nombre").eq("activa", true).order("orden"),
+      supabase.from("cobros").select("id, fecha, importe, metodo").eq("factura_id", facturaId).order("fecha"),
+      supabase.from("cuentas").select("id, codigo, nombre").eq("activa", true).order("id"),
     ]);
+    setCobros((co.data as { id: number; fecha: string; importe: number; metodo: string | null }[]) ?? []);
+    setCuentasCobro((cue.data as { id: number; codigo: string; nombre: string }[]) ?? []);
     if (f.error) return setError(f.error.message);
     if (c.error)
       return setError("Falta la configuración de facturación: ejecuta supabase/facturacion.sql en el SQL Editor.");
@@ -290,6 +301,29 @@ export default function PaginaFactura() {
     cargar();
   }
 
+  // Apunta un cobro sobre esta factura (va restando del pendiente)
+  const cobrado = cobros.reduce((s, c) => s + Number(c.importe), 0);
+  const pendiente = factura ? Math.round((Number(factura.total) - cobrado) * 100) / 100 : 0;
+
+  async function cobrarFactura() {
+    const n = Number(cobroImporte.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) return setError("Importe de cobro no válido.");
+    if (n > pendiente + 0.005) return setError(`Solo quedan ${pendiente.toFixed(2)} € pendientes.`);
+    setCobrando(true);
+    const cuenta = cuentasCobro.find((c) => c.codigo === cobroCuenta);
+    const { error } = await supabase.from("cobros").insert({
+      factura_id: facturaId, fecha: new Date().toISOString().slice(0, 10), importe: Math.round(n * 100) / 100,
+      cuenta_id: cuenta?.id, metodo: cobroCuenta === "caja" ? "efectivo" : "transferencia", afecta_caja: true,
+    });
+    setCobrando(false);
+    if (error) return setError(error.message);
+    setCobrarAbierto(false);
+    setCobroImporte("");
+    setAvisoOk("Cobro apuntado ✓");
+    setTimeout(() => setAvisoOk(null), 2500);
+    cargar();
+  }
+
   // Crea una rectificativa (abono): misma factura con importes en negativo,
   // ligada a la original y con serie propia. Se abre como borrador editable.
   async function crearRectificativa() {
@@ -459,6 +493,14 @@ export default function PaginaFactura() {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
+          {factura && Number(factura.total) > 0 && pendiente > 0.005 && !esRect && (
+            <button
+              onClick={() => { setCobrarAbierto(true); setCobroImporte(pendiente.toFixed(2)); setError(null); }}
+              className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-600"
+            >
+              💶 Cobrar
+            </button>
+          )}
           {emitida ? (
             <>
               {!esRect && (
@@ -503,6 +545,48 @@ export default function PaginaFactura() {
 
       {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300 print:hidden">{error}</p>}
       {avisoOk && <p className="mb-4 rounded-xl bg-emerald-950 px-4 py-3 text-sm text-emerald-300 print:hidden">{avisoOk}</p>}
+
+      {/* Estado de cobro: cobrado / pendiente, lista de cobros y formulario */}
+      {factura && Number(factura.total) > 0 && !esRect && (
+        <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 print:hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+              <span className="text-zinc-500">Total <b className="text-white">{eur(Number(factura.total))}</b></span>
+              <span className="text-zinc-500">Cobrado <b className="text-emerald-400">{eur(cobrado)}</b></span>
+              <span className="text-zinc-500">Pendiente <b className={pendiente > 0.005 ? "text-amber-400" : "text-emerald-400"}>{eur(pendiente)}</b></span>
+            </div>
+            {pendiente <= 0.005 && <span className="rounded-full bg-emerald-950 px-3 py-1 text-xs font-bold text-emerald-400">✓ Cobrada del todo</span>}
+          </div>
+          {cobros.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {cobros.map((c) => (
+                <span key={c.id} className="rounded-md bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300">
+                  {new Date(c.fecha).toLocaleDateString("es-ES")} · {eur(Number(c.importe))}{c.metodo ? ` · ${c.metodo}` : ""}
+                </span>
+              ))}
+            </div>
+          )}
+          {cobrarAbierto && (
+            <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-zinc-800 pt-3">
+              <label className="flex flex-col gap-1">
+                <span className={etiquetaCls}>Importe a cobrar €</span>
+                <input inputMode="decimal" value={cobroImporte} onChange={(e) => setCobroImporte(e.target.value)} className={`${inputCls} w-28 text-right`} autoFocus />
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {cuentasCobro.map((c) => (
+                  <button key={c.codigo} onClick={() => setCobroCuenta(c.codigo)} className={`rounded-full px-3 py-1.5 text-xs font-bold ${cobroCuenta === c.codigo ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-300"}`}>
+                    {c.nombre.split(" (")[0]}
+                  </button>
+                ))}
+              </div>
+              <button onClick={cobrarFactura} disabled={cobrando} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+                {cobrando ? "…" : "Confirmar cobro"}
+              </button>
+              <button onClick={() => setCobrarAbierto(false)} className="rounded-xl bg-zinc-800 px-3 py-2 text-sm font-bold text-zinc-400">✕</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* EDITOR (borrador) o DOCUMENTO (vista previa / emitida) */}
       {emitida || vistaPrevia ? (
