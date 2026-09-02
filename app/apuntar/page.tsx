@@ -191,6 +191,8 @@ export default function EntradaRapida() {
   const [proveedor, setProveedor] = useState("");
   const [ivaPctGasto, setIvaPctGasto] = useState<number>(0.21);
   const [irpfPctGasto, setIrpfPctGasto] = useState<number>(0);
+  // El importe que se teclea, ¿es la base imponible o el total con IVA?
+  const [importeEsBase, setImporteEsBase] = useState(false);
   const [canalGasto, setCanalGasto] = useState<Canal>("presencial");
   const [gastoFijo, setGastoFijo] = useState(false);
   const [tieneFactura, setTieneFactura] = useState(true);
@@ -364,6 +366,7 @@ export default function EntradaRapida() {
     setClienteNombre("");
     setProveedor("");
     setMotivo("");
+    setImporteEsBase(false);
     setFecha(hoy());
     importeRef.current?.focus();
   }
@@ -477,7 +480,10 @@ export default function EntradaRapida() {
     if (!concepto.trim()) return avisar("error", "Escribe el concepto.");
 
     const signo = esDevolucion ? -1 : 1;
-    const base = (signo * Math.round((imp / (1 + ivaPctGasto)) * 100)) / 100;
+    // Si el importe tecleado es la base, se usa tal cual; si es el total con IVA, se le quita el IVA.
+    const base = importeEsBase
+      ? signo * (Math.round(imp * 100) / 100)
+      : (signo * Math.round((imp / (1 + ivaPctGasto)) * 100)) / 100;
     const esDeducible = deducible && tieneFactura;
 
     setGuardando(true);
@@ -585,6 +591,20 @@ export default function EntradaRapida() {
                 />
                 <span className="text-2xl font-black text-zinc-600">€</span>
               </div>
+              {pestana === "gasto" && (
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-zinc-600">El importe es</span>
+                  <Chips
+                    opciones={[
+                      { valor: "total", etiqueta: "Total con IVA" },
+                      { valor: "base", etiqueta: "Base (sin IVA)" },
+                    ]}
+                    valor={importeEsBase ? "base" : "total"}
+                    onCambio={(v) => setImporteEsBase(v === "base")}
+                    pequeno
+                  />
+                </div>
+              )}
             </div>
 
             <Campo etiqueta="Fecha">
@@ -780,6 +800,12 @@ export default function EntradaRapida() {
                         if (cat) {
                           setGastoFijo(cat.es_fijo);
                           setCanalGasto(cat.es_online ? "online" : "presencial");
+                          // Alquiler de local: lleva retención del 19% y se teclea la base
+                          if (/alquiler/i.test(cat.nombre)) {
+                            const irpf19 = irpfGasto.find((i) => Math.abs(i.pct - 0.19) < 0.001);
+                            if (irpf19) setIrpfPctGasto(irpf19.pct);
+                            setImporteEsBase(true);
+                          }
                         }
                       }}
                       className={`${inputCls} appearance-none`}
@@ -814,7 +840,7 @@ export default function EntradaRapida() {
                     <input placeholder="Ej: Leroy Merlin" value={proveedor} onChange={(e) => setProveedor(e.target.value)} className={inputCls} />
                   </Campo>
 
-                  <Campo etiqueta="IVA incluido">
+                  <Campo etiqueta="IVA">
                     <select value={ivaPctGasto} onChange={(e) => setIvaPctGasto(Number(e.target.value))} className={`${inputCls} appearance-none`}>
                       {ivaGasto.map((i) => (
                         <option key={i.id} value={i.pct}>{i.nombre} ({Math.round(i.pct * 100)}%)</option>
@@ -830,6 +856,30 @@ export default function EntradaRapida() {
                     </select>
                   </Campo>
                 </div>
+
+                {(ivaPctGasto > 0 || irpfPctGasto > 0) && (() => {
+                  const impG = parseImporte(importe) ?? 0;
+                  const baseG = importeEsBase ? impG : (ivaPctGasto ? impG / (1 + ivaPctGasto) : impG);
+                  const ivaG = baseG * ivaPctGasto;
+                  const irpfG = baseG * irpfPctGasto;
+                  const totalFac = baseG + ivaG;
+                  const pagas = totalFac - irpfG;
+                  const e2 = (n: number) => n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  return (
+                    <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-xs">
+                      <div className="flex justify-between py-0.5"><span className="text-zinc-500">Base imponible</span><span className="tabular-nums text-zinc-300">{e2(baseG)} €</span></div>
+                      <div className="flex justify-between py-0.5"><span className="text-zinc-500">IVA {Math.round(ivaPctGasto * 100)}%</span><span className="tabular-nums text-emerald-400">+{e2(ivaG)} €</span></div>
+                      {irpfPctGasto > 0 && (
+                        <div className="flex justify-between py-0.5"><span className="text-zinc-500">IRPF {Math.round(irpfPctGasto * 100)}% (retención)</span><span className="tabular-nums text-amber-400">−{e2(irpfG)} €</span></div>
+                      )}
+                      <div className="mt-1 flex justify-between border-t border-zinc-800 pt-1"><span className="text-zinc-400">Total factura (base + IVA)</span><span className="tabular-nums text-zinc-300">{e2(totalFac)} €</span></div>
+                      <div className="flex justify-between py-0.5 text-sm font-bold"><span className="text-white">Pagas al proveedor</span><span className="tabular-nums text-white">{e2(pagas)} €</span></div>
+                      {irpfPctGasto > 0 && (
+                        <div className="flex justify-between py-0.5"><span className="text-zinc-500">Debes a Hacienda (IRPF)</span><span className="tabular-nums text-zinc-400">{e2(irpfG)} €</span></div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 <div className="grid gap-2 sm:grid-cols-2">
                   <Toggle
@@ -877,11 +927,6 @@ export default function EntradaRapida() {
                 {esDevolucion && (
                   <p className="rounded-lg bg-sky-950 px-3 py-2 text-xs text-sky-300">
                     Se apunta en negativo en la categoría elegida: resta del gasto y el dinero vuelve a la cuenta.
-                  </p>
-                )}
-                {irpfPctGasto > 0 && (
-                  <p className="rounded-lg bg-amber-950 px-3 py-2 text-xs text-amber-300">
-                    Retienes este IRPF y se lo debes a Hacienda (modelo 111/115).
                   </p>
                 )}
               </div>
