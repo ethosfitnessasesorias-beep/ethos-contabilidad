@@ -24,6 +24,7 @@ interface Categoria {
   tipo: string;
   grupo: string;
   nombre: string;
+  es_inversion?: boolean | null;
 }
 type TipoMov = "ingreso" | "gasto" | "traspaso";
 interface Movimiento {
@@ -88,7 +89,7 @@ export default function LibroPage() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [movs, setMovs] = useState<Movimiento[]>([]);
   const [porPedir, setPorPedir] = useState(0);
-  const [inversionMes, setInversionMes] = useState(0);
+  const [inversionIds, setInversionIds] = useState<Set<number>>(new Set());
   const [nominaIds, setNominaIds] = useState<Set<number>>(new Set());
   const [clientesLista, setClientesLista] = useState<{ id: number; nombre: string; apellidos: string | null }[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -111,7 +112,7 @@ export default function LibroPage() {
     const [cu, sa, cat, cli] = await Promise.all([
       supabase.from("cuentas").select("id, codigo, nombre, es_transito, saldo_inicial").eq("activa", true).order("id"),
       supabase.from("v_saldo_cuentas").select("codigo, saldo"),
-      supabase.from("categorias").select("id, tipo, grupo, nombre").order("tipo").order("grupo").order("nombre"),
+      supabase.from("categorias").select("id, tipo, grupo, nombre, es_inversion").order("tipo").order("grupo").order("nombre"),
       supabase.from("clientes").select("id, nombre, apellidos").order("nombre"),
     ]);
     setCuentas((cu.data as Cuenta[]) ?? []);
@@ -121,6 +122,8 @@ export default function LibroPage() {
     setCategorias(cats);
     // Las nóminas son reparto de beneficio, no un gasto: se separan del total
     setNominaIds(new Set(cats.filter((c) => /mina/i.test(c.nombre)).map((c) => c.id)));
+    // La inversión se separa del gasto corriente (respeta el filtro de canal/cuenta)
+    setInversionIds(new Set(cats.filter((c) => c.es_inversion).map((c) => c.id)));
   }, []);
 
   const cargar = useCallback(async () => {
@@ -152,10 +155,6 @@ export default function LibroPage() {
         .lt("fecha", hasta),
       supabase.from("gastos").select("id", { count: "exact", head: true }).eq("tiene_factura", false).gt("base", 0),
     ]);
-
-    // Inversión del mes (para separarla del gasto corriente en el balance)
-    const inv = await supabase.from("v_inversion_mensual").select("inversion").eq("mes", desde).maybeSingle();
-    setInversionMes(Number((inv.data as { inversion: number } | null)?.inversion ?? 0));
 
     // Método de pago derivado de la cuenta (para gastos, que no lo guardan)
     const metodoPorCuenta = new Map(cuentas.map((c) => [c.id, c.codigo === "caja" ? "efectivo" : c.codigo === "banco" ? "transferencia" : c.codigo]));
@@ -381,17 +380,21 @@ export default function LibroPage() {
   // ingreso ni gasto (antes inflaban ambos lados); un cobro negativo
   // (devolución) minora "Entra" y un gasto negativo minora "Sale".
   const totales = useMemo(() => {
-    let ing = 0, gas = 0, reparto = 0;
+    let ing = 0, gas = 0, reparto = 0, inv = 0;
     for (const m of filtrados) {
       if (m.tipo === "ingreso") ing += m.importe;
       else if (m.tipo === "gasto") {
         // Las nóminas cuentan como reparto, no como gasto del negocio
         if (m.categoriaId && nominaIds.has(m.categoriaId)) reparto += -m.importe;
-        else gas += -m.importe;
+        else {
+          gas += -m.importe;
+          // La inversión va dentro de "Sale" pero se separa como corriente/inversión
+          if (m.categoriaId && inversionIds.has(m.categoriaId)) inv += -m.importe;
+        }
       }
     }
-    return { ing, gas, reparto, neto: ing - gas };
-  }, [filtrados, nominaIds]);
+    return { ing, gas, reparto, inv, neto: ing - gas };
+  }, [filtrados, nominaIds, inversionIds]);
 
   const hayFiltros =
     fTexto.trim() !== "" || fTipo !== "todos" || fCanal !== "todos" || fMetodo !== "todos" || fCats.size > 0 || fMin !== "" || fMax !== "";
@@ -442,9 +445,9 @@ export default function LibroPage() {
           <span className="rounded-lg bg-zinc-900 px-3 py-1.5 text-emerald-400">Entra {eur(totales.ing)}</span>
           <span className="rounded-lg bg-zinc-900 px-3 py-1.5 text-red-400">
             Sale {eur(totales.gas)}
-            {inversionMes > 0 && cuentaSel === "todas" && (
+            {totales.inv > 0 && (
               <span className="ml-1 text-[11px] text-zinc-500">
-                (corriente {eur(Math.max(0, totales.gas - inversionMes))} · inversión {eur(inversionMes)})
+                (corriente {eur(totales.gas - totales.inv)} · inversión {eur(totales.inv)})
               </span>
             )}
           </span>
