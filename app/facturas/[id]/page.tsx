@@ -305,6 +305,34 @@ export default function PaginaFactura() {
   const cobrado = cobros.reduce((s, c) => s + Number(c.importe), 0);
   const pendiente = factura ? Math.round((Number(factura.total) - cobrado) * 100) / 100 : 0;
 
+  // Borra un cobro suelto (deja la factura como pendiente por ese importe)
+  async function borrarCobro(cobroId: number) {
+    if (!window.confirm("¿Borrar este cobro? La factura volverá a quedar pendiente por ese importe.")) return;
+    const { error } = await supabase.from("cobros").delete().eq("id", cobroId);
+    if (error) return setError(error.message);
+    setAvisoOk("Cobro borrado ✓");
+    setTimeout(() => setAvisoOk(null), 2500);
+    cargar();
+  }
+
+  // Borra la factura entera: sus cobros, líneas y referencias de remesa
+  async function borrarFactura() {
+    if (!factura) return;
+    const aviso = factura.numero
+      ? `Esta factura YA tiene número (${factura.numero}). Borrarla rompe la numeración correlativa: fiscalmente es mejor hacer una rectificativa.\n\n¿Aun así quieres borrarla del todo?`
+      : `¿Borrar esta factura${cobros.length ? " y su(s) cobro(s)" : ""}? No se puede deshacer.`;
+    if (!window.confirm(aviso)) return;
+    setGuardando(true);
+    // Orden por claves foráneas: primero lo que apunta a la factura
+    await supabase.from("cobros").delete().eq("factura_id", facturaId);
+    await supabase.from("factura_lineas").delete().eq("factura_id", facturaId);
+    await supabase.from("remesa_lineas").delete().eq("factura_id", facturaId);
+    const { error } = await supabase.from("facturas").delete().eq("id", facturaId);
+    setGuardando(false);
+    if (error) return setError(`No se pudo borrar: ${error.message}`);
+    router.back();
+  }
+
   async function cobrarFactura() {
     const n = Number(cobroImporte.replace(",", "."));
     if (!Number.isFinite(n) || n <= 0) return setError("Importe de cobro no válido.");
@@ -501,6 +529,16 @@ export default function PaginaFactura() {
               💶 Cobrar
             </button>
           )}
+          {factura && (
+            <button
+              onClick={borrarFactura}
+              disabled={guardando}
+              title="Borrar esta factura y sus cobros"
+              className="rounded-xl border border-red-900 px-4 py-2.5 text-sm font-bold text-red-400 hover:bg-red-950 disabled:opacity-50"
+            >
+              🗑 Borrar
+            </button>
+          )}
           {emitida ? (
             <>
               {!esRect && (
@@ -560,8 +598,9 @@ export default function PaginaFactura() {
           {cobros.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {cobros.map((c) => (
-                <span key={c.id} className="rounded-md bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300">
+                <span key={c.id} className="inline-flex items-center gap-1 rounded-md bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300">
                   {new Date(c.fecha).toLocaleDateString("es-ES")} · {eur(Number(c.importe))}{c.metodo ? ` · ${c.metodo}` : ""}
+                  <button onClick={() => borrarCobro(c.id)} title="Borrar este cobro" className="ml-0.5 font-bold text-zinc-500 hover:text-red-400">✕</button>
                 </span>
               ))}
             </div>
