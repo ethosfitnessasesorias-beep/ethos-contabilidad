@@ -5,6 +5,10 @@ import { supabase } from "@/lib/supabase";
 import { eur, eurEntero } from "@/lib/formato";
 import Modal from "@/components/Modal";
 
+// Redondeo a céntimos: el "a pagar" de cada mes se cuadra al céntimo para que el
+// total sea idéntico a la suma de los meses tachables (evita descuadres de 0,0x).
+const r2 = (n: number) => Math.round(Number(n) * 100) / 100;
+
 // ---------- Auditoría del mes: cada línea que entra en el reparto ----------
 interface AudCobro {
   fecha: string;
@@ -264,11 +268,11 @@ export default function RepartoPage() {
     for (const c of colab) {
       if (new Date(c.mes).getFullYear() !== anyo) continue;
       const acc = m.get(c.colaborador) ?? { codigo: c.colaborador, nombre: c.nombre, pct: Number(c.pct), aPagar: 0, aEthos: 0, base: 0, pagado: 0, meses: [] };
-      acc.aPagar += Number(c.a_pagar);
+      acc.aPagar += r2(c.a_pagar);
       acc.aEthos += Number(c.a_ethos);
       acc.base += Number(c.base_cobrada);
       const kPag = `${c.mes.slice(0, 7)}-${c.colaborador}`;
-      acc.pagado += pagados.has(kPag) ? Number(pagados.get(kPag) ?? c.a_pagar) : 0;
+      acc.pagado += pagados.has(kPag) ? Number(pagados.get(kPag) ?? r2(c.a_pagar)) : 0;
       acc.meses.push(c);
       m.set(c.colaborador, acc);
     }
@@ -504,11 +508,11 @@ export default function RepartoPage() {
                       .map((m) => {
                         const kCh = `${m.mes.slice(0, 7)}-${c.codigo}`;
                         const hecho = pagados.has(kCh);
-                        const real = hecho ? (pagados.get(kCh) ?? Number(m.a_pagar)) : Number(m.a_pagar);
+                        const real = hecho ? (pagados.get(kCh) ?? r2(m.a_pagar)) : r2(m.a_pagar);
                         return (
                           <span key={m.mes} className="inline-flex overflow-hidden rounded-md">
                             <button
-                              onClick={() => togglePagado(m.mes, c.codigo, Number(m.a_pagar))}
+                              onClick={() => togglePagado(m.mes, c.codigo, r2(m.a_pagar))}
                               title={hecho ? "Quitar el pagado" : "Marcar como pagado"}
                               className={`px-2 py-1 text-[11px] font-bold ${
                                 hecho ? "bg-emerald-600/20 text-emerald-400 ring-1 ring-inset ring-emerald-800" : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
