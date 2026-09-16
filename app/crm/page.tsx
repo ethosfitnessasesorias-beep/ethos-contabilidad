@@ -92,7 +92,7 @@ export default function CrmPage() {
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState<"todos" | "cliente" | "lead" | "baja">("todos");
   const [filtroPrep, setFiltroPrep] = useState("todos");
-  const [verTareas, setVerTareas] = useState(true);
+  const [vista, setVista] = useState<"contactos" | "tareas">("contactos");
   const [filtroCanal, setFiltroCanal] = useState<"todos" | "online" | "presencial">("todos");
   const [sortKey, setSortKey] = useState<string>("inicio");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
@@ -441,11 +441,13 @@ export default function CrmPage() {
   // Quién tiene pendiente cada tarea (solo clientes activos), respetando los
   // filtros de preparador y canal para que David/Luis vean lo suyo.
   const tareasPend = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
     const base = cli.filter(
       (c) =>
         esCliente(c) &&
         (filtroPrep === "todos" || c.entrenador === filtroPrep) &&
-        (filtroCanal === "todos" || c.canal === filtroCanal)
+        (filtroCanal === "todos" || c.canal === filtroCanal) &&
+        (!q || `${c.nombre} ${c.apellidos ?? ""}`.toLowerCase().includes(q))
     );
     return TAREAS.map((t) => ({
       ...t,
@@ -454,7 +456,8 @@ export default function CrmPage() {
         .sort((a, b) => `${a.nombre} ${a.apellidos ?? ""}`.localeCompare(`${b.nombre} ${b.apellidos ?? ""}`)),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cli, filtroPrep, filtroCanal]);
+  }, [cli, filtroPrep, filtroCanal, busqueda]);
+  const totalPend = tareasPend.reduce((s, t) => s + t.clientes.length, 0);
 
   // Métricas
   const metricas = useMemo(() => {
@@ -609,6 +612,24 @@ export default function CrmPage() {
           </div>
         )}
 
+        {/* Pestañas: listado de contactos vs tareas pendientes (mismo dato) */}
+        <div className="mb-4 flex gap-1 rounded-xl border border-zinc-800 bg-zinc-900/40 p-1">
+          {([["contactos", "📋 Contactos"], ["tareas", "✅ Tareas"]] as const).map(([v, et]) => (
+            <button
+              key={v}
+              onClick={() => setVista(v)}
+              className={`flex-1 rounded-lg px-3 py-2 text-sm font-bold transition ${
+                vista === v ? "bg-red-600 text-white" : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              {et}
+              {v === "tareas" && totalPend > 0 && (
+                <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] ${vista === v ? "bg-red-800" : "bg-zinc-800"}`}>{totalPend}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
         {/* Filtros */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <input placeholder="Buscar por nombre, email o teléfono…" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className={`${inputCls} min-w-56 flex-1 sm:max-w-xs`} />
@@ -629,53 +650,41 @@ export default function CrmPage() {
           </select>
         </div>
 
-        {/* Panel de tareas pendientes: quién falta por Bolsa / Maps / Trustpilot */}
-        <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40">
-          <button
-            onClick={() => setVerTareas(!verTareas)}
-            className="flex w-full items-center justify-between px-4 py-3 text-left"
-          >
-            <span className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-zinc-300">
-              Tareas pendientes
-              <span className="flex gap-1.5 text-[11px] font-bold normal-case tracking-normal">
-                {tareasPend.map((t) => (
-                  <span
-                    key={String(t.campo)}
-                    className={`rounded-full px-2 py-0.5 ${t.clientes.length === 0 ? "bg-emerald-950 text-emerald-400" : "bg-zinc-800 text-zinc-300"}`}
-                  >
-                    {t.emoji} {t.clientes.length}
-                  </span>
-                ))}
-              </span>
-            </span>
-            <span className="text-zinc-500">{verTareas ? "▾" : "▸"}</span>
-          </button>
-          {verTareas && (
-            <div className="grid gap-3 border-t border-zinc-800 p-3 sm:grid-cols-3">
+        {/* Subpantalla de tareas: quién falta por Bolsa / Maps / Trustpilot.
+            Mismo dato que la tabla (clientes.seg_*): marcar aquí actualiza la
+            columna en Contactos y al revés. */}
+        {vista === "tareas" && (
+          <>
+            <p className="mb-3 text-[11px] text-zinc-500">
+              Los que faltan por hacer cada tarea. Toca <span className="text-emerald-400">✓</span> para marcarla hecha:
+              sale de la lista y queda marcada también en la columna de <b>Contactos</b> (y al revés).
+              Solo clientes activos · filtra por preparador o canal arriba.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-3">
               {tareasPend.map((t) => (
-                <div key={String(t.campo)} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
-                  <p className="mb-2 flex items-center justify-between text-xs font-black uppercase tracking-wide text-zinc-400">
+                <div key={String(t.campo)} className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3">
+                  <p className="mb-2 flex items-center justify-between text-sm font-black uppercase tracking-wide text-zinc-300">
                     <span>{t.emoji} {t.label}</span>
                     <span className={t.clientes.length === 0 ? "text-emerald-400" : "text-zinc-500"}>
                       {t.clientes.length === 0 ? "al día ✓" : `${t.clientes.length} faltan`}
                     </span>
                   </p>
                   {t.clientes.length === 0 ? (
-                    <p className="py-2 text-center text-[11px] text-zinc-600">Nadie pendiente</p>
+                    <p className="py-4 text-center text-xs text-zinc-600">Nadie pendiente 🎉</p>
                   ) : (
-                    <div className="flex max-h-64 flex-col gap-1 overflow-y-auto pr-0.5">
+                    <div className="flex max-h-[65vh] flex-col gap-1 overflow-y-auto pr-0.5">
                       {t.clientes.map((c) => (
-                        <div key={c.id} className="flex items-center gap-1.5 rounded-lg bg-zinc-900 px-2 py-1">
+                        <div key={c.id} className="flex items-center gap-2 rounded-lg bg-zinc-950/60 px-2 py-1.5">
                           <button
                             onClick={() => toggleSeg(c, t.campo)}
                             title={`Marcar ${t.label} como hecho`}
-                            className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-zinc-700 text-[10px] text-zinc-600 hover:border-emerald-600 hover:text-emerald-400"
+                            className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-zinc-700 text-xs text-zinc-600 hover:border-emerald-600 hover:bg-emerald-950 hover:text-emerald-400"
                           >
                             ✓
                           </button>
                           <button
                             onClick={() => setEd(c)}
-                            className="min-w-0 flex-1 truncate text-left text-[12px] text-zinc-300 hover:text-red-400"
+                            className="min-w-0 flex-1 truncate text-left text-[13px] text-zinc-300 hover:text-red-400"
                             title="Abrir ficha"
                           >
                             {c.nombre} {c.apellidos ?? ""}
@@ -687,10 +696,11 @@ export default function CrmPage() {
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </>
+        )}
 
         {/* Tabla */}
+        {vista === "contactos" && (
         <div className="overflow-x-auto rounded-2xl border border-zinc-800 bg-zinc-900/40">
           <table className="w-full text-sm">
             <thead>
@@ -772,6 +782,7 @@ export default function CrmPage() {
             </tbody>
           </table>
         </div>
+        )}
 
         <Modal
           abierto={!!ed || creando}
