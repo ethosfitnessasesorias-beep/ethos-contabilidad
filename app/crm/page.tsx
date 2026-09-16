@@ -67,6 +67,13 @@ const SEG: { campo: keyof Cli; corto: string }[] = [
   { campo: "seg_google_maps", corto: "Maps" },
   { campo: "seg_trustpilot", corto: "Trustpilot" },
 ];
+// Tareas de captación/fidelización que se persiguen cliente a cliente: el panel
+// de arriba lista quién las tiene pendientes para poder ir tachándolas.
+const TAREAS: { campo: keyof Cli; label: string; emoji: string }[] = [
+  { campo: "seg_bolsa", label: "Bolsa", emoji: "🛍️" },
+  { campo: "seg_google_maps", label: "Maps", emoji: "📍" },
+  { campo: "seg_trustpilot", label: "Trustpilot", emoji: "⭐" },
+];
 
 const diasEntre = (a: string, b: string) => Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
 function humano(dias: number): string {
@@ -85,6 +92,7 @@ export default function CrmPage() {
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState<"todos" | "cliente" | "lead" | "baja">("todos");
   const [filtroPrep, setFiltroPrep] = useState("todos");
+  const [verTareas, setVerTareas] = useState(true);
   const [filtroCanal, setFiltroCanal] = useState<"todos" | "online" | "presencial">("todos");
   const [sortKey, setSortKey] = useState<string>("inicio");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
@@ -430,6 +438,24 @@ export default function CrmPage() {
   const esCliente = (c: Cli) => !esBaja(c) && c.estado !== "lead";
   const esLead = (c: Cli) => !esBaja(c) && c.estado === "lead";
 
+  // Quién tiene pendiente cada tarea (solo clientes activos), respetando los
+  // filtros de preparador y canal para que David/Luis vean lo suyo.
+  const tareasPend = useMemo(() => {
+    const base = cli.filter(
+      (c) =>
+        esCliente(c) &&
+        (filtroPrep === "todos" || c.entrenador === filtroPrep) &&
+        (filtroCanal === "todos" || c.canal === filtroCanal)
+    );
+    return TAREAS.map((t) => ({
+      ...t,
+      clientes: base
+        .filter((c) => !c[t.campo])
+        .sort((a, b) => `${a.nombre} ${a.apellidos ?? ""}`.localeCompare(`${b.nombre} ${b.apellidos ?? ""}`)),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cli, filtroPrep, filtroCanal]);
+
   // Métricas
   const metricas = useMemo(() => {
     const activos = cli.filter(esCliente);
@@ -601,6 +627,67 @@ export default function CrmPage() {
             <option value="online">Online</option>
             <option value="presencial">GYM</option>
           </select>
+        </div>
+
+        {/* Panel de tareas pendientes: quién falta por Bolsa / Maps / Trustpilot */}
+        <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40">
+          <button
+            onClick={() => setVerTareas(!verTareas)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
+          >
+            <span className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-zinc-300">
+              Tareas pendientes
+              <span className="flex gap-1.5 text-[11px] font-bold normal-case tracking-normal">
+                {tareasPend.map((t) => (
+                  <span
+                    key={String(t.campo)}
+                    className={`rounded-full px-2 py-0.5 ${t.clientes.length === 0 ? "bg-emerald-950 text-emerald-400" : "bg-zinc-800 text-zinc-300"}`}
+                  >
+                    {t.emoji} {t.clientes.length}
+                  </span>
+                ))}
+              </span>
+            </span>
+            <span className="text-zinc-500">{verTareas ? "▾" : "▸"}</span>
+          </button>
+          {verTareas && (
+            <div className="grid gap-3 border-t border-zinc-800 p-3 sm:grid-cols-3">
+              {tareasPend.map((t) => (
+                <div key={String(t.campo)} className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+                  <p className="mb-2 flex items-center justify-between text-xs font-black uppercase tracking-wide text-zinc-400">
+                    <span>{t.emoji} {t.label}</span>
+                    <span className={t.clientes.length === 0 ? "text-emerald-400" : "text-zinc-500"}>
+                      {t.clientes.length === 0 ? "al día ✓" : `${t.clientes.length} faltan`}
+                    </span>
+                  </p>
+                  {t.clientes.length === 0 ? (
+                    <p className="py-2 text-center text-[11px] text-zinc-600">Nadie pendiente</p>
+                  ) : (
+                    <div className="flex max-h-64 flex-col gap-1 overflow-y-auto pr-0.5">
+                      {t.clientes.map((c) => (
+                        <div key={c.id} className="flex items-center gap-1.5 rounded-lg bg-zinc-900 px-2 py-1">
+                          <button
+                            onClick={() => toggleSeg(c, t.campo)}
+                            title={`Marcar ${t.label} como hecho`}
+                            className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-zinc-700 text-[10px] text-zinc-600 hover:border-emerald-600 hover:text-emerald-400"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            onClick={() => setEd(c)}
+                            className="min-w-0 flex-1 truncate text-left text-[12px] text-zinc-300 hover:text-red-400"
+                            title="Abrir ficha"
+                          >
+                            {c.nombre} {c.apellidos ?? ""}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Tabla */}
