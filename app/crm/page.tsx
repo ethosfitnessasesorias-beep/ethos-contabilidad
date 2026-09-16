@@ -74,6 +74,8 @@ const TAREAS: { campo: keyof Cli; label: string; emoji: string }[] = [
   { campo: "seg_google_maps", label: "Maps", emoji: "📍" },
   { campo: "seg_trustpilot", label: "Trustpilot", emoji: "⭐" },
 ];
+// A los clientes de baja solo se les piden reseñas (la bolsa ya no aplica).
+const TAREAS_BAJA = TAREAS.filter((t) => t.campo !== "seg_bolsa");
 
 const diasEntre = (a: string, b: string) => Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
 function humano(dias: number): string {
@@ -440,24 +442,56 @@ export default function CrmPage() {
 
   // Quién tiene pendiente cada tarea (solo clientes activos), respetando los
   // filtros de preparador y canal para que David/Luis vean lo suyo.
-  const tareasPend = useMemo(() => {
+  const { tareasPend, tareasBaja, totalPend } = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
-    const base = cli.filter(
-      (c) =>
-        esCliente(c) &&
-        (filtroPrep === "todos" || c.entrenador === filtroPrep) &&
-        (filtroCanal === "todos" || c.canal === filtroCanal) &&
-        (!q || `${c.nombre} ${c.apellidos ?? ""}`.toLowerCase().includes(q))
-    );
-    return TAREAS.map((t) => ({
-      ...t,
-      clientes: base
-        .filter((c) => !c[t.campo])
-        .sort((a, b) => `${a.nombre} ${a.apellidos ?? ""}`.localeCompare(`${b.nombre} ${b.apellidos ?? ""}`)),
-    }));
+    const pasaFiltros = (c: Cli) =>
+      (filtroPrep === "todos" || c.entrenador === filtroPrep) &&
+      (filtroCanal === "todos" || c.canal === filtroCanal) &&
+      (!q || `${c.nombre} ${c.apellidos ?? ""}`.toLowerCase().includes(q));
+    const ordena = (a: Cli, b: Cli) => `${a.nombre} ${a.apellidos ?? ""}`.localeCompare(`${b.nombre} ${b.apellidos ?? ""}`);
+    const activos = cli.filter((c) => esCliente(c) && pasaFiltros(c));
+    const bajas = cli.filter((c) => esBaja(c) && pasaFiltros(c));
+    const pend = TAREAS.map((t) => ({ ...t, clientes: activos.filter((c) => !c[t.campo]).sort(ordena) }));
+    const baja = TAREAS_BAJA.map((t) => ({ ...t, clientes: bajas.filter((c) => !c[t.campo]).sort(ordena) }));
+    return { tareasPend: pend, tareasBaja: baja, totalPend: pend.reduce((s, t) => s + t.clientes.length, 0) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cli, filtroPrep, filtroCanal, busqueda]);
-  const totalPend = tareasPend.reduce((s, t) => s + t.clientes.length, 0);
+
+  // Una tarjeta de tarea (columna) con su lista de clientes pendientes
+  const tarjetaTarea = (t: { campo: keyof Cli; label: string; emoji: string; clientes: Cli[] }) => (
+    <div key={String(t.campo)} className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3">
+      <p className="mb-2 flex items-center justify-between text-sm font-black uppercase tracking-wide text-zinc-300">
+        <span>{t.emoji} {t.label}</span>
+        <span className={t.clientes.length === 0 ? "text-emerald-400" : "text-zinc-500"}>
+          {t.clientes.length === 0 ? "al día ✓" : `${t.clientes.length} faltan`}
+        </span>
+      </p>
+      {t.clientes.length === 0 ? (
+        <p className="py-4 text-center text-xs text-zinc-600">Nadie pendiente 🎉</p>
+      ) : (
+        <div className="flex max-h-[60vh] flex-col gap-1 overflow-y-auto pr-0.5">
+          {t.clientes.map((c) => (
+            <div key={c.id} className="flex items-center gap-2 rounded-lg bg-zinc-950/60 px-2 py-1.5">
+              <button
+                onClick={() => toggleSeg(c, t.campo)}
+                title={`Marcar ${t.label} como hecho`}
+                className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-zinc-700 text-xs text-zinc-600 hover:border-emerald-600 hover:bg-emerald-950 hover:text-emerald-400"
+              >
+                ✓
+              </button>
+              <button
+                onClick={() => setEd(c)}
+                className="min-w-0 flex-1 truncate text-left text-[13px] text-zinc-300 hover:text-red-400"
+                title="Abrir ficha"
+              >
+                {c.nombre} {c.apellidos ?? ""}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   // Métricas
   const metricas = useMemo(() => {
@@ -658,43 +692,21 @@ export default function CrmPage() {
             <p className="mb-3 text-[11px] text-zinc-500">
               Los que faltan por hacer cada tarea. Toca <span className="text-emerald-400">✓</span> para marcarla hecha:
               sale de la lista y queda marcada también en la columna de <b>Contactos</b> (y al revés).
-              Solo clientes activos · filtra por preparador o canal arriba.
+              Filtra por preparador o canal arriba.
             </p>
+
+            <h3 className="mb-2 text-xs font-black uppercase tracking-wider text-zinc-500">
+              Clientes activos <span className="text-zinc-600">· bolsa y reseñas</span>
+            </h3>
             <div className="grid gap-3 sm:grid-cols-3">
-              {tareasPend.map((t) => (
-                <div key={String(t.campo)} className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3">
-                  <p className="mb-2 flex items-center justify-between text-sm font-black uppercase tracking-wide text-zinc-300">
-                    <span>{t.emoji} {t.label}</span>
-                    <span className={t.clientes.length === 0 ? "text-emerald-400" : "text-zinc-500"}>
-                      {t.clientes.length === 0 ? "al día ✓" : `${t.clientes.length} faltan`}
-                    </span>
-                  </p>
-                  {t.clientes.length === 0 ? (
-                    <p className="py-4 text-center text-xs text-zinc-600">Nadie pendiente 🎉</p>
-                  ) : (
-                    <div className="flex max-h-[65vh] flex-col gap-1 overflow-y-auto pr-0.5">
-                      {t.clientes.map((c) => (
-                        <div key={c.id} className="flex items-center gap-2 rounded-lg bg-zinc-950/60 px-2 py-1.5">
-                          <button
-                            onClick={() => toggleSeg(c, t.campo)}
-                            title={`Marcar ${t.label} como hecho`}
-                            className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-zinc-700 text-xs text-zinc-600 hover:border-emerald-600 hover:bg-emerald-950 hover:text-emerald-400"
-                          >
-                            ✓
-                          </button>
-                          <button
-                            onClick={() => setEd(c)}
-                            className="min-w-0 flex-1 truncate text-left text-[13px] text-zinc-300 hover:text-red-400"
-                            title="Abrir ficha"
-                          >
-                            {c.nombre} {c.apellidos ?? ""}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
+              {tareasPend.map((t) => tarjetaTarea(t))}
+            </div>
+
+            <h3 className="mb-2 mt-6 text-xs font-black uppercase tracking-wider text-zinc-500">
+              Clientes de baja <span className="text-zinc-600">· solo pedir reseña</span>
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {tareasBaja.map((t) => tarjetaTarea(t))}
             </div>
           </>
         )}
