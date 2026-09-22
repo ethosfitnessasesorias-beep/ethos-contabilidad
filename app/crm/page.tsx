@@ -52,6 +52,15 @@ interface Cli {
   cuota_desde: string | null;
   cuota_periodicidad: string;
 }
+interface Ciclo {
+  id: number;
+  primer_contacto: string | null;
+  fecha_compra: string | null;
+  fecha_inicio: string | null;
+  fecha_baja: string | null;
+  motivo: string | null;
+  creado_en: string;
+}
 // Nombre normalizado para detectar duplicados (minúsculas, sin tildes)
 const normNombre = (s: string) =>
   s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
@@ -100,6 +109,7 @@ export default function CrmPage() {
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [ed, setEd] = useState<Cli | null>(null);
   const [creando, setCreando] = useState(false);
+  const [ciclos, setCiclos] = useState<Ciclo[]>([]);
   const [f, setF] = useState<Partial<Cli>>({});
   const [saldos, setSaldos] = useState<Map<number, { cobrado: number; pendiente: number }>>(new Map());
   const [error, setError] = useState<string | null>(null);
@@ -242,10 +252,46 @@ export default function CrmPage() {
     cargar();
   }
 
+  async function cargarCiclos(clienteId: number) {
+    const { data } = await supabase
+      .from("cliente_ciclos")
+      .select("id, primer_contacto, fecha_compra, fecha_inicio, fecha_baja, motivo, creado_en")
+      .eq("cliente_id", clienteId)
+      .order("fecha_inicio", { ascending: true, nullsFirst: true });
+    setCiclos((data as Ciclo[]) ?? []);
+  }
+
   function abrirEditar(c: Cli) {
     setCreando(false);
     setEd(c);
     setF({ ...c });
+    setCiclos([]);
+    cargarCiclos(c.id);
+  }
+
+  // El cliente vuelve: archiva la etapa actual en el historial y empieza una
+  // nueva limpia, sin perder las fechas de la etapa anterior.
+  async function nuevaEtapa() {
+    if (!ed) return;
+    const resumen = [
+      ed.fecha_compra ? `compra ${ed.fecha_compra}` : null,
+      ed.fecha_inicio ? `inicio ${ed.fecha_inicio}` : null,
+      ed.fecha_baja ? `baja ${ed.fecha_baja}` : "aún sin baja",
+    ].filter(Boolean).join(" · ");
+    if (!confirm(`El cliente vuelve.\n\nSe archivará la etapa actual (${resumen}) en el historial y empezarás una nueva en blanco. Las fechas anteriores NO se pierden.\n\n¿Seguir?`)) return;
+    const { error: e1 } = await supabase.from("cliente_ciclos").insert({
+      cliente_id: ed.id,
+      primer_contacto: ed.primer_contacto, fecha_compra: ed.fecha_compra,
+      fecha_inicio: ed.fecha_inicio, fecha_baja: ed.fecha_baja,
+    });
+    if (e1) return setError(e1.message);
+    const { error: e2 } = await supabase.from("clientes").update({
+      primer_contacto: hoy, fecha_compra: null, fecha_inicio: null, fecha_baja: null, estado: "cliente",
+    }).eq("id", ed.id);
+    if (e2) return setError(e2.message);
+    setF((prev) => ({ ...prev, primer_contacto: hoy, fecha_compra: null, fecha_inicio: null, fecha_baja: null, estado: "cliente" }));
+    await cargarCiclos(ed.id);
+    cargar();
   }
 
   // Alta manual: por si el formulario falla o el cliente no lo rellenó
@@ -835,6 +881,46 @@ export default function CrmPage() {
               <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Registro form</span><input type="date" value={fEd("fecha_registro")} onChange={(e) => setF({ ...f, fecha_registro: e.target.value })} className={inputCls} /></label>
               <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-red-400">Fecha de baja</span><input type="date" value={fEd("fecha_baja")} onChange={(e) => setF({ ...f, fecha_baja: e.target.value })} className={inputCls} /></label>
             </div>
+
+            {/* Etapas: si el cliente vuelve, se archiva la etapa actual y se empieza otra sin perder fechas */}
+            {!creando && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-zinc-500">Etapas del cliente</span>
+                  <button
+                    type="button"
+                    onClick={nuevaEtapa}
+                    title="Archiva las fechas actuales en el historial y deja las de arriba en blanco para la nueva etapa"
+                    className="rounded-lg bg-violet-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-600"
+                  >
+                    ↻ El cliente vuelve (nueva etapa)
+                  </button>
+                </div>
+                {ciclos.length === 0 ? (
+                  <p className="mt-2 text-[11px] leading-snug text-zinc-600">
+                    Sin etapas anteriores. Las fechas de arriba son la etapa actual. Si vuelve, pulsa el botón: se guardan
+                    estas fechas en el historial y empiezas una nueva en blanco.
+                  </p>
+                ) : (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {ciclos.map((c, i) => {
+                      const f2 = (d: string | null) => (d ? new Date(d + "T00:00:00").toLocaleDateString("es-ES") : null);
+                      const dur = c.fecha_inicio ? humano(diasEntre(c.fecha_inicio, c.fecha_baja ?? hoy)) : "—";
+                      return (
+                        <div key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg bg-zinc-900 px-2.5 py-1.5 text-[11px]">
+                          <span className="font-bold text-zinc-400">Etapa {i + 1}</span>
+                          {c.fecha_compra && <span className="text-zinc-500">compró {f2(c.fecha_compra)}</span>}
+                          <span className="text-zinc-500">{f2(c.fecha_inicio) ?? "—"} → {f2(c.fecha_baja) ?? "…"}</span>
+                          <span className="text-zinc-600">{dur}</span>
+                        </div>
+                      );
+                    })}
+                    <p className="text-[10px] text-zinc-600">Arriba = etapa actual · aquí = etapas anteriores (archivadas).</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Objetivo</span><textarea rows={2} value={fEd("objetivo")} onChange={(e) => setF({ ...f, objetivo: e.target.value })} className={inputCls} /></label>
 
             {/* Plan contratado (texto libre; las cuotas se gestionan en BemadBox) */}
