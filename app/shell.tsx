@@ -63,7 +63,7 @@ const GRUPOS: { titulo: string | null; items: ItemNav[] }[] = [
       { href: "/contabilidad/impuestos", etiqueta: "Impuestos", icono: ic("M9 14l6-6|M9.5 9.5h.01|M14.5 13.5h.01|M4 4h16v16H4z") },
       { href: "/contabilidad/reparto", etiqueta: "Reparto", icono: ic("M16 3h5v5|M8 3H3v5|M21 16v5h-5|M3 16v5h5|M21 3l-7 7|M3 21l7-7") },
       { href: "/contabilidad/cierre", etiqueta: "Cierre de mes", icono: ic("M9 11l3 3L22 4|M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11") },
-      { href: "/contabilidad/importar", etiqueta: "Importar banco", icono: ic("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|M7 10l5 5 5-5|M12 15V3") },
+      { href: "/contabilidad/importar", etiqueta: "Importar grupales", icono: ic("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|M7 10l5 5 5-5|M12 15V3") },
       { href: "/contabilidad/ajustes", etiqueta: "Ajustes", icono: ic("M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M12 2v3|M12 19v3|M2 12h3|M19 12h3|M4.9 4.9l2.1 2.1|M17 17l2.1 2.1|M19.1 4.9 17 7|M7 17l-2.1 2.1") },
     ],
   },

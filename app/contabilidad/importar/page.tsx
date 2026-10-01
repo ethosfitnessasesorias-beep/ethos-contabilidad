@@ -1,262 +1,194 @@
 "use client";
 
+// Importador de domiciliaciones de BEMADBOX (remesa SEPA pain.008).
+// Lee el XML, empareja cada recibo con su cliente y crea el cobro de cada uno
+// (como COBRADO, cuenta banco, fecha de cobro de la remesa). Recuerda el
+// emparejamiento por nº de mandato y evita duplicados por el ID de cada recibo,
+// todo guardado en config_texto (sin tablas nuevas). Si una domiciliación se
+// devuelve, basta con borrar ese cobro a mano en la factura del cliente.
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { eur } from "@/lib/formato";
 
-interface Categoria {
-  id: number;
-  grupo: string;
-  nombre: string;
-  tipo: string;
-}
-interface Cuenta {
-  id: number;
-  codigo: string;
-  nombre: string;
-}
-interface FacturaPend {
-  id: number;
-  cliente: string | null;
+interface Cli { id: number; nombre: string; apellidos: string | null; entrenador: string }
+interface Tx {
+  endToEndId: string;
+  nombre: string;      // nombre que viene en el recibo
+  importe: number;
+  mandato: string;
+  iban: string;
   concepto: string;
-  pendiente: number;
-}
-interface Fila {
-  idx: number;
-  fecha: string; // YYYY-MM-DD
-  concepto: string;
-  importe: number; // con signo
-  tipo: "gasto" | "ingreso";
-  categoriaId: number | null; // para gasto
-  facturaId: number | null; // para ingreso (match)
-  incluir: boolean;
-  duplicado: boolean;
 }
 
-const inputCls =
-  "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-red-500";
+const inputCls = "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white outline-none focus:border-red-500";
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
-// --- Parseo de CSV robusto (delimiter ; o , ; comillas) ---
-function parseCSV(texto: string): string[][] {
-  const delim = (texto.match(/;/g)?.length ?? 0) > (texto.match(/,/g)?.length ?? 0) ? ";" : ",";
-  const filas: string[][] = [];
-  for (const linea of texto.split(/\r?\n/)) {
-    if (linea.trim() === "") continue;
-    const celdas: string[] = [];
-    let cur = "", enComillas = false;
-    for (let i = 0; i < linea.length; i++) {
-      const ch = linea[i];
-      if (ch === '"') enComillas = !enComillas;
-      else if (ch === delim && !enComillas) {
-        celdas.push(cur);
-        cur = "";
-      } else cur += ch;
-    }
-    celdas.push(cur);
-    filas.push(celdas.map((c) => c.trim().replace(/^"|"$/g, "")));
+// Normaliza nombres para emparejar: mayúsculas, sin tildes, solo letras/números
+const norm = (s: string) =>
+  (s || "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+const normMand = (s: string) => (s || "").replace(/\s+/g, "");
+
+function parseSEPA(xml: string): { txs: Tx[]; fechaCobro: string | null } {
+  const doc = new DOMParser().parseFromString(xml, "text/xml");
+  if (doc.getElementsByTagName("parsererror").length) throw new Error("XML inválido");
+  const uno = (el: Element | Document, tag: string) =>
+    (el.getElementsByTagNameNS("*", tag)[0]?.textContent ?? "").trim();
+  const fechaCobro = uno(doc, "ReqdColltnDt") || null;
+  const txs: Tx[] = [];
+  for (const inf of Array.from(doc.getElementsByTagNameNS("*", "DrctDbtTxInf"))) {
+    const dbtr = inf.getElementsByTagNameNS("*", "Dbtr")[0];
+    txs.push({
+      endToEndId: uno(inf, "EndToEndId"),
+      nombre: dbtr ? uno(dbtr, "Nm") : "",
+      importe: Math.round(Number(uno(inf, "InstdAmt")) * 100) / 100,
+      mandato: normMand(uno(inf, "MndtId")),
+      iban: uno(inf, "IBAN"),
+      concepto: uno(inf, "Ustrd"),
+    });
   }
-  return filas;
+  return { txs, fechaCobro };
 }
 
-function parseImporte(s: string): number | null {
-  let t = s.replace(/[€\s]/g, "");
-  if (t === "") return null;
-  // Formato español: 1.234,56 → quitar puntos de miles, coma decimal a punto
-  if (t.includes(",") && t.includes(".")) t = t.replace(/\./g, "").replace(",", ".");
-  else if (t.includes(",")) t = t.replace(",", ".");
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseFecha(s: string): string | null {
-  const t = s.trim();
-  let m = t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/); // YYYY-MM-DD
-  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
-  m = t.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/); // DD/MM/YYYY
-  if (m) {
-    const y = m[3].length === 2 ? `20${m[3]}` : m[3];
-    return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  }
-  return null;
-}
-
-const contiene = (h: string, claves: string[]) => claves.some((k) => h.toLowerCase().includes(k));
-
-export default function ImportarPage() {
-  const [categorias, setCategorias] = useState<Categoria[]>([]);
-  const [cuentas, setCuentas] = useState<Cuenta[]>([]);
-  const [pendientes, setPendientes] = useState<FacturaPend[]>([]);
-  const [cuentaCodigo, setCuentaCodigo] = useState("banco");
+export default function ImportarSepaPage() {
+  const [clientes, setClientes] = useState<Cli[]>([]);
+  const [bancoId, setBancoId] = useState<number | null>(null);
+  const [catId, setCatId] = useState<number | null>(null);
+  const [mandatos, setMandatos] = useState<Record<string, number>>({});
+  const [importados, setImportados] = useState<Set<string>>(new Set());
+  const [txs, setTxs] = useState<Tx[]>([]);
+  const [fechaCobro, setFechaCobro] = useState("");
+  const [asign, setAsign] = useState<Record<string, number | null>>({});
+  const [incluir, setIncluir] = useState<Record<string, boolean>>({});
+  const [nombreArchivo, setNombreArchivo] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-  const [importando, setImportando] = useState(false);
-
-  // Datos crudos + mapeo
-  const [crudo, setCrudo] = useState<string[][]>([]);
-  const [tieneCabecera, setTieneCabecera] = useState(true);
-  const [colFecha, setColFecha] = useState(0);
-  const [colConcepto, setColConcepto] = useState(1);
-  const [colImporte, setColImporte] = useState(2);
-  const [filas, setFilas] = useState<Fila[]>([]);
+  const [guardando, setGuardando] = useState(false);
 
   const cargar = useCallback(async () => {
-    const [cat, cue, pend] = await Promise.all([
-      supabase.from("categorias").select("id, grupo, nombre, tipo").eq("tipo", "gasto").eq("activa", true).order("grupo"),
-      supabase.from("cuentas").select("id, codigo, nombre").eq("activa", true).order("id"),
-      supabase.from("v_facturas_saldo").select("id, cliente, concepto, pendiente").gt("pendiente", 0.01),
+    const [cli, cue, cat, cfgM, cfgI] = await Promise.all([
+      supabase.from("clientes").select("id, nombre, apellidos, entrenador").order("nombre"),
+      supabase.from("cuentas").select("id, codigo").eq("codigo", "banco").maybeSingle(),
+      supabase.from("categorias").select("id, nombre").eq("tipo", "ingreso"),
+      supabase.from("config_texto").select("valor").eq("clave", "sepa_mandatos").maybeSingle(),
+      supabase.from("config_texto").select("valor").eq("clave", "sepa_importados").maybeSingle(),
     ]);
-    setCategorias((cat.data as Categoria[]) ?? []);
-    setCuentas((cue.data as Cuenta[]) ?? []);
-    setPendientes((pend.data as FacturaPend[]) ?? []);
+    setClientes((cli.data as Cli[]) ?? []);
+    setBancoId((cue.data as { id: number } | null)?.id ?? null);
+    const cats = (cat.data as { id: number; nombre: string }[]) ?? [];
+    setCatId(cats.find((c) => /grupal/i.test(c.nombre))?.id ?? cats.find((c) => /otros/i.test(c.nombre))?.id ?? cats[0]?.id ?? null);
+    try { setMandatos(JSON.parse((cfgM.data as { valor: string } | null)?.valor ?? "{}")); } catch { setMandatos({}); }
+    try { setImportados(new Set(JSON.parse((cfgI.data as { valor: string } | null)?.valor ?? "[]"))); } catch { setImportados(new Set()); }
   }, []);
+  useEffect(() => { cargar(); }, [cargar]);
 
-  useEffect(() => {
-    cargar();
-  }, [cargar]);
+  const porNombre = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of clientes) m.set(norm(`${c.nombre} ${c.apellidos ?? ""}`), c.id);
+    return m;
+  }, [clientes]);
 
-  function onArchivo(e: React.ChangeEvent<HTMLInputElement>) {
+  const emparejar = useCallback((t: Tx): number | null => {
+    if (t.mandato && mandatos[t.mandato]) return mandatos[t.mandato];
+    const n = norm(t.nombre);
+    if (porNombre.has(n)) return porNombre.get(n)!;
+    for (const c of clientes) {
+      const cn = norm(`${c.nombre} ${c.apellidos ?? ""}`);
+      if (cn.length >= 6 && (cn.includes(n) || n.includes(cn))) return c.id;
+    }
+    return null;
+  }, [mandatos, porNombre, clientes]);
+
+  async function onArchivo(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const lector = new FileReader();
-    lector.onload = () => {
-      const rows = parseCSV(String(lector.result ?? ""));
-      if (rows.length === 0) return setError("El archivo está vacío o no se pudo leer.");
-      setCrudo(rows);
-      setError(null);
-      // Auto-mapeo por cabecera
-      const cab = rows[0];
-      const f = cab.findIndex((h) => contiene(h, ["fecha", "date"]));
-      const c = cab.findIndex((h) => contiene(h, ["concepto", "descrip", "detalle", "movimiento"]));
-      const i = cab.findIndex((h) => contiene(h, ["importe", "amount", "cantidad"]));
-      const parece = f >= 0 || i >= 0;
-      setTieneCabecera(parece);
-      setColFecha(f >= 0 ? f : 0);
-      setColConcepto(c >= 0 ? c : 1);
-      setColImporte(i >= 0 ? i : cab.length - 1);
-    };
-    lector.readAsText(file, "utf-8");
-  }
-
-  const catId = (nombre: string) => categorias.find((c) => c.nombre === nombre || c.grupo === nombre)?.id ?? null;
-
-  // Genera las filas a importar a partir del mapeo
-  function procesar() {
-    const cuerpo = tieneCabecera ? crudo.slice(1) : crudo;
-    const otros = catId("Otros") ?? categorias[0]?.id ?? null;
-    const out: Fila[] = [];
-    let idx = 0;
-    for (const r of cuerpo) {
-      const fecha = parseFecha(r[colFecha] ?? "");
-      const importe = parseImporte(r[colImporte] ?? "");
-      if (!fecha || importe === null || importe === 0) continue;
-      const concepto = (r[colConcepto] ?? "Movimiento").slice(0, 120);
-      out.push({
-        idx: idx++,
-        fecha,
-        concepto,
-        importe,
-        tipo: importe < 0 ? "gasto" : "ingreso",
-        categoriaId: importe < 0 ? otros : null,
-        facturaId: null,
-        incluir: true,
-        duplicado: false,
-      });
+    setNombreArchivo(file.name); setError(null); setOk(null);
+    let parsed: { txs: Tx[]; fechaCobro: string | null };
+    try { parsed = parseSEPA(await file.text()); } catch { return setError("No se pudo leer el XML de la remesa."); }
+    if (!parsed.txs.length) return setError("No encontré domiciliaciones en el archivo.");
+    setTxs(parsed.txs);
+    setFechaCobro(parsed.fechaCobro ?? new Date().toISOString().slice(0, 10));
+    const a: Record<string, number | null> = {};
+    const inc: Record<string, boolean> = {};
+    for (const t of parsed.txs) {
+      const cid = emparejar(t);
+      a[t.endToEndId] = cid;
+      inc[t.endToEndId] = !importados.has(t.endToEndId) && cid !== null;
     }
-    marcarDuplicados(out);
+    setAsign(a); setIncluir(inc);
   }
 
-  // Marca posibles duplicados contra lo ya registrado (por fecha + importe)
-  async function marcarDuplicados(lista: Fila[]) {
-    if (lista.length === 0) return setFilas([]);
-    const fechas = lista.map((f) => f.fecha).sort();
-    const desde = fechas[0], hasta = fechas[fechas.length - 1];
-    const [g, c] = await Promise.all([
-      supabase.from("gastos").select("fecha, total").gte("fecha", desde).lte("fecha", hasta),
-      supabase.from("cobros").select("fecha, importe").gte("fecha", desde).lte("fecha", hasta),
-    ]);
-    const claves = new Set<string>();
-    for (const x of (g.data as { fecha: string; total: number }[]) ?? []) claves.add(`${x.fecha}|${Math.abs(Number(x.total)).toFixed(2)}`);
-    for (const x of (c.data as { fecha: string; importe: number }[]) ?? []) claves.add(`${x.fecha}|${Math.abs(Number(x.importe)).toFixed(2)}`);
-    setFilas(
-      lista.map((f) => {
-        const dup = claves.has(`${f.fecha}|${Math.abs(f.importe).toFixed(2)}`);
-        return { ...f, duplicado: dup, incluir: f.incluir && !dup };
-      })
-    );
-  }
-
-  function actualizar(idx: number, campos: Partial<Fila>) {
-    setFilas((prev) => prev.map((f) => (f.idx === idx ? { ...f, ...campos } : f)));
-  }
-
-  const seleccionadas = useMemo(() => filas.filter((f) => f.incluir), [filas]);
-  const cuentaId = cuentas.find((c) => c.codigo === cuentaCodigo)?.id ?? cuentas[0]?.id ?? null;
+  const resumen = useMemo(() => {
+    let nuevos = 0, yaImp = 0, sinAsignar = 0, totalSel = 0, totalArchivo = 0;
+    for (const t of txs) {
+      totalArchivo += t.importe;
+      if (importados.has(t.endToEndId)) { yaImp++; continue; }
+      nuevos++;
+      if (asign[t.endToEndId] == null) sinAsignar++;
+      if (incluir[t.endToEndId] && asign[t.endToEndId] != null) totalSel += t.importe;
+    }
+    return {
+      nuevos, yaImp, sinAsignar,
+      totalSel: Math.round(totalSel * 100) / 100,
+      totalArchivo: Math.round(totalArchivo * 100) / 100,
+      seleccionados: txs.filter((t) => incluir[t.endToEndId] && asign[t.endToEndId] != null && !importados.has(t.endToEndId)).length,
+    };
+  }, [txs, asign, incluir, importados]);
 
   async function importar() {
-    const gastos = seleccionadas.filter((f) => f.tipo === "gasto" && f.categoriaId);
-    const cobros = seleccionadas.filter((f) => f.tipo === "ingreso" && f.facturaId);
-    if (gastos.length === 0 && cobros.length === 0)
-      return setError("Nada que importar: elige categoría en los gastos o factura en los ingresos.");
-    setImportando(true);
-    setError(null);
-
-    let nG = 0, nC = 0;
-    if (gastos.length) {
-      const filasG = gastos.map((f) => ({
-        fecha: f.fecha,
-        concepto: f.concepto,
-        categoria_id: f.categoriaId,
-        cuenta_id: cuentaId,
-        imputado_a: "ethos",
-        base: Math.round(Math.abs(f.importe) * 100) / 100, // sin IVA desglosado: base = importe (iva 0)
-        iva_pct: 0,
-        irpf_pct: 0,
-        deducible: false,
-        tiene_factura: false,
-        es_fijo: false,
-        canal: "presencial",
-      }));
-      const { error } = await supabase.from("gastos").insert(filasG);
-      if (error) {
-        setImportando(false);
-        return setError(`Gastos: ${error.message}`);
-      }
-      nG = filasG.length;
+    if (!bancoId) return setError("No encuentro la cuenta 'banco'.");
+    if (!catId) return setError("No encuentro una categoría de ingreso.");
+    const aMeter = txs.filter((t) => incluir[t.endToEndId] && asign[t.endToEndId] != null && !importados.has(t.endToEndId));
+    if (!aMeter.length) return setError("No hay nada seleccionado para importar.");
+    setGuardando(true); setError(null); setOk(null);
+    const mes = fechaCobro ? MESES[Number(fechaCobro.slice(5, 7)) - 1] : "";
+    const anyo = fechaCobro ? fechaCobro.slice(0, 4) : "";
+    const concepto = `Grupales ${mes} ${anyo}`.trim();
+    const nuevosMand = { ...mandatos };
+    const nuevosImp = new Set(importados);
+    let hechos = 0, suma = 0;
+    for (const t of aMeter) {
+      const cid = asign[t.endToEndId]!;
+      const { data: fac, error: e1 } = await supabase.from("facturas").insert({
+        cliente_id: cid, categoria_id: catId, atribucion: "ethos",
+        fecha_emision: fechaCobro, concepto, base: t.importe, iva_pct: 0, irpf_pct: 0,
+        canal: "presencial", computa_reparto: true, computa_impuestos: true, es_recurrente: false,
+      }).select("id").single();
+      if (e1 || !fac) { setError(`Error creando la factura de ${t.nombre}: ${e1?.message}`); break; }
+      const { error: e2 } = await supabase.from("cobros").insert({
+        factura_id: fac.id, fecha: fechaCobro, importe: t.importe,
+        cuenta_id: bancoId, metodo: "transferencia", afecta_caja: true,
+      });
+      if (e2) { setError(`Error apuntando el cobro de ${t.nombre}: ${e2.message}`); break; }
+      if (t.mandato) nuevosMand[t.mandato] = cid;
+      nuevosImp.add(t.endToEndId);
+      hechos++; suma += t.importe;
     }
-    if (cobros.length) {
-      const filasC = cobros.map((f) => ({
-        factura_id: f.facturaId,
-        fecha: f.fecha,
-        importe: Math.round(Math.abs(f.importe) * 100) / 100,
-        cuenta_id: cuentaId,
-        metodo: "transferencia",
-      }));
-      const { error } = await supabase.from("cobros").insert(filasC);
-      if (error) {
-        setImportando(false);
-        return setError(`Cobros: ${error.message}`);
-      }
-      nC = filasC.length;
-    }
-    setImportando(false);
-    setOk(`Importados ${nG} gastos y ${nC} cobros ✓`);
-    setFilas((prev) => prev.filter((f) => !f.incluir));
-    cargar();
-    setTimeout(() => setOk(null), 4000);
+    await supabase.from("config_texto").upsert({ clave: "sepa_mandatos", valor: JSON.stringify(nuevosMand), descripcion: "Emparejamiento mandato SEPA → cliente (BEMADBOX)" });
+    await supabase.from("config_texto").upsert({ clave: "sepa_importados", valor: JSON.stringify([...nuevosImp]), descripcion: "IDs de recibos SEPA ya importados (anti-duplicado)" });
+    setMandatos(nuevosMand); setImportados(nuevosImp);
+    setIncluir((prev) => { const n = { ...prev }; for (const t of aMeter) if (nuevosImp.has(t.endToEndId)) n[t.endToEndId] = false; return n; });
+    setGuardando(false);
+    setOk(`✅ ${hechos} cobros apuntados (${eur(Math.round(suma * 100) / 100)}) con fecha ${fechaCobro}. Si alguna domiciliación se devuelve, bórrala en la factura del cliente.`);
   }
 
-  const gruposCat = useMemo(() => {
-    const m = new Map<string, Categoria[]>();
-    for (const c of categorias) m.set(c.grupo, [...(m.get(c.grupo) ?? []), c]);
-    return [...m.entries()];
-  }, [categorias]);
+  const clientesOrden = useMemo(
+    () => [...clientes].sort((a, b) => `${a.nombre} ${a.apellidos ?? ""}`.localeCompare(`${b.nombre} ${b.apellidos ?? ""}`)),
+    [clientes]
+  );
+  const nombreCli = (id: number | null) => {
+    if (id == null) return "";
+    const c = clientes.find((x) => x.id === id);
+    return c ? `${c.nombre} ${c.apellidos ?? ""}`.trim() : "";
+  };
 
   return (
     <div>
       <div className="mb-4">
-        <h2 className="text-xl font-black text-white">Importar extracto del banco</h2>
+        <h2 className="text-xl font-black text-white">Importar domiciliaciones (BEMADBOX)</h2>
         <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
-          Sube el CSV del banco, cuadra las columnas y crea gastos y cobros de golpe. Detecta posibles duplicados.
+          Sube el archivo SEPA de la remesa de grupales y crea el cobro de cada cliente de golpe. Recuerda los
+          emparejamientos de un mes para el siguiente y no duplica recibos ya importados.
         </p>
       </div>
 
@@ -267,136 +199,109 @@ export default function ImportarPage() {
       <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
         <div className="flex flex-wrap items-center gap-3">
           <label className="cursor-pointer rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white">
-            Elegir CSV
-            <input type="file" accept=".csv,text/csv" onChange={onArchivo} className="hidden" />
+            Elegir archivo SEPA (.xml)
+            <input type="file" accept=".xml,text/xml,application/xml" onChange={onArchivo} className="hidden" />
           </label>
-          <span className="text-xs text-zinc-500">
-            {crudo.length > 0 ? `${crudo.length} líneas leídas` : "Ningún archivo aún"}
-          </span>
-          <label className="ml-auto flex items-center gap-2 text-sm text-zinc-400">
-            Cuenta destino
-            <select value={cuentaCodigo} onChange={(e) => setCuentaCodigo(e.target.value)} className={inputCls}>
-              {cuentas.map((c) => (
-                <option key={c.codigo} value={c.codigo}>{c.nombre.split(" (")[0]}</option>
-              ))}
-            </select>
-          </label>
+          <span className="text-xs text-zinc-500">{nombreArchivo || "Ningún archivo aún"}</span>
+          {txs.length > 0 && (
+            <label className="ml-auto flex items-center gap-2 text-sm text-zinc-400">
+              Fecha de cobro
+              <input type="date" value={fechaCobro} onChange={(e) => setFechaCobro(e.target.value)} className={inputCls} />
+            </label>
+          )}
         </div>
-
-        {/* Paso 2: mapear columnas */}
-        {crudo.length > 0 && (
-          <div className="mt-4 border-t border-zinc-800 pt-4">
-            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">¿Qué columna es cada cosa?</p>
-            <div className="flex flex-wrap items-end gap-3">
-              {([
-                ["Fecha", colFecha, setColFecha] as const,
-                ["Concepto", colConcepto, setColConcepto] as const,
-                ["Importe", colImporte, setColImporte] as const,
-              ]).map(([et, val, set]) => (
-                <label key={et} className="flex flex-col gap-1 text-xs text-zinc-400">
-                  {et}
-                  <select value={val} onChange={(e) => set(Number(e.target.value))} className={inputCls}>
-                    {crudo[0].map((h, i) => (
-                      <option key={i} value={i}>
-                        col {i + 1}
-                        {tieneCabecera ? `: ${h.slice(0, 18)}` : `: ${(crudo[0][i] ?? "").slice(0, 18)}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-              <label className="flex items-center gap-2 text-xs text-zinc-400">
-                <input type="checkbox" checked={tieneCabecera} onChange={(e) => setTieneCabecera(e.target.checked)} className="accent-red-600" />
-                La primera fila es cabecera
-              </label>
-              <button onClick={procesar} className="rounded-xl bg-zinc-200 px-4 py-2 text-sm font-bold text-zinc-900">
-                Previsualizar
-              </button>
-            </div>
+        {txs.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-500">
+            <span>Recibos: <b className="text-zinc-300">{txs.length}</b></span>
+            <span>Total archivo: <b className="text-zinc-300">{eur(resumen.totalArchivo)}</b></span>
+            <span>Nuevos: <b className="text-zinc-300">{resumen.nuevos}</b></span>
+            {resumen.yaImp > 0 && <span>Ya importados: <b className="text-zinc-400">{resumen.yaImp}</b></span>}
+            {resumen.sinAsignar > 0 && <span className="text-amber-400">Sin cliente: <b>{resumen.sinAsignar}</b> (asígnalos abajo)</span>}
           </div>
         )}
       </div>
 
-      {/* Paso 3: revisar y asignar */}
-      {filas.length > 0 && (
+      {/* Paso 2: revisar y emparejar */}
+      {txs.length > 0 && (
         <>
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-black uppercase tracking-wide text-zinc-400">
-              {filas.length} movimientos · {seleccionadas.length} seleccionados
-            </h3>
-            <button
-              onClick={importar}
-              disabled={importando}
-              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-            >
-              {importando ? "Importando…" : `Importar ${seleccionadas.length}`}
-            </button>
-          </div>
           <div className="overflow-x-auto rounded-2xl border border-zinc-800 bg-zinc-900/40">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-800 text-left text-[11px] uppercase text-zinc-500">
-                  <th className="px-3 py-2"></th>
-                  <th className="px-3 py-2">Fecha</th>
-                  <th className="px-3 py-2">Concepto</th>
-                  <th className="px-3 py-2 text-right">Importe</th>
-                  <th className="px-3 py-2">Asignar</th>
+                <tr className="border-b border-zinc-800 bg-zinc-900 text-left text-[11px] font-black uppercase tracking-wider text-zinc-500">
+                  <th className="px-3 py-2.5 text-center">✓</th>
+                  <th className="px-3 py-2.5">Recibo (nombre del banco)</th>
+                  <th className="px-3 py-2.5 text-right">Importe</th>
+                  <th className="px-3 py-2.5">Cliente</th>
+                  <th className="px-3 py-2.5">Estado</th>
                 </tr>
               </thead>
               <tbody>
-                {filas.map((f) => (
-                  <tr key={f.idx} className={`border-b border-zinc-800/60 last:border-0 ${f.duplicado ? "opacity-60" : ""}`}>
-                    <td className="px-3 py-2">
-                      <input type="checkbox" checked={f.incluir} onChange={(e) => actualizar(f.idx, { incluir: e.target.checked })} className="accent-red-600" />
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-zinc-400">{new Date(f.fecha).toLocaleDateString("es-ES")}</td>
-                    <td className="px-3 py-2">
-                      <span className="text-zinc-200">{f.concepto}</span>
-                      {f.duplicado && <span className="ml-2 rounded bg-amber-950 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">posible duplicado</span>}
-                    </td>
-                    <td className={`whitespace-nowrap px-3 py-2 text-right font-bold ${f.importe < 0 ? "text-red-400" : "text-emerald-400"}`}>
-                      {f.importe < 0 ? "" : "+"}{eur(f.importe)}
-                    </td>
-                    <td className="px-3 py-2">
-                      {f.tipo === "gasto" ? (
-                        <select
-                          value={f.categoriaId ?? ""}
-                          onChange={(e) => actualizar(f.idx, { categoriaId: Number(e.target.value) || null })}
-                          className={inputCls}
-                        >
-                          <option value="">Categoría…</option>
-                          {gruposCat.map(([grupo, cats]) => (
-                            <optgroup key={grupo} label={grupo}>
-                              {cats.map((c) => (
-                                <option key={c.id} value={c.id}>{c.nombre}</option>
-                              ))}
-                            </optgroup>
-                          ))}
-                        </select>
-                      ) : (
-                        <select
-                          value={f.facturaId ?? ""}
-                          onChange={(e) => actualizar(f.idx, { facturaId: Number(e.target.value) || null })}
-                          className={inputCls}
-                        >
-                          <option value="">Cobro de… (factura pendiente)</option>
-                          {pendientes.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.cliente ?? p.concepto} · debe {eur(Number(p.pendiente))}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {txs.map((t) => {
+                  const ya = importados.has(t.endToEndId);
+                  const cid = asign[t.endToEndId] ?? null;
+                  const auto = !ya && cid != null && !!(t.mandato && mandatos[t.mandato]);
+                  return (
+                    <tr key={t.endToEndId} className={`border-b border-zinc-800/60 last:border-0 ${ya ? "opacity-40" : "hover:bg-zinc-900/40"}`}>
+                      <td className="px-3 py-2 text-center">
+                        <input
+                          type="checkbox"
+                          disabled={ya || cid == null}
+                          checked={!!incluir[t.endToEndId] && !ya && cid != null}
+                          onChange={(e) => setIncluir((p) => ({ ...p, [t.endToEndId]: e.target.checked }))}
+                          className="h-4 w-4 accent-red-600"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-zinc-300">{t.nombre || <span className="text-zinc-600">(sin nombre)</span>}</td>
+                      <td className="px-3 py-2 text-right font-bold tabular-nums text-zinc-200">{eur(t.importe)}</td>
+                      <td className="px-3 py-2">
+                        {ya ? (
+                          <span className="text-zinc-500">{nombreCli(cid)}</span>
+                        ) : (
+                          <select
+                            value={cid ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value ? Number(e.target.value) : null;
+                              setAsign((p) => ({ ...p, [t.endToEndId]: v }));
+                              setIncluir((p) => ({ ...p, [t.endToEndId]: v != null }));
+                            }}
+                            className={`${inputCls} ${cid == null ? "border-amber-700" : ""} max-w-[14rem] appearance-none`}
+                          >
+                            <option value="">— sin asignar —</option>
+                            {clientesOrden.map((c) => (
+                              <option key={c.id} value={c.id}>{c.nombre} {c.apellidos ?? ""}</option>
+                            ))}
+                          </select>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-[11px]">
+                        {ya ? <span className="text-zinc-500">ya importado</span>
+                          : cid == null ? <span className="font-bold text-amber-400">sin cliente</span>
+                          : auto ? <span className="text-emerald-400">emparejado ✓</span>
+                          : <span className="text-sky-400">nuevo</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          <p className="mt-3 text-xs text-zinc-600">
-            Los <span className="text-red-400">gastos</span> se crean con la categoría que elijas (IVA sin desglosar: revísalo
-            en el Libro si necesitas deducir). Los <span className="text-emerald-400">ingresos</span> solo se importan si los
-            asocias a una factura pendiente (se registran como cobro).
+
+          <div className="sticky bottom-3 mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-700 bg-zinc-900 px-4 py-3 shadow-lg">
+            <span className="text-sm text-zinc-400">
+              <b className="text-white">{resumen.seleccionados}</b> seleccionados · <b className="text-emerald-400">{eur(resumen.totalSel)}</b>
+            </span>
+            <button
+              onClick={importar}
+              disabled={guardando || resumen.seleccionados === 0}
+              className="ml-auto rounded-xl bg-red-600 px-5 py-2.5 text-sm font-black text-white disabled:opacity-50"
+            >
+              {guardando ? "Importando…" : `Importar ${resumen.seleccionados} cobros`}
+            </button>
+          </div>
+          <p className="mt-3 text-[10px] leading-snug text-zinc-600">
+            Los cobros se apuntan como <b>cobrados</b> en la cuenta banco con la fecha de cobro de la remesa, atribuidos a la
+            empresa (grupales). Si una domiciliación se <b>devuelve</b>, entra en la factura de ese cliente y borra el cobro.
+            La próxima remesa recordará a quién pertenece cada recibo por su nº de mandato.
           </p>
         </>
       )}
