@@ -12,7 +12,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-interface FactRow { fecha_emision: string; total: number; canal: string | null; computa_reparto: boolean | null }
+interface FactRow { fecha_emision: string; total: number; condonado: number | null; canal: string | null; computa_reparto: boolean | null }
 interface GastoRow { fecha: string; total: number; canal: string | null; categorias: { nombre: string; es_inversion: boolean } | null }
 interface InvRow { fecha: string; total: number; canal: string | null; categorias: { amortiza_meses: number | null } | null }
 
@@ -54,7 +54,7 @@ export default function PyGPage() {
       const desde = `${anyo}-01-01`;
       const hasta = `${anyo + 1}-01-01`;
       const [f, g, inv] = await Promise.all([
-        supabase.from("facturas").select("fecha_emision, total, canal, computa_reparto").gte("fecha_emision", desde).lt("fecha_emision", hasta),
+        supabase.from("facturas").select("fecha_emision, total, condonado, canal, computa_reparto").gte("fecha_emision", desde).lt("fecha_emision", hasta),
         supabase.from("gastos").select("fecha, total, canal, categorias(nombre, es_inversion)").gte("fecha", desde).lt("fecha", hasta),
         // Inversiones de TODA la historia: su amortización puede caer en este año
         supabase.from("gastos").select("fecha, total, canal, categorias!inner(amortiza_meses, es_inversion)").eq("categorias.es_inversion", true),
@@ -73,7 +73,9 @@ export default function PyGPage() {
       if (f.computa_reparto === false) continue; // aportaciones de capital / correcciones
       const m = new Date(f.fecha_emision + "T00:00:00").getMonth();
       const n: Negocio = f.canal === "online" ? "online" : "presencial";
-      b[n].ingresos[m] += Number(f.total);
+      // Lo condonado (perdonado) NO es ingreso: se resta para que el P&G sea fiel.
+      // No toca Libro ni Reparto, que trabajan sobre lo cobrado.
+      b[n].ingresos[m] += Number(f.total) - Number(f.condonado ?? 0);
     }
     for (const g of gastos) {
       if (g.categorias?.es_inversion) continue; // la inversión entra amortizada, no de golpe
