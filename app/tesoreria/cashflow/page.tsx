@@ -70,11 +70,17 @@ export default function Tesoreria() {
 
   const cargar = useCallback(async () => {
     const now = new Date();
-    const iniMesActual = new Date(now.getFullYear(), now.getMonth(), 1);
-    const ini3 = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-    const ini3ISO = ini3.toISOString().slice(0, 10);
-    const iniMesActualISO = iniMesActual.toISOString().slice(0, 10);
-    const ini3rep = new Date(now.getFullYear(), now.getMonth() - 3, 1).toISOString().slice(0, 10);
+    // Fecha del primer día de un mes con desfase (en meses) respecto al actual,
+    // construida como texto para evitar el desplazamiento de zona horaria que da
+    // toISOString (en UTC+2 devolvía el último día del mes anterior).
+    const pad = (x: number) => String(x).padStart(2, "0");
+    const primerDiaISO = (offset: number) => {
+      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;
+    };
+    const iniMesActualISO = primerDiaISO(0);
+    const ini3ISO = primerDiaISO(-3);
+    const ini3rep = ini3ISO;
 
     const [s, cob, gas, rep] = await Promise.all([
       supabase.from("v_saldo_cuentas").select("saldo"),
@@ -119,7 +125,7 @@ export default function Tesoreria() {
     setNominaMedia(noms.length ? noms.reduce((a, b) => a + b, 0) / noms.length : 0);
 
     // Gastos fijos de este mes por apuntar: copiar los del mes pasado que falten
-    const iniMesPasado = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 10);
+    const iniMesPasado = primerDiaISO(-1);
     const [gPasado, gEste] = await Promise.all([
       supabase
         .from("gastos")
