@@ -60,7 +60,7 @@ interface EdIngreso {
   fecha: string; importe: string; cuenta_id: number;
   concepto: string; canal: string; categoria_id: number | "";
   atribucion: string; es_recurrente: boolean; computa_reparto: boolean;
-  cliente_id: number | "";
+  cliente_id: number | ""; iva_pct: string; irpf_pct: string;
 }
 interface EdGasto {
   tipo: "gasto"; id: number;
@@ -243,11 +243,11 @@ export default function LibroPage() {
     if (m.tipo === "ingreso") {
       const { data, error } = await supabase
         .from("cobros")
-        .select("id, fecha, importe, cuenta_id, factura_id, facturas(id, concepto, canal, categoria_id, atribucion, es_recurrente, computa_reparto, cliente_id)")
+        .select("id, fecha, importe, cuenta_id, factura_id, facturas(id, concepto, canal, categoria_id, atribucion, es_recurrente, computa_reparto, cliente_id, iva_pct, irpf_pct)")
         .eq("id", id)
         .single();
       if (error || !data) return setEdError(error?.message ?? "No encontrado");
-      const c = data as unknown as { id: number; fecha: string; importe: number; cuenta_id: number; factura_id: number | null; facturas: { id: number; concepto: string; canal: string | null; categoria_id: number | null; atribucion: string | null; es_recurrente: boolean | null; computa_reparto: boolean | null; cliente_id: number | null } | null };
+      const c = data as unknown as { id: number; fecha: string; importe: number; cuenta_id: number; factura_id: number | null; facturas: { id: number; concepto: string; canal: string | null; categoria_id: number | null; atribucion: string | null; es_recurrente: boolean | null; computa_reparto: boolean | null; cliente_id: number | null; iva_pct: number | null; irpf_pct: number | null } | null };
       setEd({
         tipo: "ingreso", id: c.id, facturaId: c.facturas?.id ?? c.factura_id,
         fecha: c.fecha, importe: String(c.importe), cuenta_id: c.cuenta_id,
@@ -257,6 +257,7 @@ export default function LibroPage() {
         es_recurrente: c.facturas?.es_recurrente ?? false,
         computa_reparto: c.facturas?.computa_reparto ?? true,
         cliente_id: c.facturas?.cliente_id ?? "",
+        iva_pct: String(c.facturas?.iva_pct ?? 0), irpf_pct: String(c.facturas?.irpf_pct ?? 0),
       });
     } else if (m.tipo === "gasto") {
       const { data, error } = await supabase
@@ -298,12 +299,19 @@ export default function LibroPage() {
       const u1 = await supabase.from("cobros").update({ fecha: ed.fecha, importe: imp, cuenta_id: ed.cuenta_id }).eq("id", ed.id);
       if (u1.error) return setEdError(u1.error.message);
       if (ed.facturaId) {
+        // Recalcula la base de la factura a partir del importe cobrado y el IVA
+        // elegido, igual que al apuntar: base = importe / (1 + IVA − IRPF). Así,
+        // al quitar el IVA, el total de la factura sigue siendo lo que entró.
+        const ivaF = Number(ed.iva_pct) || 0;
+        const irpfF = Number(ed.irpf_pct) || 0;
+        const baseF = Math.round((imp / (1 + ivaF - irpfF)) * 100) / 100;
         const u2 = await supabase
           .from("facturas")
           .update({
             concepto: ed.concepto, canal: ed.canal || null,
             atribucion: ed.atribucion, es_recurrente: ed.es_recurrente, computa_reparto: ed.computa_reparto,
             cliente_id: ed.cliente_id === "" ? null : ed.cliente_id,
+            iva_pct: ivaF, base: baseF,
             ...(ed.categoria_id ? { categoria_id: ed.categoria_id } : {}),
           })
           .eq("id", ed.facturaId);
@@ -696,7 +704,27 @@ export default function LibroPage() {
                       {ATRIBUCIONES.map((a) => <option key={a.valor} value={a.valor}>{a.etiqueta}</option>)}
                     </select>
                   </label>
+                  <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">IVA</span>
+                    <select value={ed.iva_pct} onChange={(e) => setEd({ ...ed, iva_pct: e.target.value })} className={`${inputCls} appearance-none`}>
+                      <option value="0">Sin IVA (0%)</option>
+                      <option value="0.1">10%</option>
+                      <option value="0.21">21%</option>
+                    </select>
+                  </label>
                 </div>
+                {(() => {
+                  const impN = num(ed.importe) || 0;
+                  const ivaN = Number(ed.iva_pct) || 0;
+                  const irpfN = Number(ed.irpf_pct) || 0;
+                  const baseN = impN / (1 + ivaN - irpfN);
+                  return (
+                    <p className="-mt-1 text-[11px] text-zinc-600">
+                      De los {eur(impN)} cobrados: base {eur(Math.round(baseN * 100) / 100)}
+                      {ivaN > 0 ? ` + IVA ${Math.round(ivaN * 100)}% ${eur(Math.round(baseN * ivaN * 100) / 100)}` : " · sin IVA"}.
+                      {" "}Cambiar el IVA recalcula la factura y afecta a Impuestos y al Reparto (cambia el IVA que debéis a Hacienda), no al Libro.
+                    </p>
+                  );
+                })()}
                 <div className="flex flex-wrap gap-x-5 gap-y-2">
                   <label className="flex items-center gap-2 text-sm text-zinc-300">
                     <input type="checkbox" checked={ed.es_recurrente} onChange={(e) => setEd({ ...ed, es_recurrente: e.target.checked })} className="h-4 w-4 accent-red-600" />
