@@ -34,15 +34,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ token: string }
   const soloBackup = new URL(req.url).searchParams.get("solo") === "backup";
 
   let resumen: unknown = "omitido";
-  let remesa: unknown = "omitido";
+  // Las cuotas ya no se generan automáticamente: cada factura se crea solo al
+  // apuntar un ingreso/gasto. (Antes aquí se llamaba a cron_remesa.)
+  const remesa: unknown = "desactivado";
   if (!soloBackup) {
-    const [r1, r2] = await Promise.all([
-      supa.rpc("cron_resumen_mensual", { p_token: token }),
-      supa.rpc("cron_remesa", { p_token: token }),
-    ]);
+    const r1 = await supa.rpc("cron_resumen_mensual", { p_token: token });
     if (r1.error) return Response.json({ ok: false, error: r1.error.message }, { status: 500 });
     resumen = r1.data;
-    remesa = r2.error ? { ok: false, error: r2.error.message } : r2.data;
   }
 
   // Copia de seguridad: todos los datos en CSV, al correo (el email ES el backup)

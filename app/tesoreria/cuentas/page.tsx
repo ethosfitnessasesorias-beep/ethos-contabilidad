@@ -24,6 +24,13 @@ interface Saldo {
   es_transito: boolean;
   saldo: number;
 }
+interface Moroso {
+  id: number;
+  cliente: string | null;
+  concepto: string;
+  fecha_emision: string;
+  pendiente: number;
+}
 // Misma fuente que Contabilidad → Reparto (v_reparto_beneficios), para que
 // ambas pantallas digan lo mismo: nómina = 80% del beneficio, hucha = 20%.
 interface RepartoFila {
@@ -58,6 +65,8 @@ function Tarjeta({ titulo, valor, detalle, alarma, children }: { titulo: string;
 export default function FinanzasPage() {
   const [kpis, setKpis] = useState<Kpis | null>(null);
   const [saldos, setSaldos] = useState<Saldo[]>([]);
+  const [morosos, setMorosos] = useState<Moroso[]>([]);
+  const [telefonos, setTelefonos] = useState<Map<number, string>>(new Map());
   const [cobradoMesCuenta, setCobradoMesCuenta] = useState<Map<string, number>>(new Map());
   const [salud, setSalud] = useState<{
     huchaSaldo: number;
@@ -70,6 +79,32 @@ export default function FinanzasPage() {
   const [reparto, setReparto] = useState<RepartoFila[]>([]);
   const [mesReparto, setMesReparto] = useState(new Date().toISOString().slice(0, 7));
   const [alarma, setAlarma] = useState(3);
+  // Gestión rápida de un moroso: apuntar el cobro sin entrar a la ficha
+  const [gestMoroso, setGestMoroso] = useState<{ id: number; pendiente: number } | null>(null);
+  const [gestImporte, setGestImporte] = useState("");
+  const [gestCuenta, setGestCuenta] = useState("banco");
+  const [gestAviso, setGestAviso] = useState<string | null>(null);
+
+  // Apunta el cobro en la factura. Al saldar el total, la factura desaparece
+  // de "Pendiente de cobro".
+  async function ejecutarGestion() {
+    if (!gestMoroso) return;
+    const n = Number(gestImporte.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) return setGestAviso("Importe no válido.");
+    if (n > gestMoroso.pendiente + 0.005) return setGestAviso(`Solo quedan ${eur(gestMoroso.pendiente)} pendientes.`);
+    const hoy = new Date().toISOString().slice(0, 10);
+    const { data: cuenta } = await supabase.from("cuentas").select("id").eq("codigo", gestCuenta).maybeSingle();
+    const { error } = await supabase.from("cobros").insert({
+      factura_id: gestMoroso.id, fecha: hoy, importe: Math.round(n * 100) / 100,
+      cuenta_id: (cuenta as { id: number } | null)?.id,
+      metodo: gestCuenta === "caja" ? "efectivo" : "transferencia", afecta_caja: true,
+    });
+    if (error) return setGestAviso(error.message);
+    setGestMoroso(null);
+    setGestImporte("");
+    setGestAviso(null);
+    window.location.reload();
+  }
 
   // Arqueo de caja: recuento físico vs saldo de la app, con historial
   const [arqueos, setArqueos] = useState<{ id: number; fecha: string; contado: number; saldo_app: number; descuadre: number; accion: string | null }[]>([]);
@@ -126,14 +161,29 @@ export default function FinanzasPage() {
 
   useEffect(() => {
     (async () => {
-      const [k, s, cfg] = await Promise.all([
+      const [k, s, m, cfg] = await Promise.all([
         supabase.from("v_kpis").select("*").single(),
         supabase.from("v_saldo_cuentas").select("*").order("id"),
+        supabase.from("v_morosos").select("id, cliente, concepto, fecha_emision, pendiente").limit(50),
         supabase.from("config").select("valor").eq("clave", "alarma_runway_meses").single(),
       ]);
       if (k.data) setKpis(k.data as Kpis);
       setSaldos((s.data as Saldo[]) ?? []);
+      const lista = (m.data as Moroso[]) ?? [];
+      setMorosos(lista);
       if (cfg.data) setAlarma(Number(cfg.data.valor));
+      // Teléfonos de los morosos para reclamar por WhatsApp
+      if (lista.length) {
+        const { data: tels } = await supabase
+          .from("facturas")
+          .select("id, clientes(nombre, telefono)")
+          .in("id", lista.map((x) => x.id));
+        const map = new Map<number, string>();
+        for (const t of (tels as unknown as { id: number; clientes: { telefono: string | null } | null }[]) ?? []) {
+          if (t.clientes?.telefono) map.set(t.id, t.clientes.telefono);
+        }
+        setTelefonos(map);
+      }
 
       // Cobros del mes en curso por cuenta (dinero comprometido: nómina y gastos del mes)
       const inicioMes = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
@@ -462,6 +512,71 @@ export default function FinanzasPage() {
         </p>
       </section>
 
+      {/* Morosos */}
+      <section>
+        <h2 className="mb-3 text-sm font-black uppercase tracking-wide text-zinc-400">
+          Pendiente de cobro ({morosos.length})
+        </h2>
+        {morosos.length === 0 ? (
+          <p className="rounded-2xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-500">
+            Nadie debe nada. 🎉
+          </p>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
+            {morosos.map((m) => {
+              const tel = telefonos.get(m.id);
+              const telLimpio = tel ? tel.replace(/\D/g, "") : null;
+              const waTel = telLimpio ? (telLimpio.length === 9 ? `34${telLimpio}` : telLimpio) : null;
+              const msg = `¡Hola ${(m.cliente ?? "").split(" ")[0]}! Somos Ethos Fitness 💪 Nos consta pendiente el pago de "${m.concepto}" (${eur(Number(m.pendiente))}). ¿Puedes revisarlo cuando tengas un momento? ¡Gracias!`;
+              const abierto = gestMoroso?.id === m.id;
+              return (
+                <div key={m.id} className="border-b border-zinc-800 last:border-0">
+                  <div className="flex items-center gap-2 px-3 py-2 hover:bg-zinc-900">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-semibold text-white">{m.cliente ?? m.concepto}</p>
+                      <p className="truncate text-[11px] text-zinc-500">
+                        <Link href={`/facturas/${m.id}`} className="hover:text-sky-400">Factura</Link> · {m.concepto} · {new Date(m.fecha_emision).toLocaleDateString("es-ES")}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-[13px] font-bold text-amber-400">{eur(Number(m.pendiente))}</span>
+                    <button
+                      onClick={() => { setGestMoroso({ id: m.id, pendiente: Number(m.pendiente) }); setGestImporte(String(Number(m.pendiente))); setGestAviso(null); }}
+                      className="shrink-0 rounded-lg bg-emerald-700 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-600"
+                    >
+                      Cobrar
+                    </button>
+                    {waTel ? (
+                      <a
+                        href={`https://wa.me/${waTel}?text=${encodeURIComponent(msg)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Reclamar por WhatsApp"
+                        className="shrink-0 rounded-lg bg-emerald-950 px-2.5 py-1.5 text-[11px] font-bold text-emerald-400 hover:bg-emerald-900"
+                      >
+                        💬
+                      </a>
+                    ) : (
+                      <span className="shrink-0 text-[10px] text-zinc-700" title="Sin teléfono en el CRM">sin tel.</span>
+                    )}
+                  </div>
+                  {abierto && (
+                    <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800/60 bg-zinc-950/60 px-3 py-2">
+                      <span className="text-[11px] font-bold uppercase text-zinc-500">Apuntar cobro</span>
+                      <input inputMode="decimal" value={gestImporte} onChange={(e) => setGestImporte(e.target.value)} className="w-24 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-right text-xs tabular-nums text-white outline-none focus:border-red-500" autoFocus />
+                      {["banco", "caja"].map((c) => (
+                        <button key={c} onClick={() => setGestCuenta(c)} className={`rounded-full px-2.5 py-1 text-[11px] font-bold capitalize ${gestCuenta === c ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>{c === "banco" ? "Banco" : "Efectivo"}</button>
+                      ))}
+                      <button onClick={ejecutarGestion} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">Confirmar</button>
+                      <button onClick={() => setGestMoroso(null)} className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs font-bold text-zinc-400">✕</button>
+                      {gestAviso && <span className="text-[11px] text-red-400">{gestAviso}</span>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
