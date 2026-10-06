@@ -56,6 +56,9 @@ interface DealConCliente extends Deal {
   columna_desde: string | null;
   orden?: number;
   temperatura: string | null;
+  temporalidad: string | null;
+  reactivar_en: string | null;
+  ventana_fin: string | null;
   clientes: { nombre: string; telefono: string | null } | null;
 }
 
@@ -180,6 +183,10 @@ export default function EmbudoVentas() {
   const [fSeguimientoNota, setFSeguimientoNota] = useState("");
   const [fTemperatura, setFTemperatura] = useState("");
   const [filtroTemp, setFiltroTemp] = useState("todas");
+  // Diálogo de "Ganado" del Grand Slam (temporalidad + importe facturado)
+  const [ganando, setGanando] = useState<DealConCliente | null>(null);
+  const [ganTemporalidad, setGanTemporalidad] = useState("semestral");
+  const [ganImporte, setGanImporte] = useState("");
 
   const cargar = useCallback(async () => {
     const [em, col, d, c, per] = await Promise.all([
@@ -188,7 +195,7 @@ export default function EmbudoVentas() {
       supabase
         .from("deals")
         .select("*, clientes(nombre, telefono)")
-        .not("etapa", "in", "(ganado,perdido)")
+        .neq("etapa", "perdido")
         .order("creado_en", { ascending: false }),
       supabase.from("clientes").select("id, nombre, entrenador, telefono").is("fecha_baja", null).order("nombre"),
       supabase.from("personas").select("codigo, nombre").eq("activa", true).order("orden"),
@@ -212,11 +219,14 @@ export default function EmbudoVentas() {
   const colsEmbudo = columnas.filter((c) => c.embudo_id === embudoSel);
   const dealsEmbudo = deals.filter((d) => d.embudo_id === embudoSel);
 
-  // Previsión ponderada del embudo: Σ importe × probabilidad de su etapa
+  // Previsión ponderada del embudo (excluye lo ya ganado): Σ importe × probabilidad
   const prevision = dealsEmbudo.reduce((s, d) => {
+    if (d.etapa === "ganado") return s;
     const col = colsEmbudo.find((c) => c.id === d.columna_id);
     return s + Number(d.importe_estimado || 0) * ((col?.probabilidad ?? 100) / 100);
   }, 0);
+  // Facturado por esta vía: suma de todas las ofertas ganadas del embudo
+  const facturadoGS = dealsEmbudo.filter((d) => d.etapa === "ganado").reduce((s, d) => s + Number(d.importe_estimado || 0), 0);
 
   const dealPorId = useMemo(() => new Map(deals.map((d) => [d.id, d])), [deals]);
 
@@ -224,9 +234,18 @@ export default function EmbudoVentas() {
   useEffect(() => {
     const m: Record<number, number[]> = {};
     for (const c of columnas.filter((x) => x.embudo_id === embudoSel)) {
+      const esGanados = /ganad/i.test(c.titulo);
+      const esVentana = /ventana/i.test(c.titulo);
       m[c.id] = deals
         .filter((d) => d.embudo_id === embudoSel && d.columna_id === c.id)
-        .sort((a, b) => (Number(a.orden ?? 0) - Number(b.orden ?? 0)) || a.id - b.id)
+        // Las tarjetas ganadas solo se ven en la columna "Ganados"
+        .filter((d) => (d.etapa === "ganado") === esGanados)
+        .sort((a, b) =>
+          // En la ventana de lanzamiento: lo más urgente (se cierra antes) arriba
+          esVentana
+            ? (a.ventana_fin ?? "9999").localeCompare(b.ventana_fin ?? "9999") || a.id - b.id
+            : (Number(a.orden ?? 0) - Number(b.orden ?? 0)) || a.id - b.id
+        )
         .map((d) => d.id);
     }
     setOrdenCols(m);
@@ -357,14 +376,14 @@ export default function EmbudoVentas() {
         .select("id, nombre, apellidos, entrenador, canal, fecha_inicio, cuota_periodicidad")
         .is("fecha_baja", null)
         .eq("estado", "cliente"),
-      supabase.from("deals").select("id, cliente_id, columna_id, etapa").eq("embudo_id", embudoSel),
+      supabase.from("deals").select("id, cliente_id, columna_id, etapa, reactivar_en").eq("embudo_id", embudoSel),
     ]);
     if (cliRes.error) {
       setSincronizando(false);
       return setError(cliRes.error.message);
     }
     const activos = (cliRes.data as { id: number; nombre: string; apellidos: string | null; entrenador: string; canal: string | null; fecha_inicio: string | null; cuota_periodicidad: string | null }[]) ?? [];
-    const existentes = (dealsRes.data as { id: number; cliente_id: number | null; columna_id: number | null; etapa: string }[]) ?? [];
+    const existentes = (dealsRes.data as { id: number; cliente_id: number | null; columna_id: number | null; etapa: string; reactivar_en: string | null }[]) ?? [];
 
     // Clientes cuya tarjeta se borró a mano: no se les vuelve a crear
     const { data: exc } = await supabase.from("grand_slam_excluidos").select("cliente_id");
@@ -374,10 +393,10 @@ export default function EmbudoVentas() {
     const colDe = (pref: string) => colsEmbudo.find((c) => norm(c.titulo).startsWith(pref))?.id ?? null;
     const colNoToca = colDe("aun no toca");
     const colVentana = colDe("en ventana");
-    const colVencido = colDe("vencido");
+    const colVencido = colDe("reactiv") ?? colDe("vencido");
     if (!colNoToca || !colVentana || !colVencido) {
       setSincronizando(false);
-      return setError('Este embudo necesita las etapas "Aún no toca", "En ventana" y "Vencido" para sincronizar.');
+      return setError('Este embudo necesita las etapas "Aún no toca", "En ventana" y "Reactivación" para sincronizar.');
     }
 
     const hoy = new Date().toISOString().slice(0, 10);
@@ -403,7 +422,7 @@ export default function EmbudoVentas() {
         if (existente.etapa !== "ganado" && existente.etapa !== "perdido" && esAvance) {
           await supabase
             .from("deals")
-            .update({ columna_id: colObjetivo, columna_desde: new Date().toISOString() })
+            .update({ columna_id: colObjetivo, columna_desde: new Date().toISOString(), ventana_fin: limite })
             .eq("id", existente.id);
           movidas++;
         }
@@ -423,12 +442,27 @@ export default function EmbudoVentas() {
         etapa: "lead",
         embudo_id: embudoSel,
         columna_id: colObjetivo,
+        ventana_fin: limite,
         seguimiento: hoy < desde ? desde : hoy,
         seguimiento_nota: `Ofrecer ${oferta.nombre} · ventana ${fmt(desde)} → ${fmt(limite)}`,
         notas: `${tipoTxt} · alta ${fmt(c.fecha_inicio)} · ventana ${fmt(desde)} → límite ${fmt(limite)}`,
       });
       if (!ins.error) creadas++;
     }
+
+    // Re-entrada: las ofertas GANADAS cuyo plan ya venció (reactivar_en <= hoy)
+    // vuelven al embudo, a la columna de Reactivación, para re-lanzarlas.
+    let reactivadas = 0;
+    for (const e of existentes) {
+      if (e.etapa === "ganado" && e.reactivar_en && e.reactivar_en <= hoy) {
+        await supabase
+          .from("deals")
+          .update({ etapa: "lead", columna_id: colVencido, columna_desde: new Date().toISOString(), reactivar_en: null, fecha_cierre: null })
+          .eq("id", e.id);
+        reactivadas++;
+      }
+    }
+    movidas += reactivadas;
 
     setSincronizando(false);
     // En el auto-sync silencioso solo avisa si ha cambiado algo
@@ -682,7 +716,20 @@ export default function EmbudoVentas() {
     cargar();
   }
 
+  // Meses que dura cada temporalidad contratada
+  const MESES_TEMP: Record<string, number> = { mensual: 1, trimestral: 3, semestral: 6, anual: 12 };
+  const MARGEN_REACTIVA = 2; // vuelve al embudo 2 meses después de acabar el plan
+
   async function ganar(d: DealConCliente) {
+    // En Grand Slam, ganar NO toca la contabilidad: se registra la oferta
+    // ganada y su temporalidad para volver a lanzarla cuando acabe el plan.
+    if (esGrandSlam) {
+      setGanando(d);
+      setGanTemporalidad(d.temporalidad || "semestral");
+      setGanImporte(String(d.importe_estimado || ""));
+      return;
+    }
+    // Otros embudos: comportamiento clásico (lleva a apuntar el cobro)
     const r1 = await supabase
       .from("deals")
       .update({ etapa: "ganado", fecha_cierre: new Date().toISOString().slice(0, 10) })
@@ -700,6 +747,34 @@ export default function EmbudoVentas() {
       })
     );
     router.push("/apuntar");
+  }
+
+  // Confirma el Ganado del Grand Slam: lo mueve a "Ganados", guarda el importe
+  // facturado y la temporalidad, y calcula cuándo vuelve al embudo (fin del
+  // plan + margen). NO apunta nada en el Libro.
+  async function confirmarGanado() {
+    if (!ganando) return;
+    const colGanados = colsEmbudo.find((c) => /ganad/i.test(c.titulo))?.id ?? null;
+    const hoyISO = new Date().toISOString().slice(0, 10);
+    const meses = (MESES_TEMP[ganTemporalidad] ?? 6) + MARGEN_REACTIVA;
+    const react = new Date();
+    react.setMonth(react.getMonth() + meses);
+    const importe = Number(ganImporte.replace(",", ".")) || 0;
+    const { error } = await supabase
+      .from("deals")
+      .update({
+        etapa: "ganado", fecha_cierre: hoyISO, columna_id: colGanados,
+        importe_estimado: importe, temporalidad: ganTemporalidad,
+        reactivar_en: react.toISOString().slice(0, 10),
+        columna_desde: new Date().toISOString(),
+      })
+      .eq("id", ganando.id);
+    if (error) return setError(error.message);
+    if (ganando.cliente_id) await supabase.from("clientes").update({ estado: "cliente" }).eq("id", ganando.cliente_id);
+    setAviso(`"${ganando.clientes?.nombre ?? ganando.titulo}" ganado · ${eur(importe)}. Volverá al embudo tras el plan + ${MARGEN_REACTIVA} meses.`);
+    setTimeout(() => setAviso(null), 5000);
+    setGanando(null);
+    cargar();
   }
 
   async function perder(d: DealConCliente) {
@@ -1009,20 +1084,29 @@ export default function EmbudoVentas() {
               {sincronizando ? "Sincronizando…" : "⚡ Sincronizar clientes"}
             </button>
           )}
-          {prevision > 0 && (
-            <span className="ml-auto rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-bold text-zinc-300" title="Suma de importes × probabilidad de su etapa">
-              Previsión ponderada <span className="text-emerald-400">{eur(prevision)}</span>
-            </span>
-          )}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {esGrandSlam && facturadoGS > 0 && (
+              <span className="rounded-full bg-emerald-950 px-3 py-1.5 text-xs font-bold text-emerald-300" title="Suma de todas las ofertas ganadas por Grand Slam. No toca el Libro.">
+                Facturado Grand Slam <span className="text-emerald-400">{eur(facturadoGS)}</span>
+              </span>
+            )}
+            {prevision > 0 && (
+              <span className="rounded-full bg-zinc-900 px-3 py-1.5 text-xs font-bold text-zinc-300" title="Suma de importes × probabilidad de su etapa">
+                Previsión ponderada <span className="text-emerald-400">{eur(prevision)}</span>
+              </span>
+            )}
+          </div>
         </div>
 
         {esGrandSlam && (
           <p className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-2 text-[11px] leading-snug text-zinc-500">
             <b className="text-zinc-300">Cómo funciona:</b> al abrir este tablero se sincroniza solo (⚡ lo fuerza a mano):
             cada cliente activo tiene su tarjeta, colocada según su ventana (presencial <b>1→2 meses</b> desde el alta · online <b>1→3</b> · online anual <b>3→6</b>),
-            con oferta sugerida del catálogo (Semestral 6+1 · 480 € / Anual 12+3 · 900 €). Cuando hagas la oferta, arrastra a
-            <b> Ofrecido</b>; si pide tiempo, a <b>Aplazado</b> (ponle seguimiento). <b className="text-emerald-400">✓ Ganado</b> = aceptó
-            (te lleva a apuntar el cobro) · <b>Perdido</b> = rechazado. Ajusta importe u oferta tocando la tarjeta.
+            con oferta sugerida del catálogo (Semestral 6+1 · 480 € / Anual 12+3 · 900 €). En <b>En ventana</b> salen arriba las más
+            urgentes (lo que queda para que se cierre la ventana); si no la lanzas a tiempo, pasa a <b>Reactivación</b>. Cuando hagas la oferta, arrastra a
+            <b> Ofrecido</b>; si pide tiempo, a <b>Aplazado</b>. <b className="text-emerald-400">✓ Ganado</b> = aceptó: eliges la temporalidad,
+            pasa a <b>Ganados</b> y suma al <b>facturado</b> (no toca el Libro); al acabar el plan + 2 meses vuelve solo a Reactivación.
+            <b> Perdido</b> = rechazado.
           </p>
         )}
         {error && <p className="mb-4 rounded-xl bg-red-950 px-4 py-3 text-sm text-red-300">{error}</p>}
@@ -1169,6 +1253,38 @@ export default function EmbudoVentas() {
           </DragOverlay>
         </DndContext>
       </div>
+
+      {/* Diálogo de Ganado del Grand Slam: temporalidad + importe facturado */}
+      <Modal abierto={!!ganando} onCerrar={() => setGanando(null)} titulo={ganando ? `Oferta ganada · ${ganando.clientes?.nombre ?? ganando.titulo}` : ""} ancho="max-w-md">
+        {ganando && (
+          <div className="flex flex-col gap-3">
+            <p className="text-[12px] leading-snug text-zinc-400">
+              Se marca como ganada y pasa a <b>Ganados</b>. <b className="text-emerald-400">No apunta nada en el Libro</b> —
+              solo lleva la cuenta de lo facturado por Grand Slam y programa cuándo volver a lanzarla.
+            </p>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-bold uppercase text-zinc-500">Temporalidad contratada</span>
+              <select value={ganTemporalidad} onChange={(e) => setGanTemporalidad(e.target.value)} className={inputCls}>
+                <option value="mensual">Mensual (1 mes)</option>
+                <option value="trimestral">Trimestral (3 meses)</option>
+                <option value="semestral">Semestral (6 meses)</option>
+                <option value="anual">Anual (12 meses)</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-bold uppercase text-zinc-500">Importe facturado €</span>
+              <input inputMode="decimal" value={ganImporte} onChange={(e) => setGanImporte(e.target.value)} className={inputCls} />
+            </label>
+            <p className="rounded-lg bg-zinc-900 px-3 py-2 text-[11px] text-zinc-500">
+              Volverá al embudo (Reactivación) hacia <b className="text-zinc-300">{(() => { const d = new Date(); d.setMonth(d.getMonth() + (MESES_TEMP[ganTemporalidad] ?? 6) + MARGEN_REACTIVA); return d.toLocaleDateString("es-ES", { month: "long", year: "numeric" }); })()}</b> (fin del plan + {MARGEN_REACTIVA} meses).
+            </p>
+            <div className="flex items-center gap-2 border-t border-zinc-800 pt-3">
+              <button onClick={confirmarGanado} className="flex-1 rounded-xl bg-emerald-700 py-2.5 text-sm font-bold text-white hover:bg-emerald-600">✓ Confirmar ganado</button>
+              <button onClick={() => setGanando(null)} className="rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-bold text-zinc-300">Cancelar</button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </Shell>
   );
 }
