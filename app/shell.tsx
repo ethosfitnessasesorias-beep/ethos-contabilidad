@@ -52,7 +52,7 @@ const GRUPOS: { titulo: string | null; items: ItemNav[] }[] = [
     items: [
       { href: "/tesoreria/cuentas", etiqueta: "Cuentas", icono: ic("M3 6h18v12H3z|M3 10h18|M7 15h2") },
       { href: "/tesoreria/cashflow", etiqueta: "Cash flow", icono: ic("M3 17l6-6 4 4 8-8|M21 7v6h-6") },
-      { href: "/tesoreria/pagos-cobros", etiqueta: "Pagos y cobros", icono: ic("M4 4h16v16H4z|M4 9h16|M9 4v16") },
+      { href: "/tesoreria/pagos-cobros", etiqueta: "Gestión de clientes", icono: ic("M4 4h16v16H4z|M4 9h16|M9 4v16") },
     ],
   },
   {
