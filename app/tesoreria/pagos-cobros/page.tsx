@@ -25,7 +25,12 @@ interface Fila {
   cliente_id: number | null;
   patron: string | null;
   proximo_cobro: string | null;
+  entrenador: string | null;
 }
+
+// Entrenador de una fila: manda el campo propio de la fila; si no tiene, se hereda
+// del cliente vinculado; si tampoco, Empresa. Normalizado a david/luis/ethos.
+const normEnt = (e: string | null | undefined) => (e === "david" || e === "luis" ? e : "ethos");
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 const n2 =(v: number) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
@@ -72,7 +77,7 @@ export default function GestionClientesPage() {
     const desde = `${anyo}-01-01`;
     const hasta = `${anyo + 1}-01-01`;
     const [fil, cli] = await Promise.all([
-      supabase.from("pagos_cobros_filas").select("id, orden, etiqueta, cliente_id, patron, proximo_cobro").eq("activa", true).order("orden"),
+      supabase.from("pagos_cobros_filas").select("id, orden, etiqueta, cliente_id, patron, proximo_cobro, entrenador").eq("activa", true).order("orden"),
       supabase.from("clientes").select("id, nombre, apellidos, entrenador, tipo_plan, fecha_baja"),
     ]);
     if (fil.error) return setError(fil.error.message);
@@ -127,9 +132,10 @@ export default function GestionClientesPage() {
     cargar();
   }
 
-  async function cambiarEntrenador(cliId: number, entrenador: string) {
-    setClientes((prev) => prev.map((c) => (c.id === cliId ? { ...c, entrenador } : c)));
-    const { error } = await supabase.from("clientes").update({ entrenador }).eq("id", cliId);
+  // El entrenador se guarda en la propia fila (no toca el CRM ni a otros socios).
+  async function cambiarEntrenador(filaId: number, entrenador: string) {
+    setFilasBD((prev) => prev.map((f) => (f.id === filaId ? { ...f, entrenador } : f)));
+    const { error } = await supabase.from("pagos_cobros_filas").update({ entrenador }).eq("id", filaId);
     if (error) setError(error.message);
   }
 
@@ -140,13 +146,17 @@ export default function GestionClientesPage() {
     cargar();
   }
 
+  // Entrenador efectivo de la fila: propio > heredado del cliente > empresa.
+  const entDe = useCallback((f: Fila, c: Cli | null) => normEnt(f.entrenador ?? c?.entrenador ?? null), []);
+
   const filas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     return filasBD
       .map((f) => ({ f, c: f.cliente_id ? porId.get(f.cliente_id) ?? null : null }))
-      .filter(({ c }) => {
-        if (fEntrenador === "david" || fEntrenador === "luis") return c?.entrenador === fEntrenador;
-        if (fEntrenador === "empresa") return !c || (c.entrenador !== "david" && c.entrenador !== "luis");
+      .filter(({ f, c }) => {
+        const e = entDe(f, c);
+        if (fEntrenador === "david" || fEntrenador === "luis") return e === fEntrenador;
+        if (fEntrenador === "empresa") return e === "ethos";
         return true;
       })
       .filter(({ f, c }) => !q || f.etiqueta.toLowerCase().includes(q) || (c && `${c.nombre} ${c.apellidos ?? ""}`.toLowerCase().includes(q)));
@@ -165,23 +175,23 @@ export default function GestionClientesPage() {
 
   // Totales SOLO de lo cobrado (verde). Por fila, por mes, por entrenador y total.
   // Lo marcado "no pagado" no suma: es un recordatorio de lo que deben.
-  const grupoDe = (c: Cli | null) => (c?.entrenador === "david" ? "David" : c?.entrenador === "luis" ? "Luis" : "Empresa");
+  const grupoDe = (e: string) => (e === "david" ? "David" : e === "luis" ? "Luis" : "Empresa");
   const totales = useMemo(() => {
     const porFila = new Map<number, number>();
     const porMes = Array(12).fill(0);
     const porGrupo: Record<string, number[]> = { David: Array(12).fill(0), Luis: Array(12).fill(0), Empresa: Array(12).fill(0) };
     let total = 0;
-    const cliDe = new Map(filas.map(({ f, c }) => [f.id, c]));
+    const grupoFila = new Map(filas.map(({ f, c }) => [f.id, grupoDe(entDe(f, c))]));
     for (const [k, v] of celdas) {
       const [fid, mi] = k.split("-").map(Number);
-      if (!cliDe.has(fid) || v.estado !== "pagado" || !v.importe) continue;
+      if (!grupoFila.has(fid) || v.estado !== "pagado" || !v.importe) continue;
       porFila.set(fid, (porFila.get(fid) ?? 0) + v.importe);
       porMes[mi] += v.importe;
       total += v.importe;
-      porGrupo[grupoDe(cliDe.get(fid) ?? null)][mi] += v.importe;
+      porGrupo[grupoFila.get(fid)!][mi] += v.importe;
     }
     return { porFila, porMes, porGrupo, total: Math.round(total * 100) / 100 };
-  }, [celdas, filas]);
+  }, [celdas, filas, entDe]);
   const suma = (a: number[]) => a.reduce((s, x) => s + x, 0);
 
   // ---------- Selección por arrastre ----------
@@ -364,18 +374,16 @@ export default function GestionClientesPage() {
                   <span className="block truncate text-[10px] text-zinc-600">{c?.tipo_plan ?? (f.patron ? "agregado" : "")}</span>
                 </td>
                 <td className="px-1 py-1">
-                  {c ? (
-                    <select
-                      value={["david", "luis", "ethos"].includes(c.entrenador) ? c.entrenador : "ethos"}
-                      onChange={(e) => cambiarEntrenador(c.id, e.target.value)}
-                      title="Cambiar entrenador"
-                      className="rounded border border-transparent bg-transparent px-1 py-0.5 text-[10px] text-zinc-400 outline-none hover:border-zinc-700 focus:border-red-500"
-                    >
-                      <option value="david">David</option>
-                      <option value="luis">Luis</option>
-                      <option value="ethos">Empresa</option>
-                    </select>
-                  ) : <span className="px-1 text-[10px] text-zinc-500">Emp.</span>}
+                  <select
+                    value={entDe(f, c)}
+                    onChange={(e) => cambiarEntrenador(f.id, e.target.value)}
+                    title="Cambiar entrenador de esta fila"
+                    className="rounded border border-transparent bg-transparent px-1 py-0.5 text-[10px] text-zinc-400 outline-none hover:border-zinc-700 focus:border-red-500"
+                  >
+                    <option value="david">David</option>
+                    <option value="luis">Luis</option>
+                    <option value="ethos">Empresa</option>
+                  </select>
                 </td>
                 {MESES.map((_, i) => {
                   const cel = celdas.get(clave(f.id, i));
