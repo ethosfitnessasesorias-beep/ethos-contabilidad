@@ -89,6 +89,16 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
   const [abierta, setAbierta] = useState(false);
   const [plegados, setPlegados] = useState<Record<string, boolean>>({});
   const [grupos, setGrupos] = useState(() => resolverGrupos(null));
+  const [colapsada, setColapsada] = useState(false);
+
+  // Recordar si la barra está oculta (solo escritorio)
+  useEffect(() => {
+    try { setColapsada(localStorage.getItem("sidebar_colapsada") === "1"); } catch {}
+  }, []);
+  const toggleColapsar = (v: boolean) => {
+    setColapsada(v);
+    try { localStorage.setItem("sidebar_colapsada", v ? "1" : "0"); } catch {}
+  };
 
   // Carga la configuración del menú del usuario (si la hay)
   useEffect(() => {
@@ -119,6 +129,13 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
       <div className="flex items-center gap-2.5 px-5 py-5">
         <Image src="/logo.png" alt="Ethos" width={32} height={32} className="h-8 w-8 rounded-lg" priority />
         <span className="font-black tracking-tight text-white">Ethos Fitness</span>
+        <button
+          onClick={() => toggleColapsar(true)}
+          title="Ocultar la barra lateral"
+          className="ml-auto hidden rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-200 md:block"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5"><path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4">
@@ -188,10 +205,22 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
 
   return (
     <div className="min-h-dvh bg-zinc-950 text-zinc-100">
-      {/* Sidebar fija en escritorio */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-zinc-800 bg-zinc-950 md:block">
+      {/* Sidebar fija en escritorio (se puede ocultar) */}
+      <aside className={`fixed inset-y-0 left-0 z-30 hidden w-60 border-r border-zinc-800 bg-zinc-950 ${colapsada ? "md:hidden" : "md:block"}`}>
         {sidebar}
       </aside>
+
+      {/* Botón para volver a mostrar la barra cuando está oculta (escritorio) */}
+      {colapsada && (
+        <button
+          onClick={() => toggleColapsar(false)}
+          title="Mostrar la barra lateral"
+          className="fixed left-2 top-2 z-30 hidden items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs font-bold text-zinc-300 shadow-lg hover:bg-zinc-800 md:flex"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" /></svg>
+          Menú
+        </button>
+      )}
 
       {/* Drawer en móvil */}
       {abierta && (
@@ -217,7 +246,7 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
       </header>
 
       {/* Contenido de la página */}
-      <div className="md:pl-60">{children}</div>
+      <div className={colapsada ? "" : "md:pl-60"}>{children}</div>
     </div>
   );
 }

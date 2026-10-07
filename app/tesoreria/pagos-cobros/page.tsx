@@ -6,7 +6,7 @@
 // la contabilidad (los cobros reales se apuntan en el Libro). Datos en
 // pagos_cobros_filas (filas + próximo cobro) y pagos_cobros_marcas (importe/mes).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
@@ -28,8 +28,7 @@ interface Fila {
 }
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-const GRUPO: Record<string, string> = { david: "David", luis: "Luis" };
-const n2 = (v: number) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+const n2 =(v: number) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 const eur0 = (v: number) => new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(v);
 
 const inputCls =
@@ -128,6 +127,12 @@ export default function GestionClientesPage() {
     cargar();
   }
 
+  async function cambiarEntrenador(cliId: number, entrenador: string) {
+    setClientes((prev) => prev.map((c) => (c.id === cliId ? { ...c, entrenador } : c)));
+    const { error } = await supabase.from("clientes").update({ entrenador }).eq("id", cliId);
+    if (error) setError(error.message);
+  }
+
   async function quitarFila(f: Fila) {
     if (!confirm(`¿Quitar la fila "${f.etiqueta}"? (no borra al cliente ni sus datos)`)) return;
     const { error } = await supabase.from("pagos_cobros_filas").delete().eq("id", f.id);
@@ -184,6 +189,14 @@ export default function GestionClientesPage() {
     setSelIni({ fi, mi }); setSelFin({ fi, mi }); setArrastrando(true); setBarra(null);
   }
   function entraArrastre(fi: number, mi: number) { if (arrastrando) setSelFin({ fi, mi }); }
+  // Si sueltas el ratón FUERA de la tabla, la selección se quedaba "pegada" y
+  // seguía seleccionando al pasar por encima. Un listener global lo evita.
+  const finRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const h = () => finRef.current();
+    window.addEventListener("mouseup", h);
+    return () => window.removeEventListener("mouseup", h);
+  }, []);
   function finArrastre() {
     if (!arrastrando || !selIni || !selFin) { setArrastrando(false); return; }
     setArrastrando(false);
@@ -200,6 +213,7 @@ export default function GestionClientesPage() {
     setNotaBarra(prim?.nota ?? (nMeses === 3 ? "Trimestral" : nMeses === 6 ? "Semestral" : nMeses === 12 ? "Anual" : ""));
     setBarra({ celdas: cs });
   }
+  finRef.current = finArrastre;
 
   async function aplicar(modo: "importe" | "no_pagado" | "borrar") {
     if (!barra) return;
@@ -349,7 +363,20 @@ export default function GestionClientesPage() {
                   )}
                   <span className="block truncate text-[10px] text-zinc-600">{c?.tipo_plan ?? (f.patron ? "agregado" : "")}</span>
                 </td>
-                <td className="px-2 py-1 text-[10px] text-zinc-500">{c ? GRUPO[c.entrenador] ?? "Emp." : "Emp."}</td>
+                <td className="px-1 py-1">
+                  {c ? (
+                    <select
+                      value={["david", "luis", "ethos"].includes(c.entrenador) ? c.entrenador : "ethos"}
+                      onChange={(e) => cambiarEntrenador(c.id, e.target.value)}
+                      title="Cambiar entrenador"
+                      className="rounded border border-transparent bg-transparent px-1 py-0.5 text-[10px] text-zinc-400 outline-none hover:border-zinc-700 focus:border-red-500"
+                    >
+                      <option value="david">David</option>
+                      <option value="luis">Luis</option>
+                      <option value="ethos">Empresa</option>
+                    </select>
+                  ) : <span className="px-1 text-[10px] text-zinc-500">Emp.</span>}
+                </td>
                 {MESES.map((_, i) => {
                   const cel = celdas.get(clave(f.id, i));
                   const sel = enSeleccion(fi, i);
