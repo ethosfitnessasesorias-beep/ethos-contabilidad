@@ -153,7 +153,7 @@ export default function LibroPage() {
         .select("id, fecha, importe, motivo, cuenta_origen_id, cuenta_destino_id")
         .gte("fecha", desde)
         .lt("fecha", hasta),
-      supabase.from("gastos").select("id", { count: "exact", head: true }).eq("tiene_factura", false).gt("base", 0),
+      supabase.from("gastos").select("id", { count: "exact", head: true }).eq("tiene_factura", false).eq("deducible", true).gt("base", 0),
     ]);
 
     // Método de pago derivado de la cuenta (para gastos, que no lo guardan)
@@ -321,7 +321,7 @@ export default function LibroPage() {
       const base = num(ed.base);
       const iva = Number(ed.iva_pct);
       if (!Number.isFinite(base) || base < 0) return setEdError("Base no válida.");
-      const deducible = ed.deducible && ed.tiene_factura; // sin factura no puede ser deducible
+      const deducible = ed.deducible; // desgravable es independiente de tener la factura
       const u = await supabase
         .from("gastos")
         .update({
@@ -789,12 +789,12 @@ export default function LibroPage() {
                     </select>
                   </label>
                   <label className="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
-                    <input type="checkbox" checked={ed.tiene_factura} onChange={(e) => setEd({ ...ed, tiene_factura: e.target.checked })} className="h-4 w-4 accent-red-600" />
-                    Tiene factura
+                    <input type="checkbox" checked={ed.deducible} onChange={(e) => setEd({ ...ed, deducible: e.target.checked })} className="h-4 w-4 accent-red-600" />
+                    Desgravable
                   </label>
                   <label className="flex items-center gap-2 self-end pb-2 text-sm text-zinc-300">
-                    <input type="checkbox" checked={ed.deducible && ed.tiene_factura} disabled={!ed.tiene_factura} onChange={(e) => setEd({ ...ed, deducible: e.target.checked })} className="h-4 w-4 accent-red-600 disabled:opacity-40" />
-                    Deducible
+                    <input type="checkbox" checked={ed.tiene_factura} onChange={(e) => setEd({ ...ed, tiene_factura: e.target.checked })} className="h-4 w-4 accent-red-600" />
+                    Tiene factura
                   </label>
                 </div>
                 <label className="flex items-center gap-2 text-sm text-zinc-300">

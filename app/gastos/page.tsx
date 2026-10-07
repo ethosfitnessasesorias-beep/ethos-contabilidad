@@ -60,6 +60,7 @@ export default function Gastos() {
         .from("gastos")
         .select("*")
         .eq("tiene_factura", false)
+        .eq("deducible", true)
         .gt("base", 0)
         .order("fecha", { ascending: false }),
       supabase.from("gastos").select("*").gte("fecha", desde).lt("fecha", hasta),

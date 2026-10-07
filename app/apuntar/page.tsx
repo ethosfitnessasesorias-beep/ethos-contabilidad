@@ -899,8 +899,9 @@ export default function EntradaRapida() {
                 <Toggle
                   etiqueta="Desgravable"
                   activo={deducible}
-                  onCambio={setDeducible}
+                  onCambio={(v) => { setDeducible(v); if (!v) { setTieneFactura(true); setFacturaFile(null); } }}
                 />
+                {deducible && (
                 <Campo etiqueta="Factura">
                   <Chips
                     opciones={[
@@ -912,10 +913,11 @@ export default function EntradaRapida() {
                     pequeno
                   />
                   <span className="mt-1 text-[10px] text-zinc-600">
-                    &quot;Desgravable&quot; no depende de tener la factura ahora: la puedes pedir y subir después. &quot;Conseguir factura&quot; la deja en la lista de pendientes por pedir.
+                    Al ser desgravable necesitas la factura. &quot;Conseguir factura&quot; la deja en la lista de <b>pendientes por pedir</b> para el recuento de fin de mes; la puedes subir ahora o luego.
                   </span>
                 </Campo>
-                {tieneFactura && (
+                )}
+                {deducible && tieneFactura && (
                   <label className="flex flex-col gap-1">
                     <span className="text-[11px] font-bold uppercase text-zinc-500">Subir factura</span>
                     <input

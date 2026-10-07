@@ -80,7 +80,7 @@ export default function CierrePage() {
       supabase.from("cobros").select("importe").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("gastos").select("total, categorias!inner(es_inversion, es_fijo, nombre)").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("v_morosos").select("pendiente"),
-      supabase.from("gastos").select("id", { count: "exact", head: true }).eq("tiene_factura", false).gt("base", 0),
+      supabase.from("gastos").select("id", { count: "exact", head: true }).eq("tiene_factura", false).eq("deducible", true).gt("base", 0),
       supabase.from("cuentas").select("id, codigo").eq("activa", true),
       supabase.from("categorias").select("id, nombre").ilike("nombre", "%mina%").limit(1),
       supabase.from("v_impuestos_declaracion").select("trim, iva_resultado").eq("anyo", anyo).eq("trim", trim),
