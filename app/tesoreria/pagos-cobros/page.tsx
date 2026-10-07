@@ -39,7 +39,7 @@ const eur0 = (v: number) => new Intl.NumberFormat("es-ES", { style: "currency", 
 const inputCls =
   "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
-interface Celda { estado: string; nota: string | null; importe: number }
+interface Celda { estado: string; nota: string | null; importe: number; span: number }
 
 export default function GestionClientesPage() {
   const [anyo, setAnyo] = useState(new Date().getFullYear());
@@ -63,6 +63,7 @@ export default function GestionClientesPage() {
   const [barra, setBarra] = useState<{ celdas: { filaId: number; mesIdx: number }[] } | null>(null);
   const [impBarra, setImpBarra] = useState("");
   const [notaBarra, setNotaBarra] = useState("");
+  const [unir, setUnir] = useState(false);
 
   const mesISO = (mesIdx: number) => `${anyo}-${String(mesIdx + 1).padStart(2, "0")}-01`;
   const clave = (filaId: number, mesIdx: number) => `${filaId}-${mesIdx}`;
@@ -86,11 +87,11 @@ export default function GestionClientesPage() {
     setClientes((cli.data as Cli[]) ?? []);
     const { data: mk } = await supabase
       .from("pagos_cobros_marcas")
-      .select("fila_id, mes, estado, nota, importe")
+      .select("fila_id, mes, estado, nota, importe, span")
       .gte("mes", desde).lt("mes", hasta);
     const mm = new Map<string, Celda>();
-    for (const x of (mk as { fila_id: number; mes: string; estado: string; nota: string | null; importe: number | null }[]) ?? []) {
-      mm.set(`${x.fila_id}-${new Date(x.mes + "T00:00:00").getMonth()}`, { estado: x.estado, nota: x.nota, importe: Number(x.importe) || 0 });
+    for (const x of (mk as { fila_id: number; mes: string; estado: string; nota: string | null; importe: number | null; span: number | null }[]) ?? []) {
+      mm.set(`${x.fila_id}-${new Date(x.mes + "T00:00:00").getMonth()}`, { estado: x.estado, nota: x.nota, importe: Number(x.importe) || 0, span: x.span || 1 });
     }
     setCeldas(mm);
   }, [anyo]);
@@ -221,6 +222,9 @@ export default function GestionClientesPage() {
     setImpBarra(prim?.importe ? String(prim.importe) : "");
     const nMeses = Math.abs(selFin.mi - selIni.mi) + 1;
     setNotaBarra(prim?.nota ?? (nMeses === 3 ? "Trimestral" : nMeses === 6 ? "Semestral" : nMeses === 12 ? "Anual" : ""));
+    // Por defecto, al seleccionar varios meses se sugiere unirlos en un bloque
+    // (pago semestral/anual = una marca que se ve fusionada y cuenta 1 sola vez).
+    setUnir(nMeses > 1 ? (prim?.span ?? 1) > 1 || !prim : false);
     setBarra({ celdas: cs });
   }
   finRef.current = finArrastre;
@@ -228,29 +232,49 @@ export default function GestionClientesPage() {
   async function aplicar(modo: "importe" | "no_pagado" | "borrar") {
     if (!barra) return;
     if (modo === "borrar") {
-      for (const cel of barra.celdas) await supabase.from("pagos_cobros_marcas").delete().eq("fila_id", cel.filaId).eq("mes", mesISO(cel.mesIdx));
+      // Borra la celda; y por si era un bloque unido, limpia también los meses que cubría.
+      for (const cel of barra.celdas) {
+        const sp = celdas.get(clave(cel.filaId, cel.mesIdx))?.span ?? 1;
+        for (let m = cel.mesIdx; m < cel.mesIdx + sp; m++) await supabase.from("pagos_cobros_marcas").delete().eq("fila_id", cel.filaId).eq("mes", mesISO(m));
+      }
     } else {
       const impTecleado = Math.round((Number(impBarra.replace(",", ".")) || 0) * 100) / 100;
       if (modo === "importe" && impTecleado <= 0) return setError("Pon un importe mayor que 0 (o usa «No pagado» / «Quitar»).");
-      // "No pagado" conserva el importe (lo que debe) como recordatorio; si no
-      // tecleas importe, mantiene el que ya tuviera la casilla.
-      const filasSQL = barra.celdas.map((cel) => {
-        const previo = celdas.get(clave(cel.filaId, cel.mesIdx))?.importe ?? 0;
-        const imp = modo === "importe" ? impTecleado : (impTecleado > 0 ? impTecleado : previo);
-        return {
-          fila_id: cel.filaId, mes: mesISO(cel.mesIdx),
-          estado: modo === "importe" ? "pagado" : "no_pagado",
-          importe: imp, nota: notaBarra.trim() || null, actualizado_en: new Date().toISOString(),
-        };
-      });
-      const { error } = await supabase.from("pagos_cobros_marcas").upsert(filasSQL, { onConflict: "fila_id,mes" });
-      if (error) return setError(error.message);
+      const estado = modo === "importe" ? "pagado" : "no_pagado";
+      const nota = notaBarra.trim() || null;
+
+      if (unir) {
+        // Unir meses: por cada fila, una sola marca que abarca el periodo (span).
+        // El importe es el total del pago (cuenta 1 vez); los meses intermedios se limpian.
+        const porFila = new Map<number, number[]>();
+        for (const cel of barra.celdas) { const a = porFila.get(cel.filaId) ?? []; a.push(cel.mesIdx); porFila.set(cel.filaId, a); }
+        for (const [fid, meses] of porFila) {
+          const mn = Math.min(...meses), mx = Math.max(...meses);
+          const previo = celdas.get(clave(fid, mn))?.importe ?? 0;
+          const imp = modo === "importe" ? impTecleado : (impTecleado > 0 ? impTecleado : previo);
+          for (let m = mn + 1; m <= mx; m++) await supabase.from("pagos_cobros_marcas").delete().eq("fila_id", fid).eq("mes", mesISO(m));
+          const { error } = await supabase.from("pagos_cobros_marcas").upsert(
+            { fila_id: fid, mes: mesISO(mn), estado, importe: imp, nota, span: mx - mn + 1, actualizado_en: new Date().toISOString() },
+            { onConflict: "fila_id,mes" });
+          if (error) return setError(error.message);
+        }
+      } else {
+        // Sin unir: cada mes su propia marca (span 1). "No pagado" conserva el importe
+        // existente (lo que debe) si no tecleas uno nuevo.
+        const filasSQL = barra.celdas.map((cel) => {
+          const previo = celdas.get(clave(cel.filaId, cel.mesIdx))?.importe ?? 0;
+          const imp = modo === "importe" ? impTecleado : (impTecleado > 0 ? impTecleado : previo);
+          return { fila_id: cel.filaId, mes: mesISO(cel.mesIdx), estado, importe: imp, nota, span: 1, actualizado_en: new Date().toISOString() };
+        });
+        const { error } = await supabase.from("pagos_cobros_marcas").upsert(filasSQL, { onConflict: "fila_id,mes" });
+        if (error) return setError(error.message);
+      }
     }
-    setBarra(null); setSelIni(null); setSelFin(null); setImpBarra(""); setNotaBarra("");
+    setBarra(null); setSelIni(null); setSelFin(null); setImpBarra(""); setNotaBarra(""); setUnir(false);
     cargar();
   }
 
-  const cancelarSel = () => { setBarra(null); setSelIni(null); setSelFin(null); setImpBarra(""); setNotaBarra(""); };
+  const cancelarSel = () => { setBarra(null); setSelIni(null); setSelFin(null); setImpBarra(""); setNotaBarra(""); setUnir(false); };
   const anyos = [new Date().getFullYear() + 1, new Date().getFullYear(), new Date().getFullYear() - 1];
 
   return (
@@ -315,6 +339,12 @@ export default function GestionClientesPage() {
             className="w-24 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-right text-xs tabular-nums text-white outline-none focus:border-red-500" autoFocus />
           <input placeholder="Nota (trimestral, pagó en enero…)" value={notaBarra} onChange={(e) => setNotaBarra(e.target.value)}
             className="min-w-36 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-white outline-none focus:border-red-500" />
+          {new Set(barra.celdas.map((c) => c.mesIdx)).size > 1 && (
+            <label className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-zinc-300" title="Unir los meses en un solo bloque (pago semestral/anual). El importe es el total y cuenta una sola vez.">
+              <input type="checkbox" checked={unir} onChange={(e) => setUnir(e.target.checked)} className="accent-emerald-500" />
+              Unir meses
+            </label>
+          )}
           <button onClick={() => aplicar("importe")} className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600">✓ Aplicar importe</button>
           <button onClick={() => aplicar("no_pagado")} className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-600">✕ No pagado</button>
           <button onClick={() => aplicar("borrar")} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-400 hover:bg-zinc-700">Quitar</button>
@@ -385,29 +415,39 @@ export default function GestionClientesPage() {
                     <option value="ethos">Empresa</option>
                   </select>
                 </td>
-                {MESES.map((_, i) => {
+                {(() => {
+                  const tds: React.ReactNode[] = [];
+                  for (let i = 0; i < 12; i++) {
                   const cel = celdas.get(clave(f.id, i));
+                  const span = cel?.span && cel.span > 1 ? Math.min(cel.span, 12 - i) : 1;
                   const sel = enSeleccion(fi, i);
                   const pagado = cel?.estado === "pagado" && cel.importe > 0;
                   const debe = cel?.estado === "no_pagado";
                   const bg = pagado ? "bg-emerald-900/50" : debe ? "bg-amber-900/40" : "";
                   const borde = sel ? "ring-1 ring-inset ring-sky-400 bg-sky-500/20" : "";
                   const baja = bajaEnMes(c, i) && !cel;
-                  const contenido = pagado
+                  const unido = span > 1;
+                  const importeTxt = pagado
                     ? <span className="tabular-nums text-emerald-300">{n2(cel!.importe)}</span>
                     : debe
                       ? (cel!.importe > 0 ? <span className="tabular-nums text-amber-400">{n2(cel!.importe)}</span> : <span className="text-amber-400">✕</span>)
                       : baja ? <span className="text-[9px] font-bold uppercase text-zinc-700">baja</span> : <span className="text-zinc-800">·</span>;
-                  return (
-                    <td key={i}
+                  const contenido = unido
+                    ? <span className="flex items-center justify-center gap-1">{importeTxt}{cel?.nota && <span className="text-[9px] font-semibold uppercase text-emerald-500/70">{cel.nota}</span>}</span>
+                    : importeTxt;
+                  tds.push(
+                    <td key={i} colSpan={unido ? span : undefined}
                       onMouseDown={(e) => { e.preventDefault(); inicioArrastre(fi, i); }}
                       onMouseEnter={() => entraArrastre(fi, i)}
-                      title={debe ? `Debe${cel!.importe > 0 ? ` ${n2(cel!.importe)} €` : ""}${cel!.nota ? ` · ${cel!.nota}` : ""}` : (cel?.nota ?? "Pincha o arrastra para poner importe")}
-                      className={`cursor-cell px-1 py-1.5 text-right ${bg} ${borde} ${i === mesActualIdx && !bg ? "bg-zinc-900/40" : ""}`}>
+                      title={debe ? `Debe${cel!.importe > 0 ? ` ${n2(cel!.importe)} €` : ""}${cel!.nota ? ` · ${cel!.nota}` : ""}` : unido ? `${cel!.nota ?? "Bloque"} · ${span} meses${cel!.importe > 0 ? ` · ${n2(cel!.importe)} €` : ""}` : (cel?.nota ?? "Pincha o arrastra para poner importe")}
+                      className={`cursor-cell px-1 py-1.5 text-right ${bg} ${borde} ${unido ? "border-x border-emerald-700/40 text-center" : ""} ${i === mesActualIdx && !bg ? "bg-zinc-900/40" : ""}`}>
                       {contenido}
                     </td>
                   );
-                })}
+                  if (span > 1) i += span - 1;
+                  }
+                  return tds;
+                })()}
                 <td className="border-l border-zinc-800 px-2 py-1 text-right font-bold tabular-nums text-zinc-200">
                   {totales.porFila.get(f.id) ? n2(totales.porFila.get(f.id)!) : <span className="text-zinc-700">·</span>}
                 </td>
@@ -424,7 +464,7 @@ export default function GestionClientesPage() {
       </div>
 
       <p className="mt-3 text-[10px] leading-snug text-zinc-600">
-        <b>Pincha/arrastra</b> casillas y escribe el importe. <b>Juntar un periodo</b>: arrastra varios meses y pon la nota (semestral…).
+        <b>Pincha/arrastra</b> casillas y escribe el importe. <b>Pago semestral/anual</b>: arrastra los meses, marca <b>«Unir meses»</b> y el importe total; se ve como un bloque y cuenta una sola vez.
         <b> baja</b> = meses posteriores a la baja del cliente. Esto es <b>solo vuestra hoja de control</b>: no toca la contabilidad.
         Los cobros reales se apuntan en <Link href="/apuntar" className="text-red-400 hover:underline">Apuntar</Link>.
       </p>
