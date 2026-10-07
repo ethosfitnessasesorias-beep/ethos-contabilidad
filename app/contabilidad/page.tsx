@@ -60,13 +60,13 @@ interface EdIngreso {
   fecha: string; importe: string; cuenta_id: number;
   concepto: string; canal: string; categoria_id: number | "";
   atribucion: string; es_recurrente: boolean; computa_reparto: boolean;
-  cliente_id: number | ""; iva_pct: string; irpf_pct: string;
+  cliente_id: number | ""; iva_pct: string; irpf_pct: string; metodo: string;
 }
 interface EdGasto {
   tipo: "gasto"; id: number;
   fecha: string; concepto: string; proveedor: string;
   categoria_id: number | ""; cuenta_id: number; canal: string; imputado_a: string;
-  base: string; iva_pct: string; deducible: boolean; tiene_factura: boolean; es_fijo: boolean;
+  base: string; iva_pct: string; irpf_pct: string; deducible: boolean; tiene_factura: boolean; es_fijo: boolean;
 }
 interface EdTraspaso {
   tipo: "traspaso"; id: number;
@@ -243,14 +243,14 @@ export default function LibroPage() {
     if (m.tipo === "ingreso") {
       const { data, error } = await supabase
         .from("cobros")
-        .select("id, fecha, importe, cuenta_id, factura_id, facturas(id, concepto, canal, categoria_id, atribucion, es_recurrente, computa_reparto, cliente_id, iva_pct, irpf_pct)")
+        .select("id, fecha, importe, cuenta_id, metodo, factura_id, facturas(id, concepto, canal, categoria_id, atribucion, es_recurrente, computa_reparto, cliente_id, iva_pct, irpf_pct)")
         .eq("id", id)
         .single();
       if (error || !data) return setEdError(error?.message ?? "No encontrado");
-      const c = data as unknown as { id: number; fecha: string; importe: number; cuenta_id: number; factura_id: number | null; facturas: { id: number; concepto: string; canal: string | null; categoria_id: number | null; atribucion: string | null; es_recurrente: boolean | null; computa_reparto: boolean | null; cliente_id: number | null; iva_pct: number | null; irpf_pct: number | null } | null };
+      const c = data as unknown as { id: number; fecha: string; importe: number; cuenta_id: number; metodo: string | null; factura_id: number | null; facturas: { id: number; concepto: string; canal: string | null; categoria_id: number | null; atribucion: string | null; es_recurrente: boolean | null; computa_reparto: boolean | null; cliente_id: number | null; iva_pct: number | null; irpf_pct: number | null } | null };
       setEd({
         tipo: "ingreso", id: c.id, facturaId: c.facturas?.id ?? c.factura_id,
-        fecha: c.fecha, importe: String(c.importe), cuenta_id: c.cuenta_id,
+        fecha: c.fecha, importe: String(c.importe), cuenta_id: c.cuenta_id, metodo: c.metodo ?? "",
         concepto: c.facturas?.concepto ?? "", canal: c.facturas?.canal ?? "",
         categoria_id: c.facturas?.categoria_id ?? "",
         atribucion: c.facturas?.atribucion ?? "ethos",
@@ -262,15 +262,15 @@ export default function LibroPage() {
     } else if (m.tipo === "gasto") {
       const { data, error } = await supabase
         .from("gastos")
-        .select("id, fecha, concepto, proveedor, categoria_id, cuenta_id, canal, imputado_a, base, iva_pct, deducible, tiene_factura, es_fijo")
+        .select("id, fecha, concepto, proveedor, categoria_id, cuenta_id, canal, imputado_a, base, iva_pct, irpf_pct, deducible, tiene_factura, es_fijo")
         .eq("id", id)
         .single();
       if (error || !data) return setEdError(error?.message ?? "No encontrado");
-      const g = data as { id: number; fecha: string; concepto: string; proveedor: string | null; categoria_id: number; cuenta_id: number; canal: string | null; imputado_a: string; base: number; iva_pct: number; deducible: boolean; tiene_factura: boolean; es_fijo: boolean | null };
+      const g = data as { id: number; fecha: string; concepto: string; proveedor: string | null; categoria_id: number; cuenta_id: number; canal: string | null; imputado_a: string; base: number; iva_pct: number; irpf_pct: number | null; deducible: boolean; tiene_factura: boolean; es_fijo: boolean | null };
       setEd({
         tipo: "gasto", id: g.id, fecha: g.fecha, concepto: g.concepto, proveedor: g.proveedor ?? "",
         categoria_id: g.categoria_id, cuenta_id: g.cuenta_id, canal: g.canal ?? "", imputado_a: g.imputado_a,
-        base: String(g.base), iva_pct: String(g.iva_pct), deducible: g.deducible, tiene_factura: g.tiene_factura,
+        base: String(g.base), iva_pct: String(g.iva_pct), irpf_pct: String(g.irpf_pct ?? 0), deducible: g.deducible, tiene_factura: g.tiene_factura,
         es_fijo: g.es_fijo ?? false,
       });
     } else {
@@ -296,7 +296,7 @@ export default function LibroPage() {
     if (ed.tipo === "ingreso") {
       const imp = num(ed.importe);
       if (!Number.isFinite(imp) || imp === 0) return setEdError("Importe no válido (0 no se permite; usa negativo para devolución).");
-      const u1 = await supabase.from("cobros").update({ fecha: ed.fecha, importe: imp, cuenta_id: ed.cuenta_id }).eq("id", ed.id);
+      const u1 = await supabase.from("cobros").update({ fecha: ed.fecha, importe: imp, cuenta_id: ed.cuenta_id, metodo: ed.metodo || null }).eq("id", ed.id);
       if (u1.error) return setEdError(u1.error.message);
       if (ed.facturaId) {
         // Recalcula la base de la factura a partir del importe cobrado y el IVA
@@ -311,7 +311,7 @@ export default function LibroPage() {
             concepto: ed.concepto, canal: ed.canal || null,
             atribucion: ed.atribucion, es_recurrente: ed.es_recurrente, computa_reparto: ed.computa_reparto,
             cliente_id: ed.cliente_id === "" ? null : ed.cliente_id,
-            iva_pct: ivaF, base: baseF,
+            iva_pct: ivaF, irpf_pct: irpfF, base: baseF,
             ...(ed.categoria_id ? { categoria_id: ed.categoria_id } : {}),
           })
           .eq("id", ed.facturaId);
@@ -328,7 +328,7 @@ export default function LibroPage() {
           fecha: ed.fecha, concepto: ed.concepto, proveedor: ed.proveedor || null,
           ...(ed.categoria_id ? { categoria_id: ed.categoria_id } : {}),
           cuenta_id: ed.cuenta_id, canal: ed.canal || null, imputado_a: ed.imputado_a,
-          base, iva_pct: iva,
+          base, iva_pct: iva, irpf_pct: Number(ed.irpf_pct) || 0,
           iva_soportado: deducible ? Math.round(base * iva * 100) / 100 : 0,
           deducible, tiene_factura: ed.tiene_factura, es_fijo: ed.es_fijo,
         })
@@ -675,7 +675,7 @@ export default function LibroPage() {
                 <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Concepto</span>
                   <input value={ed.concepto} onChange={(e) => setEd({ ...ed, concepto: e.target.value })} className={inputCls} />
                 </label>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-4">
                   <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Fecha</span>
                     <input type="date" value={ed.fecha} onChange={(e) => setEd({ ...ed, fecha: e.target.value })} className={inputCls} />
                   </label>
@@ -685,6 +685,13 @@ export default function LibroPage() {
                   <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Cuenta</span>
                     <select value={ed.cuenta_id} onChange={(e) => setEd({ ...ed, cuenta_id: Number(e.target.value) })} className={`${inputCls} appearance-none`}>
                       {cuentas.map((c) => <option key={c.id} value={c.id}>{c.nombre.split(" (")[0]}</option>)}
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Método</span>
+                    <select value={ed.metodo} onChange={(e) => setEd({ ...ed, metodo: e.target.value })} className={`${inputCls} appearance-none`}>
+                      <option value="">—</option>
+                      {["efectivo", "transferencia", "bizum", "stripe", "tarjeta", "domiciliado"].map((m) => <option key={m} value={m}>{m}</option>)}
+                      {ed.metodo && !["efectivo", "transferencia", "bizum", "stripe", "tarjeta", "domiciliado"].includes(ed.metodo) && <option value={ed.metodo}>{ed.metodo}</option>}
                     </select>
                   </label>
                 </div>
@@ -709,6 +716,14 @@ export default function LibroPage() {
                       <option value="0">Sin IVA (0%)</option>
                       <option value="0.1">10%</option>
                       <option value="0.21">21%</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">IRPF</span>
+                    <select value={ed.irpf_pct} onChange={(e) => setEd({ ...ed, irpf_pct: e.target.value })} className={`${inputCls} appearance-none`}>
+                      <option value="0">Sin IRPF</option>
+                      <option value="0.07">7%</option>
+                      <option value="0.15">15%</option>
+                      <option value="0.19">19%</option>
                     </select>
                   </label>
                 </div>
@@ -749,7 +764,7 @@ export default function LibroPage() {
                     <input value={ed.proveedor} onChange={(e) => setEd({ ...ed, proveedor: e.target.value })} className={inputCls} />
                   </label>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-4">
                   <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Fecha</span>
                     <input type="date" value={ed.fecha} onChange={(e) => setEd({ ...ed, fecha: e.target.value })} className={inputCls} />
                   </label>
@@ -761,9 +776,15 @@ export default function LibroPage() {
                       <option value="0">0%</option><option value="0.1">10%</option><option value="0.21">21%</option>
                     </select>
                   </label>
+                  <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">IRPF</span>
+                    <select value={ed.irpf_pct} onChange={(e) => setEd({ ...ed, irpf_pct: e.target.value })} className={`${inputCls} appearance-none`}>
+                      <option value="0">Sin IRPF</option><option value="0.07">7%</option><option value="0.15">15%</option><option value="0.19">19%</option>
+                    </select>
+                  </label>
                 </div>
                 <p className="-mt-1 text-[11px] text-zinc-600">
                   Total con IVA: <b className="text-zinc-300">{eur((Number(ed.base.replace(",", ".")) || 0) * (1 + Number(ed.iva_pct)))}</b>
+                  {Number(ed.irpf_pct) > 0 && <> · IRPF −{eur((Number(ed.base.replace(",", ".")) || 0) * Number(ed.irpf_pct))}</>}
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <label className="flex flex-col gap-1"><span className="text-[11px] font-bold uppercase text-zinc-500">Categoría</span>

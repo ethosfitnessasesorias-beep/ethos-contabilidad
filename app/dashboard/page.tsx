@@ -213,7 +213,7 @@ export default function Dashboard() {
           <Kpi label="Dinero usable" valor={eur2(kpis?.caja_libre ?? 0)} color="text-emerald-400" sub="sin impuestos, hucha ni lo cobrado este mes" />
           <Kpi label="Cobrado este mes (apartado)" valor={eur2(Number(kpis?.cobrado_mes ?? 0))} color="text-amber-400" sub="de aquí salen nóminas y gastos del mes" />
           <Kpi label="Retenido" valor={eur2(retenido)} color="text-amber-400" sub="impuestos + hucha (no tocar)" />
-          <Kpi label="Runway" valor={kpis?.runway_meses == null ? "—" : `${kpis.runway_meses} meses`} alarma={runwayAlarma} sub={`fijos ${eur0(kpis?.gasto_fijo_mensual ?? 0)}/mes`} />
+          <Kpi label="Runway" valor={kpis?.runway_meses == null ? "—" : `${kpis.runway_meses} meses`} alarma={runwayAlarma} sub={`fondo de emergencia (incluye hucha) ÷ fijos ${eur0(kpis?.gasto_fijo_mensual ?? 0)}/mes`} />
         </div>
 
         {/* Desglose usable / apartado por cuenta, al céntimo */}
