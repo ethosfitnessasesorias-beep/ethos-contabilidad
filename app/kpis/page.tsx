@@ -50,6 +50,7 @@ export default function KpisPage() {
   const [diario, setDiario] = useState<Diario[]>([]);
   const [auto, setAuto] = useState<{
     fact: Record<Negocio, number[]>; cobrado: Record<Negocio, number[]>; gasto: Record<Negocio, number[]>;
+    invAds: Record<Negocio, number[]>;
     altas: Record<Negocio, number[]>; bajas: Record<Negocio, number[]>; activos: Record<Negocio, number>;
   } | null>(null);
   const [cajaLibre, setCajaLibre] = useState(0);
@@ -97,7 +98,7 @@ export default function KpisPage() {
     }
     setCobradoCliente(cc);
 
-    const fact = vacio(), cobrado = vacio(), gasto = vacio(), altas = vacio(), bajas = vacio();
+    const fact = vacio(), cobrado = vacio(), gasto = vacio(), invAds = vacio(), altas = vacio(), bajas = vacio();
     const activos: Record<Negocio, number> = { online: 0, gym: 0 };
     for (const f of (fac.data as { fecha_emision: string; total: number; condonado: number | null; canal: string | null; computa_reparto: boolean | null }[]) ?? []) {
       if (f.computa_reparto === false) continue;
@@ -109,8 +110,11 @@ export default function KpisPage() {
       cobrado[canalDe(c.facturas?.canal ?? null)][mesDe(c.fecha)] += Number(c.importe);
     }
     for (const g of (gas.data as unknown as { fecha: string; total: number; canal: string | null; categorias: { nombre: string } }[]) ?? []) {
-      if (/mina/i.test(g.categorias?.nombre ?? "")) continue; // nóminas = reparto, no gasto
+      const nom = g.categorias?.nombre ?? "";
+      if (/mina/i.test(nom)) continue; // nóminas = reparto, no gasto
       gasto[canalDe(g.canal)][mesDe(g.fecha)] += Number(g.total);
+      // Inversión en anuncios = gasto de Marketing/Publicidad, por negocio
+      if (/market|public|anuncio|\bads\b/i.test(nom)) invAds[canalDe(g.canal)][mesDe(g.fecha)] += Number(g.total);
     }
     for (const c of (cli.data as { canal: string | null; fecha_inicio: string | null; fecha_baja: string | null }[]) ?? []) {
       const neg = canalDe(c.canal);
@@ -120,7 +124,7 @@ export default function KpisPage() {
       if (c.fecha_inicio && c.fecha_baja?.startsWith(String(anyo))) bajas[neg][mesDe(c.fecha_baja)]++;
       if (c.fecha_inicio && !c.fecha_baja) activos[neg]++;
     }
-    setAuto({ fact, cobrado, gasto, altas, bajas, activos });
+    setAuto({ fact, cobrado, gasto, invAds, altas, bajas, activos });
   }, [anyo]);
 
   useEffect(() => {
@@ -233,7 +237,10 @@ export default function KpisPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientesRaw, cobradoCliente, negocio]);
 
-  const invAnuncios = MESES.reduce((s, _, i) => s + (valorManual("inversion_anuncios", i) ?? 0), 0);
+  // Inversión en anuncios = gasto de Marketing del Libro (auto), con override manual opcional
+  const invAdsNeg = auto?.invAds[negocio] ?? Array(12).fill(0);
+  const invAnunMes = (i: number) => valorManual(OV("inversion_anuncios"), i) ?? (invAdsNeg[i] ?? 0);
+  const invAnuncios = MESES.reduce((s, _, i) => s + invAnunMes(i), 0);
   const altasAnyo = (auto?.altas[negocio] ?? []).reduce((s, x) => s + x, 0);
   const cac = altasAnyo > 0 ? invAnuncios / altasAnyo : 0;
 
@@ -458,7 +465,7 @@ export default function KpisPage() {
             <table className="w-full text-xs">
               <thead>{cabecera()}</thead>
               <tbody>
-                {METRICAS_MANUALES[negocio].map((m) => (
+                {METRICAS_MANUALES[negocio].filter((m) => m.clave !== "inversion_anuncios").map((m) => (
                   <tr key={m.clave} className="border-b border-zinc-800/40 hover:bg-zinc-900/40">
                     <td className="sticky left-0 z-10 whitespace-nowrap bg-zinc-950/95 px-3 py-0.5 text-zinc-400">{m.etiqueta}</td>
                     {MESES.map((_, i) => {
@@ -488,11 +495,13 @@ export default function KpisPage() {
                     })()}
                   </tr>
                 ))}
+                {/* Inversión en anuncios: automática desde el gasto de Marketing del Libro (ajustable) */}
+                {filaEditable("Inversión en anuncios €", invAdsNeg, "inversion_anuncios", "text-zinc-200")}
                 {/* Derivadas */}
                 {filaAuto(
                   "Coste por seguidor €",
                   MESES.map((_, i) => {
-                    const inv = valorManual("inversion_anuncios", i) ?? 0;
+                    const inv = invAnunMes(i);
                     const seg = valorManual("nuevos_seguidores", i) ?? 0;
                     return seg > 0 ? inv / seg : 0;
                   }),
