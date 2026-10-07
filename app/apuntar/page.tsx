@@ -197,6 +197,7 @@ export default function EntradaRapida() {
   const [gastoFijo, setGastoFijo] = useState(false);
   const [tieneFactura, setTieneFactura] = useState(true);
   const [deducible, setDeducible] = useState(true);
+  const [facturaFile, setFacturaFile] = useState<File | null>(null);
   const [imputadoA, setImputadoA] = useState<string>("ethos");
   const [esDevolucion, setEsDevolucion] = useState(false);
 
@@ -367,6 +368,7 @@ export default function EntradaRapida() {
     setProveedor("");
     setMotivo("");
     setImporteEsBase(false);
+    setFacturaFile(null);
     setFecha(hoy());
     importeRef.current?.focus();
   }
@@ -484,10 +486,12 @@ export default function EntradaRapida() {
     const base = importeEsBase
       ? signo * (Math.round(imp * 100) / 100)
       : (signo * Math.round((imp / (1 + ivaPctGasto)) * 100)) / 100;
-    const esDeducible = deducible && tieneFactura;
+    // Desgravable es independiente de tener la factura ahora: puedes pedirla
+    // después. Si es desgravable, el IVA soportado cuenta para impuestos.
+    const esDeducible = deducible;
 
     setGuardando(true);
-    const { error } = await supabase.from("gastos").insert({
+    const { data: gastoNuevo, error } = await supabase.from("gastos").insert({
       fecha,
       concepto: concepto.trim(),
       proveedor: proveedor.trim() || null,
@@ -502,10 +506,21 @@ export default function EntradaRapida() {
       es_fijo: gastoFijo,
       deducible: esDeducible,
       tiene_factura: tieneFactura,
-    });
-    if (error) {
+    }).select("id").single();
+    if (error || !gastoNuevo) {
       setGuardando(false);
-      return avisar("error", `No se guardó: ${error.message}`);
+      return avisar("error", `No se guardó: ${error?.message}`);
+    }
+    // Si adjuntaron la factura, se sube al almacén de Compras y queda vinculada al gasto
+    if (tieneFactura && facturaFile) {
+      const limpio = facturaFile.name.replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const ruta = `${fecha.slice(0, 7)}/${Date.now()}_${limpio}`;
+      const up = await supabase.storage.from("compras").upload(ruta, facturaFile);
+      if (up.error) {
+        setGuardando(false);
+        return avisar("error", `Gasto guardado, pero la factura no se subió: ${up.error.message}. Súbela en Compras.`);
+      }
+      await supabase.from("compras_archivos").insert({ nombre: facturaFile.name, ruta, fecha, gasto_id: gastoNuevo.id });
     }
     if (recurrente && !esDevolucion) await registrarRecurrente("gasto", concepto.trim(), imp);
     setGuardando(false);
@@ -881,17 +896,39 @@ export default function EntradaRapida() {
                   );
                 })()}
 
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Toggle
-                    etiqueta="Tengo factura"
-                    activo={tieneFactura}
-                    onCambio={(v) => {
-                      setTieneFactura(v);
-                      if (!v) setDeducible(false);
-                    }}
+                <Toggle
+                  etiqueta="Desgravable"
+                  activo={deducible}
+                  onCambio={setDeducible}
+                />
+                <Campo etiqueta="Factura">
+                  <Chips
+                    opciones={[
+                      { valor: "conseguir", etiqueta: "Conseguir factura" },
+                      { valor: "tengo", etiqueta: "Tengo factura" },
+                    ]}
+                    valor={tieneFactura ? "tengo" : "conseguir"}
+                    onCambio={(v) => { setTieneFactura(v === "tengo"); if (v !== "tengo") setFacturaFile(null); }}
+                    pequeno
                   />
-                  <Toggle etiqueta="Deducible" activo={deducible && tieneFactura} onCambio={setDeducible} deshabilitado={!tieneFactura} />
-                </div>
+                  <span className="mt-1 text-[10px] text-zinc-600">
+                    &quot;Desgravable&quot; no depende de tener la factura ahora: la puedes pedir y subir después. &quot;Conseguir factura&quot; la deja en la lista de pendientes por pedir.
+                  </span>
+                </Campo>
+                {tieneFactura && (
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] font-bold uppercase text-zinc-500">Subir factura</span>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => setFacturaFile(e.target.files?.[0] ?? null)}
+                      className="text-xs text-zinc-400 file:mr-2 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white hover:file:bg-zinc-700"
+                    />
+                    <span className="text-[10px] text-zinc-600">
+                      {facturaFile ? `${facturaFile.name} — se vinculará a este gasto` : "Opcional ahora: si no, puedes subirla y vincularla luego en Compras."}
+                    </span>
+                  </label>
+                )}
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Campo etiqueta="Tipo de gasto">
