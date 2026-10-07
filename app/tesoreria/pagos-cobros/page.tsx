@@ -135,11 +135,6 @@ export default function GestionClientesPage() {
     cargar();
   }
 
-  async function guardarProximo(filaId: number, fecha: string) {
-    setFilasBD((prev) => prev.map((f) => (f.id === filaId ? { ...f, proximo_cobro: fecha || null } : f)));
-    await supabase.from("pagos_cobros_filas").update({ proximo_cobro: fecha || null }).eq("id", filaId);
-  }
-
   const filas = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     return filasBD
@@ -163,21 +158,26 @@ export default function GestionClientesPage() {
     return anyo > b.getFullYear() || (anyo === b.getFullYear() && mesIdx > b.getMonth());
   };
 
-  // Total por fila, por mes y total general (solo filas visibles)
+  // Totales SOLO de lo cobrado (verde). Por fila, por mes, por entrenador y total.
+  // Lo marcado "no pagado" no suma: es un recordatorio de lo que deben.
+  const grupoDe = (c: Cli | null) => (c?.entrenador === "david" ? "David" : c?.entrenador === "luis" ? "Luis" : "Empresa");
   const totales = useMemo(() => {
     const porFila = new Map<number, number>();
     const porMes = Array(12).fill(0);
+    const porGrupo: Record<string, number[]> = { David: Array(12).fill(0), Luis: Array(12).fill(0), Empresa: Array(12).fill(0) };
     let total = 0;
-    const idsVis = new Set(filas.map(({ f }) => f.id));
+    const cliDe = new Map(filas.map(({ f, c }) => [f.id, c]));
     for (const [k, v] of celdas) {
       const [fid, mi] = k.split("-").map(Number);
-      if (!idsVis.has(fid) || !v.importe) continue;
+      if (!cliDe.has(fid) || v.estado !== "pagado" || !v.importe) continue;
       porFila.set(fid, (porFila.get(fid) ?? 0) + v.importe);
       porMes[mi] += v.importe;
       total += v.importe;
+      porGrupo[grupoDe(cliDe.get(fid) ?? null)][mi] += v.importe;
     }
-    return { porFila, porMes, total: Math.round(total * 100) / 100 };
+    return { porFila, porMes, porGrupo, total: Math.round(total * 100) / 100 };
   }, [celdas, filas]);
+  const suma = (a: number[]) => a.reduce((s, x) => s + x, 0);
 
   // ---------- Selección por arrastre ----------
   function inicioArrastre(fi: number, mi: number) {
@@ -206,13 +206,19 @@ export default function GestionClientesPage() {
     if (modo === "borrar") {
       for (const cel of barra.celdas) await supabase.from("pagos_cobros_marcas").delete().eq("fila_id", cel.filaId).eq("mes", mesISO(cel.mesIdx));
     } else {
-      const imp = modo === "importe" ? Math.round((Number(impBarra.replace(",", ".")) || 0) * 100) / 100 : 0;
-      if (modo === "importe" && imp <= 0) return setError("Pon un importe mayor que 0 (o usa «No pagado» / «Quitar»).");
-      const filasSQL = barra.celdas.map((cel) => ({
-        fila_id: cel.filaId, mes: mesISO(cel.mesIdx),
-        estado: modo === "importe" ? "pagado" : "no_pagado",
-        importe: imp, nota: notaBarra.trim() || null, actualizado_en: new Date().toISOString(),
-      }));
+      const impTecleado = Math.round((Number(impBarra.replace(",", ".")) || 0) * 100) / 100;
+      if (modo === "importe" && impTecleado <= 0) return setError("Pon un importe mayor que 0 (o usa «No pagado» / «Quitar»).");
+      // "No pagado" conserva el importe (lo que debe) como recordatorio; si no
+      // tecleas importe, mantiene el que ya tuviera la casilla.
+      const filasSQL = barra.celdas.map((cel) => {
+        const previo = celdas.get(clave(cel.filaId, cel.mesIdx))?.importe ?? 0;
+        const imp = modo === "importe" ? impTecleado : (impTecleado > 0 ? impTecleado : previo);
+        return {
+          fila_id: cel.filaId, mes: mesISO(cel.mesIdx),
+          estado: modo === "importe" ? "pagado" : "no_pagado",
+          importe: imp, nota: notaBarra.trim() || null, actualizado_en: new Date().toISOString(),
+        };
+      });
       const { error } = await supabase.from("pagos_cobros_marcas").upsert(filasSQL, { onConflict: "fila_id,mes" });
       if (error) return setError(error.message);
     }
@@ -272,8 +278,9 @@ export default function GestionClientesPage() {
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
 
       <div className="mb-2 rounded-xl border border-sky-900 bg-sky-950/20 px-3 py-2 text-[11px] leading-snug text-zinc-400">
-        <b className="text-sky-400">Hoja de clientes.</b> Pincha una casilla (o arrastra varias para juntar un periodo) y escribe el <b>importe</b> cobrado ese mes.
-        Verde = cobrado · rojo = no pagado. Los totales por fila/mes y el <b>facturado</b> salen solos. Es un esquema visual vuestro: <b>no afecta a la contabilidad</b>.
+        <b className="text-sky-400">Hoja de clientes.</b> Pincha una casilla (o arrastra varias para juntar un periodo) y escribe el <b>importe</b>.
+        <span className="text-emerald-400"> Verde = cobrado</span> (suma al facturado) · <span className="text-amber-400">ámbar = debe</span> (recordatorio, no suma).
+        Los totales por entrenador y por mes salen solos. Esquema visual vuestro: <b>no afecta a la contabilidad</b>.
       </div>
 
       {/* Barra de acción tras seleccionar celdas */}
@@ -291,14 +298,42 @@ export default function GestionClientesPage() {
         </div>
       )}
 
+      {/* Totales por entrenador y por mes (como el Excel) — solo lo cobrado */}
+      {filas.length > 0 && (
+        <div className="mb-3 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
+                <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-1.5 text-left">Cobrado {anyo}</th>
+                {MESES.map((m, i) => <th key={m} className={`min-w-14 px-2 py-1.5 text-right ${i === mesActualIdx ? "text-red-400" : ""}`}>{m}</th>)}
+                <th className="min-w-16 border-l border-zinc-800 px-2 py-1.5 text-right text-zinc-400">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(["David", "Luis", "Empresa"] as const).map((g) => (
+                <tr key={g} className="border-b border-zinc-800/50">
+                  <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1 font-bold text-zinc-300">{g}</td>
+                  {totales.porGrupo[g].map((v: number, i: number) => <td key={i} className="px-2 py-1 text-right tabular-nums text-zinc-400">{v > 0 ? n2(v) : <span className="text-zinc-800">·</span>}</td>)}
+                  <td className="border-l border-zinc-800 px-2 py-1 text-right font-bold tabular-nums text-zinc-200">{n2(suma(totales.porGrupo[g]))}</td>
+                </tr>
+              ))}
+              <tr className="bg-emerald-950/30 font-black">
+                <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 text-emerald-400">TOTAL</td>
+                {totales.porMes.map((v: number, i: number) => <td key={i} className="px-2 py-1.5 text-right tabular-nums text-emerald-400">{v > 0 ? n2(v) : <span className="text-zinc-800">·</span>}</td>)}
+                <td className="border-l border-zinc-800 px-2 py-1.5 text-right tabular-nums text-emerald-400">{n2(totales.total)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
         <table className="w-full select-none text-xs" onMouseLeave={() => arrastrando && finArrastre()} onMouseUp={finArrastre}>
           <thead>
             <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
               <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-1.5 text-left">Cliente</th>
               <th className="px-2 py-1.5 text-left">Ent.</th>
-              <th className="min-w-28 px-2 py-1.5 text-left">Próx. cobro</th>
-              {MESES.map((m, i) => <th key={m} className={`min-w-16 px-2 py-1.5 text-center ${i === mesActualIdx ? "text-red-400" : ""}`}>{m}</th>)}
+              {MESES.map((m, i) => <th key={m} className={`min-w-14 px-2 py-1.5 text-center ${i === mesActualIdx ? "text-red-400" : ""}`}>{m}</th>)}
               <th className="min-w-16 border-l border-zinc-800 px-2 py-1.5 text-right text-zinc-400">Total</th>
               <th className="w-6"></th>
             </tr>
@@ -315,26 +350,24 @@ export default function GestionClientesPage() {
                   <span className="block truncate text-[10px] text-zinc-600">{c?.tipo_plan ?? (f.patron ? "agregado" : "")}</span>
                 </td>
                 <td className="px-2 py-1 text-[10px] text-zinc-500">{c ? GRUPO[c.entrenador] ?? "Emp." : "Emp."}</td>
-                <td className="px-2 py-1">
-                  <input type="date" value={f.proximo_cobro ?? ""} onChange={(e) => guardarProximo(f.id, e.target.value)}
-                    className="w-28 rounded border border-zinc-800 bg-zinc-950 px-1.5 py-0.5 text-[10px] text-zinc-300 outline-none focus:border-red-500" />
-                </td>
                 {MESES.map((_, i) => {
                   const cel = celdas.get(clave(f.id, i));
                   const sel = enSeleccion(fi, i);
-                  const bg = cel && cel.importe > 0 ? "bg-emerald-900/50" : cel?.estado === "no_pagado" ? "bg-red-900/50" : "";
+                  const pagado = cel?.estado === "pagado" && cel.importe > 0;
+                  const debe = cel?.estado === "no_pagado";
+                  const bg = pagado ? "bg-emerald-900/50" : debe ? "bg-amber-900/40" : "";
                   const borde = sel ? "ring-1 ring-inset ring-sky-400 bg-sky-500/20" : "";
                   const baja = bajaEnMes(c, i) && !cel;
-                  const contenido = cel && cel.importe > 0
-                    ? <span className="tabular-nums text-emerald-300">{n2(cel.importe)}</span>
-                    : cel?.estado === "no_pagado"
-                      ? <span className="text-red-300">✕</span>
+                  const contenido = pagado
+                    ? <span className="tabular-nums text-emerald-300">{n2(cel!.importe)}</span>
+                    : debe
+                      ? (cel!.importe > 0 ? <span className="tabular-nums text-amber-400">{n2(cel!.importe)}</span> : <span className="text-amber-400">✕</span>)
                       : baja ? <span className="text-[9px] font-bold uppercase text-zinc-700">baja</span> : <span className="text-zinc-800">·</span>;
                   return (
                     <td key={i}
                       onMouseDown={(e) => { e.preventDefault(); inicioArrastre(fi, i); }}
                       onMouseEnter={() => entraArrastre(fi, i)}
-                      title={cel?.nota ?? "Pincha o arrastra para poner importe"}
+                      title={debe ? `Debe${cel!.importe > 0 ? ` ${n2(cel!.importe)} €` : ""}${cel!.nota ? ` · ${cel!.nota}` : ""}` : (cel?.nota ?? "Pincha o arrastra para poner importe")}
                       className={`cursor-cell px-1 py-1.5 text-right ${bg} ${borde} ${i === mesActualIdx && !bg ? "bg-zinc-900/40" : ""}`}>
                       {contenido}
                     </td>
@@ -349,22 +382,9 @@ export default function GestionClientesPage() {
               </tr>
             ))}
             {filas.length === 0 && (
-              <tr><td colSpan={17} className="px-3 py-6 text-center text-xs text-zinc-600">No hay clientes. Usa «+ Añadir cliente» para empezar.</td></tr>
+              <tr><td colSpan={16} className="px-3 py-6 text-center text-xs text-zinc-600">No hay clientes. Usa «+ Añadir cliente» para empezar.</td></tr>
             )}
           </tbody>
-          {filas.length > 0 && (
-            <tfoot>
-              <tr className="border-t border-zinc-800 bg-zinc-900/60 text-[11px] font-bold">
-                <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 text-emerald-400">TOTAL</td>
-                <td></td><td></td>
-                {totales.porMes.map((v: number, i: number) => (
-                  <td key={i} className="px-1 py-1.5 text-right tabular-nums text-emerald-400">{v > 0 ? n2(v) : <span className="text-zinc-800">·</span>}</td>
-                ))}
-                <td className="border-l border-zinc-800 px-2 py-1.5 text-right tabular-nums text-emerald-400">{n2(totales.total)}</td>
-                <td></td>
-              </tr>
-            </tfoot>
-          )}
         </table>
       </div>
 
