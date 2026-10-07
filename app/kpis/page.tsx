@@ -75,7 +75,7 @@ export default function KpisPage() {
     const [kv, kd, fac, cob, gas, cli, k, obj, sal] = await Promise.all([
       supabase.from("kpi_valores").select("*").gte("mes", desde).lt("mes", hasta),
       supabase.from("kpi_diario").select("*").gte("fecha", desde).lt("fecha", hasta),
-      supabase.from("facturas").select("fecha_emision, total, canal, computa_reparto").gte("fecha_emision", desde).lt("fecha_emision", hasta),
+      supabase.from("facturas").select("fecha_emision, total, condonado, canal, computa_reparto").gte("fecha_emision", desde).lt("fecha_emision", hasta),
       supabase.from("cobros").select("fecha, importe, facturas!inner(canal, computa_reparto)").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("gastos").select("fecha, total, canal, categorias!inner(nombre)").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("clientes").select("id, canal, fecha_inicio, fecha_baja"),
@@ -99,9 +99,10 @@ export default function KpisPage() {
 
     const fact = vacio(), cobrado = vacio(), gasto = vacio(), altas = vacio(), bajas = vacio();
     const activos: Record<Negocio, number> = { online: 0, gym: 0 };
-    for (const f of (fac.data as { fecha_emision: string; total: number; canal: string | null; computa_reparto: boolean | null }[]) ?? []) {
+    for (const f of (fac.data as { fecha_emision: string; total: number; condonado: number | null; canal: string | null; computa_reparto: boolean | null }[]) ?? []) {
       if (f.computa_reparto === false) continue;
-      fact[canalDe(f.canal)][mesDe(f.fecha_emision)] += Number(f.total);
+      // Lo condonado (perdonado) no es facturación real: se resta, igual que en P&G.
+      fact[canalDe(f.canal)][mesDe(f.fecha_emision)] += Number(f.total) - Number(f.condonado ?? 0);
     }
     for (const c of (cob.data as unknown as { fecha: string; importe: number; facturas: { canal: string | null; computa_reparto: boolean | null } }[]) ?? []) {
       if (c.facturas?.computa_reparto === false) continue;

@@ -8,7 +8,7 @@ import { Shell } from "../shell";
 // Reportes estilo Excel ("Libro - I/G"): tablas categoría × mes del año
 // entero para comparar meses de un vistazo, y una gráfica compacta debajo.
 
-interface FactRow { fecha_emision: string; total: number; canal: string | null; computa_reparto: boolean | null; categorias: { grupo: string; nombre: string } | null }
+interface FactRow { fecha_emision: string; total: number; condonado: number | null; canal: string | null; computa_reparto: boolean | null; categorias: { grupo: string; nombre: string } | null }
 interface GastoRow { fecha: string; total: number; canal: string | null; categorias: { grupo: string; nombre: string; es_inversion: boolean } | null }
 interface CobroRow { fecha: string; importe: number; facturas: { computa_reparto: boolean | null; canal: string | null } | null }
 
@@ -42,7 +42,7 @@ export default function Reportes() {
       const desde = `${anyo}-01-01`;
       const hasta = `${anyo + 1}-01-01`;
       const [f, g, c] = await Promise.all([
-        supabase.from("facturas").select("fecha_emision, total, canal, computa_reparto, categorias(grupo, nombre)").gte("fecha_emision", desde).lt("fecha_emision", hasta),
+        supabase.from("facturas").select("fecha_emision, total, condonado, canal, computa_reparto, categorias(grupo, nombre)").gte("fecha_emision", desde).lt("fecha_emision", hasta),
         supabase.from("gastos").select("fecha, total, canal, categorias(grupo, nombre, es_inversion)").gte("fecha", desde).lt("fecha", hasta),
         supabase.from("cobros").select("fecha, importe, facturas!inner(computa_reparto, canal)").gte("fecha", desde).lt("fecha", hasta),
       ]);
@@ -73,7 +73,7 @@ export default function Reportes() {
       const m = new Date(f.fecha_emision + "T00:00:00").getMonth();
       const k = f.categorias?.nombre ?? "Sin categoría";
       const arr = filas.get(k) ?? Array(12).fill(0);
-      arr[m] += Number(f.total);
+      arr[m] += Number(f.total) - Number(f.condonado ?? 0); // condonado no es facturación
       filas.set(k, arr);
     }
     const lista = [...filas.entries()].sort((a, b) => suma(b[1]) - suma(a[1]));

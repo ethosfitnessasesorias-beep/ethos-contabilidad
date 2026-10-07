@@ -70,7 +70,7 @@ export default function Dashboard() {
         supabase.from("actividades").select("id, titulo, cuando").eq("hecha", false).gte("cuando", new Date().toISOString()).order("cuando").limit(6),
         supabase.from("clientes").select("fecha_inicio, fecha_baja, estado"),
         supabase.from("v_facturas_saldo").select("pendiente"),
-        supabase.from("facturas").select("fecha_emision, total, computa_reparto").gte("fecha_emision", desde6),
+        supabase.from("facturas").select("fecha_emision, total, condonado, computa_reparto").gte("fecha_emision", desde6),
         supabase.from("cobros").select("fecha, importe, facturas!inner(computa_reparto)").gte("fecha", desde6),
         supabase.from("gastos").select("canal, total, categorias!inner(nombre)").gte("fecha", `${mesActual}-01`),
         supabase.from("v_reparto_beneficios").select("mes, socio, beneficio").order("mes"),
@@ -126,10 +126,10 @@ export default function Dashboard() {
       const meses: string[] = [];
       for (let i = 5; i >= 0; i--) meses.push(ym(-i));
       const fm = new Map<string, number>(), cm = new Map<string, number>(), gm6 = new Map<string, number>();
-      for (const f of (fact.data as { fecha_emision: string; total: number; computa_reparto: boolean | null }[]) ?? []) {
+      for (const f of (fact.data as { fecha_emision: string; total: number; condonado: number | null; computa_reparto: boolean | null }[]) ?? []) {
         if (f.computa_reparto === false) continue; // aportaciones de capital fuera
         const m = f.fecha_emision.slice(0, 7);
-        fm.set(m, (fm.get(m) ?? 0) + Number(f.total));
+        fm.set(m, (fm.get(m) ?? 0) + Number(f.total) - Number(f.condonado ?? 0)); // condonado no es facturación
       }
       for (const c of (cob.data as unknown as { fecha: string; importe: number; facturas: { computa_reparto: boolean | null } }[]) ?? []) {
         if (c.facturas?.computa_reparto === false) continue;
