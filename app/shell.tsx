@@ -29,59 +29,77 @@ const ic = (d: string) => (
   </svg>
 );
 
-// titulo null = bloque raíz sin cabecera (siempre visible); el resto son desplegables
-const GRUPOS: { titulo: string | null; items: ItemNav[] }[] = [
-  {
-    titulo: null,
-    items: [
-      { href: "/dashboard", etiqueta: "Dashboard", icono: ic("M4 13h6V4H4z|M14 20h6v-9h-6z|M14 8h6V4h-6z|M4 20h6v-4H4z") },
-      { href: "/crm", etiqueta: "Contactos", icono: ic("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2|M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8|M22 21v-2a4 4 0 0 0-3-3.87|M16 3.13a4 4 0 0 1 0 7.75") },
-      { href: "/ventas", etiqueta: "Ventas", icono: ic("M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z|M3 6h18|M16 10a4 4 0 0 1-8 0") },
-      { href: "/compras", etiqueta: "Compras", icono: ic("M6 6h15l-1.5 9H8z|M6 6 5 2H2|M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z|M18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z") },
-    ],
-  },
-  {
-    titulo: "CRM",
-    items: [
-      { href: "/pipeline", etiqueta: "Embudo de ventas", icono: ic("M3 4h18l-7 8v6l-4 2v-8z") },
-      { href: "/actividades", etiqueta: "Actividades", icono: ic("M20 7h-9|M14 17H5|M17 17a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M7 7a3 3 0 1 0 0 .01") },
-    ],
-  },
-  {
-    titulo: "Tesorería",
-    items: [
-      { href: "/tesoreria/cuentas", etiqueta: "Cuentas", icono: ic("M3 6h18v12H3z|M3 10h18|M7 15h2") },
-      { href: "/tesoreria/cashflow", etiqueta: "Cash flow", icono: ic("M3 17l6-6 4 4 8-8|M21 7v6h-6") },
-      { href: "/tesoreria/pagos-cobros", etiqueta: "Gestión de clientes", icono: ic("M4 4h16v16H4z|M4 9h16|M9 4v16") },
-    ],
-  },
-  {
-    titulo: "Contabilidad",
-    items: [
-      { href: "/contabilidad", etiqueta: "Libro diario", icono: ic("M4 4h16v16H4z|M8 8h8|M8 12h8|M8 16h5") },
-      { href: "/contabilidad/pyg", etiqueta: "Pérdidas y ganancias", icono: ic("M4 20V10|M12 20V4|M20 20v-6") },
-      { href: "/contabilidad/impuestos", etiqueta: "Impuestos", icono: ic("M9 14l6-6|M9.5 9.5h.01|M14.5 13.5h.01|M4 4h16v16H4z") },
-      { href: "/contabilidad/reparto", etiqueta: "Reparto", icono: ic("M16 3h5v5|M8 3H3v5|M21 16v5h-5|M3 16v5h5|M21 3l-7 7|M3 21l7-7") },
-      { href: "/contabilidad/cierre", etiqueta: "Cierre de mes", icono: ic("M9 11l3 3L22 4|M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11") },
-      { href: "/contabilidad/importar", etiqueta: "Importar grupales", icono: ic("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|M7 10l5 5 5-5|M12 15V3") },
-      { href: "/contabilidad/ajustes", etiqueta: "Ajustes", icono: ic("M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M12 2v3|M12 19v3|M2 12h3|M19 12h3|M4.9 4.9l2.1 2.1|M17 17l2.1 2.1|M19.1 4.9 17 7|M7 17l-2.1 2.1") },
-    ],
-  },
-  {
-    titulo: "Análisis",
-    items: [
-      { href: "/reportes", etiqueta: "Reportes", icono: ic("M4 20V10|M12 20V4|M20 20v-6") },
-      { href: "/kpis", etiqueta: "KPIs", icono: ic("M3 3v18h18|M7 14l4-4 3 3 5-6") },
-      { href: "/notas", etiqueta: "Notas", icono: ic("M12 20h9|M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z|M4 8h6") },
-    ],
-  },
+// Catálogo de todas las páginas del menú: href -> etiqueta por defecto + icono.
+export const CATALOGO: Record<string, { etiqueta: string; icono: React.ReactNode }> = {
+  "/dashboard": { etiqueta: "Dashboard", icono: ic("M4 13h6V4H4z|M14 20h6v-9h-6z|M14 8h6V4h-6z|M4 20h6v-4H4z") },
+  "/crm": { etiqueta: "Contactos", icono: ic("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2|M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8|M22 21v-2a4 4 0 0 0-3-3.87|M16 3.13a4 4 0 0 1 0 7.75") },
+  "/ventas": { etiqueta: "Ventas", icono: ic("M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z|M3 6h18|M16 10a4 4 0 0 1-8 0") },
+  "/compras": { etiqueta: "Compras", icono: ic("M6 6h15l-1.5 9H8z|M6 6 5 2H2|M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z|M18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z") },
+  "/pipeline": { etiqueta: "Embudo de ventas", icono: ic("M3 4h18l-7 8v6l-4 2v-8z") },
+  "/actividades": { etiqueta: "Actividades", icono: ic("M20 7h-9|M14 17H5|M17 17a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M7 7a3 3 0 1 0 0 .01") },
+  "/tesoreria/cuentas": { etiqueta: "Cuentas", icono: ic("M3 6h18v12H3z|M3 10h18|M7 15h2") },
+  "/tesoreria/cashflow": { etiqueta: "Cash flow", icono: ic("M3 17l6-6 4 4 8-8|M21 7v6h-6") },
+  "/tesoreria/pagos-cobros": { etiqueta: "Gestión de clientes", icono: ic("M4 4h16v16H4z|M4 9h16|M9 4v16") },
+  "/contabilidad": { etiqueta: "Libro diario", icono: ic("M4 4h16v16H4z|M8 8h8|M8 12h8|M8 16h5") },
+  "/contabilidad/pyg": { etiqueta: "Pérdidas y ganancias", icono: ic("M4 20V10|M12 20V4|M20 20v-6") },
+  "/contabilidad/impuestos": { etiqueta: "Impuestos", icono: ic("M9 14l6-6|M9.5 9.5h.01|M14.5 13.5h.01|M4 4h16v16H4z") },
+  "/contabilidad/reparto": { etiqueta: "Reparto", icono: ic("M16 3h5v5|M8 3H3v5|M21 16v5h-5|M3 16v5h5|M21 3l-7 7|M3 21l7-7") },
+  "/contabilidad/cierre": { etiqueta: "Cierre de mes", icono: ic("M9 11l3 3L22 4|M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11") },
+  "/contabilidad/importar": { etiqueta: "Importar grupales", icono: ic("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|M7 10l5 5 5-5|M12 15V3") },
+  "/contabilidad/ajustes": { etiqueta: "Ajustes", icono: ic("M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M12 2v3|M12 19v3|M2 12h3|M19 12h3|M4.9 4.9l2.1 2.1|M17 17l2.1 2.1|M19.1 4.9 17 7|M7 17l-2.1 2.1") },
+  "/reportes": { etiqueta: "Reportes", icono: ic("M4 20V10|M12 20V4|M20 20v-6") },
+  "/kpis": { etiqueta: "KPIs", icono: ic("M3 3v18h18|M7 14l4-4 3 3 5-6") },
+  "/notas": { etiqueta: "Notas", icono: ic("M12 20h9|M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z|M4 8h6") },
+};
+
+// Menú por defecto (titulo null = bloque sin cabecera, siempre visible).
+export interface GrupoCfg { titulo: string | null; hrefs: string[] }
+export const DEFAULT_GRUPOS: GrupoCfg[] = [
+  { titulo: null, hrefs: ["/dashboard", "/crm", "/ventas", "/compras"] },
+  { titulo: "CRM", hrefs: ["/pipeline", "/actividades"] },
+  { titulo: "Tesorería", hrefs: ["/tesoreria/cuentas", "/tesoreria/cashflow", "/tesoreria/pagos-cobros"] },
+  { titulo: "Contabilidad", hrefs: ["/contabilidad", "/contabilidad/pyg", "/contabilidad/impuestos", "/contabilidad/reparto", "/contabilidad/cierre", "/contabilidad/importar", "/contabilidad/ajustes"] },
+  { titulo: "Análisis", hrefs: ["/reportes", "/kpis", "/notas"] },
 ];
+
+export interface NavConfig { grupos: GrupoCfg[]; etiquetas?: Record<string, string>; ocultos?: string[] }
+
+// Construye los grupos a pintar: aplica la config guardada, respeta ocultos y
+// añade al final cualquier página del catálogo que no esté colocada (para que
+// nunca desaparezca una pantalla nueva).
+export function resolverGrupos(cfg: NavConfig | null): { titulo: string | null; items: ItemNav[] }[] {
+  const base = cfg?.grupos?.length ? cfg.grupos : DEFAULT_GRUPOS;
+  const ocultos = new Set(cfg?.ocultos ?? []);
+  const etiquetas = cfg?.etiquetas ?? {};
+  const colocados = new Set<string>();
+  const grupos = base.map((g) => {
+    const items = g.hrefs
+      .filter((h) => CATALOGO[h] && !ocultos.has(h))
+      .map((h) => { colocados.add(h); return { href: h, etiqueta: etiquetas[h] || CATALOGO[h].etiqueta, icono: CATALOGO[h].icono }; });
+    return { titulo: g.titulo, items };
+  });
+  const sueltos = Object.keys(CATALOGO).filter((h) => !colocados.has(h) && !ocultos.has(h));
+  if (sueltos.length) grupos.push({ titulo: "Más", items: sueltos.map((h) => ({ href: h, etiqueta: etiquetas[h] || CATALOGO[h].etiqueta, icono: CATALOGO[h].icono })) });
+  return grupos.filter((g) => g.items.length > 0 || g.titulo === null);
+}
 
 export function Shell({ children, titulo }: { children: React.ReactNode; titulo?: string }) {
   const ruta = usePathname();
   const router = useRouter();
   const [abierta, setAbierta] = useState(false);
   const [plegados, setPlegados] = useState<Record<string, boolean>>({});
+  const [grupos, setGrupos] = useState(() => resolverGrupos(null));
+
+  // Carga la configuración del menú del usuario (si la hay)
+  useEffect(() => {
+    supabase.from("config_texto").select("valor").eq("clave", "nav_config").maybeSingle().then(({ data }) => {
+      if (!data?.valor) return;
+      try {
+        const cfg = JSON.parse(data.valor) as NavConfig;
+        if (cfg?.grupos?.length) setGrupos(resolverGrupos(cfg));
+      } catch {}
+    });
+  }, []);
 
   // "/contabilidad" tiene subrutas propias: solo se ilumina en coincidencia exacta
   const activo = (href: string) =>
@@ -89,10 +107,10 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
 
   // El grupo que contiene la ruta actual se abre solo
   useEffect(() => {
-    const g = GRUPOS.find((x) => x.titulo && x.items.some((it) => activo(it.href)));
+    const g = grupos.find((x) => x.titulo && x.items.some((it) => activo(it.href)));
     if (g?.titulo) setPlegados((p) => ({ ...p, [g.titulo as string]: false }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ruta]);
+  }, [ruta, grupos]);
 
   const plegado = (t: string) => plegados[t] ?? true;
 
@@ -104,7 +122,7 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4">
-        {GRUPOS.map((g, gi) => {
+        {grupos.map((g, gi) => {
           const abiertoGrupo = g.titulo === null || !plegado(g.titulo) || g.items.some((it) => activo(it.href));
           return (
             <div key={g.titulo ?? gi} className="mb-3">
@@ -148,6 +166,14 @@ export function Shell({ children, titulo }: { children: React.ReactNode; titulo?
         })}
       </nav>
 
+      <Link
+        href="/ajustes-menu"
+        onClick={() => setAbierta(false)}
+        className="flex items-center gap-2 border-t border-zinc-800 px-5 py-3 text-xs text-zinc-500 hover:text-zinc-300"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path d="M12 5v14M5 12h14" strokeLinecap="round" /></svg>
+        Personalizar menú
+      </Link>
       <button
         onClick={async () => {
           await supabase.auth.signOut();
