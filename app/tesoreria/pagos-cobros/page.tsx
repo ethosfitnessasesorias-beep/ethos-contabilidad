@@ -224,14 +224,14 @@ export default function GestionClientesPage() {
     setObjBarra(prim?.objetivo ? String(prim.objetivo) : "");
     const nMeses = Math.abs(selFin.mi - selIni.mi) + 1;
     setNotaBarra(prim?.nota ?? (nMeses === 3 ? "Trimestral" : nMeses === 6 ? "Semestral" : nMeses === 12 ? "Anual" : ""));
-    // Por defecto, al seleccionar varios meses se sugiere unirlos en un bloque
-    // (pago semestral/anual = una marca que se ve fusionada y cuenta 1 sola vez).
-    setUnir(nMeses > 1 ? (prim?.span ?? 1) > 1 || !prim : false);
+    // Unir solo si ya era un bloque; si no, desactivado por defecto para no crear
+    // bloques sin querer al arrastrar varios meses (cada mes mantiene su importe).
+    setUnir((prim?.span ?? 1) > 1);
     setBarra({ celdas: cs });
   }
   finRef.current = finArrastre;
 
-  async function aplicar(modo: "importe" | "no_pagado" | "borrar") {
+  async function aplicar(modo: "importe" | "no_pagado" | "baja" | "borrar") {
     if (!barra) return;
     if (modo === "borrar") {
       // Borra la celda; y por si era un bloque unido, limpia también los meses que cubría.
@@ -242,7 +242,7 @@ export default function GestionClientesPage() {
     } else {
       const impTecleado = Math.round((Number(impBarra.replace(",", ".")) || 0) * 100) / 100;
       if (modo === "importe" && impTecleado <= 0) return setError("Pon un importe mayor que 0 (o usa «No pagado» / «Quitar»).");
-      const estado = modo === "importe" ? "pagado" : "no_pagado";
+      const estado = modo === "importe" ? "pagado" : modo === "baja" ? "baja" : "no_pagado";
       const nota = notaBarra.trim() || null;
       // Total esperado (cobro parcial): si > importe cobrado, lo que falta se muestra en ámbar.
       const objTecleado = Math.round((Number(objBarra.replace(",", ".")) || 0) * 100) / 100;
@@ -256,7 +256,7 @@ export default function GestionClientesPage() {
         for (const [fid, meses] of porFila) {
           const mn = Math.min(...meses), mx = Math.max(...meses);
           const previo = celdas.get(clave(fid, mn))?.importe ?? 0;
-          const imp = modo === "importe" ? impTecleado : (impTecleado > 0 ? impTecleado : previo);
+          const imp = modo === "importe" ? impTecleado : modo === "baja" ? 0 : (impTecleado > 0 ? impTecleado : previo);
           for (let m = mn + 1; m <= mx; m++) await supabase.from("pagos_cobros_marcas").delete().eq("fila_id", fid).eq("mes", mesISO(m));
           const { error } = await supabase.from("pagos_cobros_marcas").upsert(
             { fila_id: fid, mes: mesISO(mn), estado, importe: imp, nota, span: mx - mn + 1, objetivo, actualizado_en: new Date().toISOString() },
@@ -268,7 +268,7 @@ export default function GestionClientesPage() {
         // existente (lo que debe) si no tecleas uno nuevo.
         const filasSQL = barra.celdas.map((cel) => {
           const previo = celdas.get(clave(cel.filaId, cel.mesIdx))?.importe ?? 0;
-          const imp = modo === "importe" ? impTecleado : (impTecleado > 0 ? impTecleado : previo);
+          const imp = modo === "importe" ? impTecleado : modo === "baja" ? 0 : (impTecleado > 0 ? impTecleado : previo);
           return { fila_id: cel.filaId, mes: mesISO(cel.mesIdx), estado, importe: imp, nota, span: 1, objetivo, actualizado_en: new Date().toISOString() };
         });
         const { error } = await supabase.from("pagos_cobros_marcas").upsert(filasSQL, { onConflict: "fila_id,mes" });
@@ -357,6 +357,7 @@ export default function GestionClientesPage() {
           )}
           <button onClick={() => aplicar("importe")} className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600">✓ Aplicar importe</button>
           <button onClick={() => aplicar("no_pagado")} className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-600">✕ No pagado</button>
+          <button onClick={() => aplicar("baja")} title="Marcar baja (cliente dado de baja ese mes). Arrastra hasta diciembre para marcar todos los meses." className="rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-bold text-zinc-200 hover:bg-zinc-600">⊘ Baja</button>
           <button onClick={() => aplicar("borrar")} className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-bold text-zinc-400 hover:bg-zinc-700">Quitar</button>
           <button onClick={cancelarSel} className="rounded-lg bg-zinc-800 px-2.5 py-1.5 text-xs font-bold text-zinc-500">Cancelar</button>
         </div>
@@ -433,9 +434,10 @@ export default function GestionClientesPage() {
                   const sel = enSeleccion(fi, i);
                   const pagado = cel?.estado === "pagado" && cel.importe > 0;
                   const debe = cel?.estado === "no_pagado";
-                  const bg = pagado ? "bg-emerald-900/50" : debe ? "bg-amber-900/40" : "";
+                  const esBaja = cel?.estado === "baja";
+                  const bg = pagado ? "bg-emerald-900/50" : debe ? "bg-amber-900/40" : esBaja ? "bg-zinc-800/60" : "";
                   const borde = sel ? "ring-1 ring-inset ring-sky-400 bg-sky-500/20" : "";
-                  const baja = bajaEnMes(c, i) && !cel;
+                  const baja = esBaja || (bajaEnMes(c, i) && !cel);
                   const unido = span > 1;
                   // Cobro parcial: pagó importe de un total (objetivo) mayor → falta la diferencia.
                   const falta = pagado && cel!.objetivo && cel!.objetivo > cel!.importe ? cel!.objetivo - cel!.importe : 0;
@@ -445,7 +447,7 @@ export default function GestionClientesPage() {
                         : <span className="tabular-nums text-emerald-300">{n2(cel!.importe)}</span>)
                     : debe
                       ? (cel!.importe > 0 ? <span className="tabular-nums text-amber-400">{n2(cel!.importe)}</span> : <span className="text-amber-400">✕</span>)
-                      : baja ? <span className="text-[9px] font-bold uppercase text-zinc-700">baja</span> : <span className="text-zinc-800">·</span>;
+                      : baja ? <span className={`text-[9px] font-bold uppercase ${esBaja ? "text-zinc-400" : "text-zinc-700"}`}>baja</span> : <span className="text-zinc-800">·</span>;
                   const contenido = unido
                     ? <span className="flex items-center justify-center gap-1">{importeTxt}{cel?.nota && <span className="text-[9px] font-semibold uppercase text-emerald-500/70">{cel.nota}</span>}</span>
                     : importeTxt;
@@ -479,7 +481,7 @@ export default function GestionClientesPage() {
 
       <p className="mt-3 text-[10px] leading-snug text-zinc-600">
         <b>Pincha/arrastra</b> casillas y escribe el importe. <b>Pago semestral/anual</b>: arrastra los meses, marca <b>«Unir meses»</b> y el importe total; se ve como un bloque y cuenta una sola vez.
-        <b> baja</b> = meses posteriores a la baja del cliente. Esto es <b>solo vuestra hoja de control</b>: no toca la contabilidad.
+        <b> Baja</b>: selecciona el mes (o arrastra hasta diciembre) y pulsa <b>⊘ Baja</b>. <b> Mes sin pago</b>: pulsa <b>✕ No pagado</b>. Esto es <b>solo vuestra hoja de control</b>: no toca la contabilidad.
         Los cobros reales se apuntan en <Link href="/apuntar" className="text-red-400 hover:underline">Apuntar</Link>.
       </p>
     </div>
