@@ -39,7 +39,7 @@ const eur0 = (v: number) => new Intl.NumberFormat("es-ES", { style: "currency", 
 const inputCls =
   "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-white placeholder-zinc-600 outline-none focus:border-red-500";
 
-interface Celda { estado: string; nota: string | null; importe: number; span: number }
+interface Celda { estado: string; nota: string | null; importe: number; span: number; objetivo: number | null }
 
 export default function GestionClientesPage() {
   const [anyo, setAnyo] = useState(new Date().getFullYear());
@@ -64,6 +64,7 @@ export default function GestionClientesPage() {
   const [impBarra, setImpBarra] = useState("");
   const [notaBarra, setNotaBarra] = useState("");
   const [unir, setUnir] = useState(false);
+  const [objBarra, setObjBarra] = useState(""); // total esperado (para cobros parciales)
 
   const mesISO = (mesIdx: number) => `${anyo}-${String(mesIdx + 1).padStart(2, "0")}-01`;
   const clave = (filaId: number, mesIdx: number) => `${filaId}-${mesIdx}`;
@@ -87,11 +88,11 @@ export default function GestionClientesPage() {
     setClientes((cli.data as Cli[]) ?? []);
     const { data: mk } = await supabase
       .from("pagos_cobros_marcas")
-      .select("fila_id, mes, estado, nota, importe, span")
+      .select("fila_id, mes, estado, nota, importe, span, objetivo")
       .gte("mes", desde).lt("mes", hasta);
     const mm = new Map<string, Celda>();
-    for (const x of (mk as { fila_id: number; mes: string; estado: string; nota: string | null; importe: number | null; span: number | null }[]) ?? []) {
-      mm.set(`${x.fila_id}-${new Date(x.mes + "T00:00:00").getMonth()}`, { estado: x.estado, nota: x.nota, importe: Number(x.importe) || 0, span: x.span || 1 });
+    for (const x of (mk as { fila_id: number; mes: string; estado: string; nota: string | null; importe: number | null; span: number | null; objetivo: number | null }[]) ?? []) {
+      mm.set(`${x.fila_id}-${new Date(x.mes + "T00:00:00").getMonth()}`, { estado: x.estado, nota: x.nota, importe: Number(x.importe) || 0, span: x.span || 1, objetivo: x.objetivo != null ? Number(x.objetivo) : null });
     }
     setCeldas(mm);
   }, [anyo]);
@@ -220,6 +221,7 @@ export default function GestionClientesPage() {
     // Precarga importe/nota si la selección es una sola celda con datos
     const prim = cs.length === 1 ? celdas.get(clave(cs[0].filaId, cs[0].mesIdx)) : null;
     setImpBarra(prim?.importe ? String(prim.importe) : "");
+    setObjBarra(prim?.objetivo ? String(prim.objetivo) : "");
     const nMeses = Math.abs(selFin.mi - selIni.mi) + 1;
     setNotaBarra(prim?.nota ?? (nMeses === 3 ? "Trimestral" : nMeses === 6 ? "Semestral" : nMeses === 12 ? "Anual" : ""));
     // Por defecto, al seleccionar varios meses se sugiere unirlos en un bloque
@@ -242,6 +244,9 @@ export default function GestionClientesPage() {
       if (modo === "importe" && impTecleado <= 0) return setError("Pon un importe mayor que 0 (o usa «No pagado» / «Quitar»).");
       const estado = modo === "importe" ? "pagado" : "no_pagado";
       const nota = notaBarra.trim() || null;
+      // Total esperado (cobro parcial): si > importe cobrado, lo que falta se muestra en ámbar.
+      const objTecleado = Math.round((Number(objBarra.replace(",", ".")) || 0) * 100) / 100;
+      const objetivo = modo === "importe" && objTecleado > impTecleado ? objTecleado : null;
 
       if (unir) {
         // Unir meses: por cada fila, una sola marca que abarca el periodo (span).
@@ -254,7 +259,7 @@ export default function GestionClientesPage() {
           const imp = modo === "importe" ? impTecleado : (impTecleado > 0 ? impTecleado : previo);
           for (let m = mn + 1; m <= mx; m++) await supabase.from("pagos_cobros_marcas").delete().eq("fila_id", fid).eq("mes", mesISO(m));
           const { error } = await supabase.from("pagos_cobros_marcas").upsert(
-            { fila_id: fid, mes: mesISO(mn), estado, importe: imp, nota, span: mx - mn + 1, actualizado_en: new Date().toISOString() },
+            { fila_id: fid, mes: mesISO(mn), estado, importe: imp, nota, span: mx - mn + 1, objetivo, actualizado_en: new Date().toISOString() },
             { onConflict: "fila_id,mes" });
           if (error) return setError(error.message);
         }
@@ -264,17 +269,17 @@ export default function GestionClientesPage() {
         const filasSQL = barra.celdas.map((cel) => {
           const previo = celdas.get(clave(cel.filaId, cel.mesIdx))?.importe ?? 0;
           const imp = modo === "importe" ? impTecleado : (impTecleado > 0 ? impTecleado : previo);
-          return { fila_id: cel.filaId, mes: mesISO(cel.mesIdx), estado, importe: imp, nota, span: 1, actualizado_en: new Date().toISOString() };
+          return { fila_id: cel.filaId, mes: mesISO(cel.mesIdx), estado, importe: imp, nota, span: 1, objetivo, actualizado_en: new Date().toISOString() };
         });
         const { error } = await supabase.from("pagos_cobros_marcas").upsert(filasSQL, { onConflict: "fila_id,mes" });
         if (error) return setError(error.message);
       }
     }
-    setBarra(null); setSelIni(null); setSelFin(null); setImpBarra(""); setNotaBarra(""); setUnir(false);
+    setBarra(null); setSelIni(null); setSelFin(null); setImpBarra(""); setNotaBarra(""); setUnir(false); setObjBarra("");
     cargar();
   }
 
-  const cancelarSel = () => { setBarra(null); setSelIni(null); setSelFin(null); setImpBarra(""); setNotaBarra(""); setUnir(false); };
+  const cancelarSel = () => { setBarra(null); setSelIni(null); setSelFin(null); setImpBarra(""); setNotaBarra(""); setUnir(false); setObjBarra(""); };
   const anyos = [new Date().getFullYear() + 1, new Date().getFullYear(), new Date().getFullYear() - 1];
 
   return (
@@ -328,6 +333,7 @@ export default function GestionClientesPage() {
       <div className="mb-2 rounded-xl border border-sky-900 bg-sky-950/20 px-3 py-2 text-[11px] leading-snug text-zinc-400">
         <b className="text-sky-400">Hoja de clientes.</b> Pincha una casilla (o arrastra varias para juntar un periodo) y escribe el <b>importe</b>.
         <span className="text-emerald-400"> Verde = cobrado</span> (suma al facturado) · <span className="text-amber-400">ámbar = debe</span> (recordatorio, no suma).
+        <b> Cobro parcial</b>: pon lo cobrado y, en «Total», lo que debía; verás <span className="text-emerald-400">300</span><span className="text-amber-400">+300</span> (falta 300).
         Los totales por entrenador y por mes salen solos. Esquema visual vuestro: <b>no afecta a la contabilidad</b>.
       </div>
 
@@ -335,8 +341,12 @@ export default function GestionClientesPage() {
       {barra && (
         <div className="sticky top-2 z-20 mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 shadow-lg">
           <span className="text-xs font-bold text-white">{barra.celdas.length} casilla(s)</span>
-          <input inputMode="decimal" placeholder="Importe €" value={impBarra} onChange={(e) => setImpBarra(e.target.value)}
+          <input inputMode="decimal" placeholder="Cobrado €" value={impBarra} onChange={(e) => setImpBarra(e.target.value)}
             className="w-24 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-right text-xs tabular-nums text-white outline-none focus:border-red-500" autoFocus />
+          <span className="text-[10px] text-zinc-600">de</span>
+          <input inputMode="decimal" placeholder="Total €" value={objBarra} onChange={(e) => setObjBarra(e.target.value)}
+            title="Total esperado. Si es mayor que lo cobrado, la diferencia se marca como pendiente (cobro parcial). Déjalo vacío si el pago es completo."
+            className="w-20 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-right text-xs tabular-nums text-amber-300 outline-none focus:border-amber-500" />
           <input placeholder="Nota (trimestral, pagó en enero…)" value={notaBarra} onChange={(e) => setNotaBarra(e.target.value)}
             className="min-w-36 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-white outline-none focus:border-red-500" />
           {new Set(barra.celdas.map((c) => c.mesIdx)).size > 1 && (
@@ -427,8 +437,12 @@ export default function GestionClientesPage() {
                   const borde = sel ? "ring-1 ring-inset ring-sky-400 bg-sky-500/20" : "";
                   const baja = bajaEnMes(c, i) && !cel;
                   const unido = span > 1;
+                  // Cobro parcial: pagó importe de un total (objetivo) mayor → falta la diferencia.
+                  const falta = pagado && cel!.objetivo && cel!.objetivo > cel!.importe ? cel!.objetivo - cel!.importe : 0;
                   const importeTxt = pagado
-                    ? <span className="tabular-nums text-emerald-300">{n2(cel!.importe)}</span>
+                    ? (falta > 0
+                        ? <span className="tabular-nums"><span className="text-emerald-300">{n2(cel!.importe)}</span><span className="text-amber-400"> +{n2(falta)}</span></span>
+                        : <span className="tabular-nums text-emerald-300">{n2(cel!.importe)}</span>)
                     : debe
                       ? (cel!.importe > 0 ? <span className="tabular-nums text-amber-400">{n2(cel!.importe)}</span> : <span className="text-amber-400">✕</span>)
                       : baja ? <span className="text-[9px] font-bold uppercase text-zinc-700">baja</span> : <span className="text-zinc-800">·</span>;
@@ -439,8 +453,8 @@ export default function GestionClientesPage() {
                     <td key={i} colSpan={unido ? span : undefined}
                       onMouseDown={(e) => { e.preventDefault(); inicioArrastre(fi, i); }}
                       onMouseEnter={() => entraArrastre(fi, i)}
-                      title={debe ? `Debe${cel!.importe > 0 ? ` ${n2(cel!.importe)} €` : ""}${cel!.nota ? ` · ${cel!.nota}` : ""}` : unido ? `${cel!.nota ?? "Bloque"} · ${span} meses${cel!.importe > 0 ? ` · ${n2(cel!.importe)} €` : ""}` : (cel?.nota ?? "Pincha o arrastra para poner importe")}
-                      className={`cursor-cell px-1 py-1.5 text-right ${bg} ${borde} ${unido ? "border-x border-emerald-700/40 text-center" : ""} ${i === mesActualIdx && !bg ? "bg-zinc-900/40" : ""}`}>
+                      title={debe ? `Debe${cel!.importe > 0 ? ` ${n2(cel!.importe)} €` : ""}${cel!.nota ? ` · ${cel!.nota}` : ""}` : falta > 0 ? `Cobrado ${n2(cel!.importe)} € de ${n2(cel!.objetivo!)} € · Falta ${n2(falta)} €${cel!.nota ? ` · ${cel!.nota}` : ""}` : unido ? `${cel!.nota ?? "Bloque"} · ${span} meses${cel!.importe > 0 ? ` · ${n2(cel!.importe)} €` : ""}` : (cel?.nota ?? "Pincha o arrastra para poner importe")}
+                      className={`cursor-cell px-1 py-1.5 text-right ${bg} ${falta > 0 ? "border-b-2 border-amber-600/70" : ""} ${borde} ${unido ? "border-x border-emerald-700/40 text-center" : ""} ${i === mesActualIdx && !bg ? "bg-zinc-900/40" : ""}`}>
                       {contenido}
                     </td>
                   );
