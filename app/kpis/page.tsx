@@ -77,7 +77,7 @@ export default function KpisPage() {
       supabase.from("kpi_valores").select("*").gte("mes", desde).lt("mes", hasta),
       supabase.from("kpi_diario").select("*").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("facturas").select("fecha_emision, total, condonado, canal, computa_reparto").gte("fecha_emision", desde).lt("fecha_emision", hasta),
-      supabase.from("cobros").select("fecha, importe, facturas!inner(canal, computa_reparto)").gte("fecha", desde).lt("fecha", hasta),
+      supabase.from("cobros").select("fecha, importe, facturas(canal)").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("gastos").select("fecha, total, canal, categorias!inner(nombre)").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("clientes").select("id, canal, fecha_inicio, fecha_baja"),
       supabase.from("v_kpis").select("caja_libre").single(),
@@ -105,8 +105,10 @@ export default function KpisPage() {
       // Lo condonado (perdonado) no es facturación real: se resta, igual que en P&G.
       fact[canalDe(f.canal)][mesDe(f.fecha_emision)] += Number(f.total) - Number(f.condonado ?? 0);
     }
-    for (const c of (cob.data as unknown as { fecha: string; importe: number; facturas: { canal: string | null; computa_reparto: boolean | null } }[]) ?? []) {
-      if (c.facturas?.computa_reparto === false) continue;
+    // Cash collected = 100% fiel al Libro Diario (caja): TODOS los cobros del mes
+    // por su fecha, sin filtrar por computa_reparto ni exigir factura. El Libro
+    // suma cada cobro igual; esto debe cuadrar al céntimo con sus "Ingresos".
+    for (const c of (cob.data as unknown as { fecha: string; importe: number; facturas: { canal: string | null } | null }[]) ?? []) {
       cobrado[canalDe(c.facturas?.canal ?? null)][mesDe(c.fecha)] += Number(c.importe);
     }
     for (const g of (gas.data as unknown as { fecha: string; total: number; canal: string | null; categorias: { nombre: string } }[]) ?? []) {
