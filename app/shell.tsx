@@ -33,7 +33,7 @@ const ic = (d: string) => (
 export const CATALOGO: Record<string, { etiqueta: string; icono: React.ReactNode }> = {
   "/dashboard": { etiqueta: "Dashboard", icono: ic("M4 13h6V4H4z|M14 20h6v-9h-6z|M14 8h6V4h-6z|M4 20h6v-4H4z") },
   "/crm": { etiqueta: "Contactos", icono: ic("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2|M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8|M22 21v-2a4 4 0 0 0-3-3.87|M16 3.13a4 4 0 0 1 0 7.75") },
-  "/ventas": { etiqueta: "Ventas", icono: ic("M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z|M3 6h18|M16 10a4 4 0 0 1-8 0") },
+  "/ventas": { etiqueta: "Facturas", icono: ic("M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z|M3 6h18|M16 10a4 4 0 0 1-8 0") },
   "/compras": { etiqueta: "Compras", icono: ic("M6 6h15l-1.5 9H8z|M6 6 5 2H2|M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z|M18 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2z") },
   "/pipeline": { etiqueta: "Embudo de ventas", icono: ic("M3 4h18l-7 8v6l-4 2v-8z") },
   "/actividades": { etiqueta: "Actividades", icono: ic("M20 7h-9|M14 17H5|M17 17a3 3 0 1 0 0-6 3 3 0 0 0 0 6z|M7 7a3 3 0 1 0 0 .01") },

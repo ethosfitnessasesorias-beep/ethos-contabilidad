@@ -9,9 +9,9 @@ export default function VentasLayout({ children }: { children: React.ReactNode }
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
   }
   return (
-    <Shell titulo="Ventas">
+    <Shell titulo="Facturas">
       <div className="px-5 py-6 md:px-8">
-        <h1 className="text-3xl font-black tracking-tight text-white">Ventas</h1>
+        <h1 className="text-3xl font-black tracking-tight text-white">Facturas</h1>
         <div className="mt-6">{children}</div>
       </div>
     </Shell>

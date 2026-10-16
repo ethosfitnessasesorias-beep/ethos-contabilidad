@@ -27,6 +27,10 @@ interface FacturaCompleta {
   iva_importe: number;
   irpf_importe: number;
   total: number;
+  // Datos fiscales propios de la factura (si vacíos, se usan los del contacto)
+  facturar_nombre: string | null;
+  facturar_nif: string | null;
+  facturar_direccion: string | null;
   clientes: {
     nombre: string;
     apellidos: string | null;
@@ -99,6 +103,7 @@ export default function PaginaFactura() {
   const [fCategoria, setFCategoria] = useState<number | "">("");
   const [fCanal, setFCanal] = useState("presencial");
   const [fAtribucion, setFAtribucion] = useState("ethos");
+  const [fNombre, setFNombre] = useState("");
   const [fNif, setFNif] = useState("");
   const [fDireccion, setFDireccion] = useState("");
   const [inicializado, setInicializado] = useState(false);
@@ -107,7 +112,7 @@ export default function PaginaFactura() {
     const [f, l, c, cli, cat, per, co, cue] = await Promise.all([
       supabase
         .from("facturas")
-        .select("id, numero, cliente_id, categoria_id, canal, atribucion, rectifica_id, fecha_emision, fecha_vencimiento, concepto, base, iva_pct, irpf_pct, iva_importe, irpf_importe, total, clientes(nombre, apellidos, nif, direccion)")
+        .select("id, numero, cliente_id, categoria_id, canal, atribucion, rectifica_id, fecha_emision, fecha_vencimiento, concepto, base, iva_pct, irpf_pct, iva_importe, irpf_importe, total, facturar_nombre, facturar_nif, facturar_direccion, clientes(nombre, apellidos, nif, direccion)")
         .eq("id", facturaId)
         .single(),
       supabase.from("factura_lineas").select("*").eq("factura_id", facturaId).order("orden").order("id"),
@@ -161,8 +166,11 @@ export default function PaginaFactura() {
     setFCategoria(factura.categoria_id ?? "");
     setFCanal(factura.canal ?? "presencial");
     setFAtribucion(factura.atribucion);
-    setFNif(factura.clientes?.nif ?? "");
-    setFDireccion(factura.clientes?.direccion ?? "");
+    // Datos fiscales: primero los propios de la factura; si vacíos, los del contacto
+    const nombreContacto = factura.clientes ? `${factura.clientes.nombre} ${factura.clientes.apellidos ?? ""}`.trim() : "";
+    setFNombre(factura.facturar_nombre ?? nombreContacto);
+    setFNif(factura.facturar_nif ?? factura.clientes?.nif ?? "");
+    setFDireccion(factura.facturar_direccion ?? factura.clientes?.direccion ?? "");
     setLineas(
       lineasBD.length > 0
         ? lineasBD.map((x) => ({
@@ -182,13 +190,30 @@ export default function PaginaFactura() {
     setInicializado(true);
   }, [factura, lineasBD, inicializado]);
 
-  // Al elegir contacto, traer su NIF y dirección a los campos
+  // Acción EXPLÍCITA: copiar NIF/dirección de la factura a la ficha del contacto
+  // (por defecto nunca se toca; solo si el usuario lo pide con este botón).
+  async function guardarEnContacto() {
+    if (fCliente === "") return;
+    const { error } = await supabase.from("clientes")
+      .update({ nif: fNif.trim() || null, direccion: fDireccion.trim() || null })
+      .eq("id", fCliente);
+    if (error) return setError(error.message);
+    setClientes((prev) => prev.map((c) => (c.id === fCliente ? { ...c, nif: fNif.trim() || null, direccion: fDireccion.trim() || null } : c)));
+    setAvisoOk("Copiado a la ficha del contacto ✓");
+    setTimeout(() => setAvisoOk(null), 2500);
+  }
+
+  // Al elegir contacto, traer su nombre/NIF/dirección como valores POR DEFECTO.
+  // A partir de aquí son editables y solo se guardan en la factura (no en la ficha).
   function elegirCliente(v: string) {
     const id = v === "" ? "" : Number(v);
     setFCliente(id);
     const c = clientes.find((x) => x.id === id);
-    setFNif(c?.nif ?? "");
-    setFDireccion(c?.direccion ?? "");
+    if (c) {
+      setFNombre(`${c.nombre} ${c.apellidos ?? ""}`.trim());
+      setFNif(c.nif ?? "");
+      setFDireccion(c.direccion ?? "");
+    }
   }
 
   // Los precios de las líneas son FINALES (IVA incluido): la base sale hacia atrás.
@@ -232,6 +257,10 @@ export default function PaginaFactura() {
         base: totales.base,
         iva_pct: fIva,
         irpf_pct: fIrpf,
+        // Datos fiscales propios de la factura (NO tocan la ficha del contacto)
+        facturar_nombre: fNombre.trim() || null,
+        facturar_nif: fNif.trim() || null,
+        facturar_direccion: fDireccion.trim() || null,
       })
       .eq("id", facturaId);
     if (upd.error) {
@@ -259,10 +288,8 @@ export default function PaginaFactura() {
         return false;
       }
     }
-    // Ficha del cliente: NIF y dirección valen para futuras facturas
-    if (fCliente !== "") {
-      await supabase.from("clientes").update({ nif: fNif.trim() || null, direccion: fDireccion.trim() || null }).eq("id", fCliente);
-    }
+    // Los datos fiscales se quedan SOLO en la factura (cambio puntual); la ficha
+    // del contacto no se toca. Para guardarlos en el contacto hay botón aparte.
     setGuardando(false);
     if (!silencioso) {
       setAvisoOk("Borrador guardado ✓");
@@ -405,6 +432,11 @@ export default function PaginaFactura() {
   const numeroPrevisto = `${serieActual}${String(proximoActual).padStart(4, "0")}`;
   const clienteSel = clientes.find((c) => c.id === fCliente);
   const nombreCliente = clienteSel ? `${clienteSel.nombre} ${clienteSel.apellidos ?? ""}`.trim() : factura?.clientes?.nombre ?? "";
+  // Lo que se imprime en el PDF: datos fiscales propios de la factura (snapshot).
+  // Emitida → lo guardado en la factura (respaldo: contacto). Borrador → el formulario.
+  const docNombre = emitida ? (factura?.facturar_nombre || nombreCliente) : (fNombre.trim() || nombreCliente);
+  const docNif = emitida ? (factura?.facturar_nif ?? factura?.clientes?.nif ?? "") : fNif;
+  const docDireccion = emitida ? (factura?.facturar_direccion ?? factura?.clientes?.direccion ?? "") : fDireccion;
 
   // Líneas para el documento: las del editor (borrador) o las guardadas (emitida)
   const lineasDoc: { concepto: string; descripcion: string | null; cantidad: number; precio: number }[] = emitida
@@ -450,9 +482,9 @@ export default function PaginaFactura() {
 
       <div className="mt-8 rounded-lg bg-zinc-100 p-4 text-sm print:bg-zinc-100">
         <p className="text-xs font-bold uppercase text-zinc-500">Cliente</p>
-        <p className="font-semibold">{nombreCliente || "Cliente particular"}</p>
-        {(emitida ? factura.clientes?.nif : fNif) && <p>NIF {emitida ? factura.clientes?.nif : fNif}</p>}
-        {(emitida ? factura.clientes?.direccion : fDireccion) && <p>{emitida ? factura.clientes?.direccion : fDireccion}</p>}
+        <p className="font-semibold">{docNombre || "Cliente particular"}</p>
+        {docNif && <p>NIF {docNif}</p>}
+        {docDireccion && <p>{docDireccion}</p>}
       </div>
 
       <table className="mt-8 w-full text-sm">
@@ -656,18 +688,22 @@ export default function PaginaFactura() {
                 <span className={etiquetaCls}>Vencimiento</span>
                 <input type="date" value={fVence} onChange={(e) => setFVence(e.target.value)} className={inputCls} />
               </label>
-              {fCliente !== "" && (
-                <>
-                  <label className="flex flex-col gap-1 sm:col-span-1">
-                    <span className={etiquetaCls}>NIF del cliente</span>
-                    <input value={fNif} onChange={(e) => setFNif(e.target.value)} placeholder="Para factura completa" className={inputCls} />
-                  </label>
-                  <label className="flex flex-col gap-1 sm:col-span-3">
-                    <span className={etiquetaCls}>Dirección del cliente</span>
-                    <input value={fDireccion} onChange={(e) => setFDireccion(e.target.value)} placeholder="Se guarda en su ficha" className={inputCls} />
-                  </label>
-                </>
-              )}
+              <label className="flex flex-col gap-1 sm:col-span-2">
+                <span className={etiquetaCls}>Nombre fiscal / razón social</span>
+                <input value={fNombre} onChange={(e) => setFNombre(e.target.value)} placeholder={nombreCliente || "A quién se factura"} className={inputCls} />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-1">
+                <span className={etiquetaCls}>NIF / CIF</span>
+                <input value={fNif} onChange={(e) => setFNif(e.target.value)} placeholder="Para factura completa" className={inputCls} />
+              </label>
+              <label className="flex flex-col gap-1 sm:col-span-4">
+                <span className={etiquetaCls}>Dirección fiscal</span>
+                <input value={fDireccion} onChange={(e) => setFDireccion(e.target.value)} placeholder="Calle, nº, población" className={inputCls} />
+              </label>
+              <p className="text-[10px] leading-snug text-zinc-500 sm:col-span-4">
+                Estos datos se guardan <b>solo en esta factura</b>. Si eliges un contacto se rellenan con los suyos, pero cambiarlos aquí <b>no modifica su ficha</b>.
+                {fCliente !== "" && <> ¿Actualizar también la ficha del contacto? <button type="button" onClick={guardarEnContacto} className="font-bold text-red-400 hover:underline">Copiar a su ficha</button></>}
+              </p>
             </div>
 
             {/* Líneas */}
