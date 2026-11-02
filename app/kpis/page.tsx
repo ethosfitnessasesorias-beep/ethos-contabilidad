@@ -24,6 +24,7 @@ const METRICAS_MANUALES: Record<Negocio, { clave: string; etiqueta: string }[]> 
     { clave: "visualizaciones", etiqueta: "Visualizaciones" },
     { clave: "cuentas_alcanzadas", etiqueta: "Cuentas alcanzadas" },
     { clave: "seguidores_totales", etiqueta: "Seguidores totales" },
+    { clave: "clientes_activos_inicio", etiqueta: "Clientes activos a principio de mes" },
     { clave: "clientes_a_renovar", etiqueta: "Clientes a renovar" },
     { clave: "renovaciones", etiqueta: "Renovaciones" },
   ],
@@ -37,6 +38,55 @@ const METRICAS_MANUALES: Record<Negocio, { clave: string; etiqueta: string }[]> 
 
 const n0 = (v: number) => new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 }).format(v);
 const n2 = (v: number) => new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 }).format(v);
+
+// Mini-gráfica de líneas (evolución mensual) con su propia escala. Dibuja solo los
+// meses con dato; muestra el último valor y la variación respecto al mes anterior.
+function MiniChart({ label, vals }: { label: string; vals: (number | null)[] }) {
+  const pts = vals.map((v, i) => ({ i, v })).filter((p): p is { i: number; v: number } => p.v !== null);
+  const W = 300, H = 100, padX = 8, padT = 10, padB = 16;
+  const nums = pts.map((p) => p.v);
+  const max = nums.length ? Math.max(...nums) : 0;
+  const min = nums.length ? Math.min(...nums) : 0;
+  const rango = max - min || 1;
+  const x = (i: number) => padX + (i / 11) * (W - 2 * padX);
+  const y = (v: number) => padT + (1 - (v - min) / rango) * (H - padT - padB);
+  const ultimo = pts.length ? pts[pts.length - 1].v : 0;
+  const previo = pts.length > 1 ? pts[pts.length - 2].v : null;
+  const delta = previo !== null && previo !== 0 ? (ultimo - previo) / previo : null;
+  const linea = pts.map((p, k) => `${k ? "L" : "M"}${x(p.i).toFixed(1)} ${y(p.v).toFixed(1)}`).join(" ");
+  const area = pts.length > 1 ? `${linea} L${x(pts[pts.length - 1].i).toFixed(1)} ${(H - padB).toFixed(1)} L${x(pts[0].i).toFixed(1)} ${(H - padB).toFixed(1)} Z` : "";
+  const ultimoMes = pts.length ? MESES[pts[pts.length - 1].i] : "";
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
+      <div className="mb-1 flex items-baseline justify-between gap-2">
+        <span className="truncate text-[11px] font-bold text-zinc-400">{label}</span>
+        <span className="flex items-baseline gap-1 whitespace-nowrap">
+          <span className="text-base font-black tabular-nums text-white">{n0(ultimo)}</span>
+          {delta !== null && (
+            <span className={`text-[10px] font-bold ${delta > 0 ? "text-emerald-400" : delta < 0 ? "text-red-400" : "text-zinc-500"}`}>
+              {delta > 0 ? "▲" : delta < 0 ? "▼" : "="} {Math.abs(delta * 100).toFixed(0)}%
+            </span>
+          )}
+        </span>
+      </div>
+      {pts.length > 1 ? (
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none" style={{ height: 72 }}>
+          {area && <path d={area} fill="url(#kpiGrad)" opacity={0.15} />}
+          <defs><linearGradient id="kpiGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#38bdf8" /><stop offset="100%" stopColor="#38bdf8" stopOpacity="0" /></linearGradient></defs>
+          <path d={linea} fill="none" stroke="#38bdf8" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          {pts.map((p) => <circle key={p.i} cx={x(p.i)} cy={y(p.v)} r={2.2} fill="#38bdf8" />)}
+        </svg>
+      ) : (
+        <p className="py-4 text-center text-[11px] text-zinc-600">Sin datos suficientes para la gráfica</p>
+      )}
+      <div className="mt-1 flex justify-between text-[9px] text-zinc-600">
+        <span>{pts.length ? MESES[pts[0].i] : ""}</span>
+        <span>máx {n0(max)}</span>
+        <span>{ultimoMes}</span>
+      </div>
+    </div>
+  );
+}
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 const celdaNum = (v: number, cls = "text-zinc-300", fmt: (x: number) => string = n0) =>
@@ -622,6 +672,21 @@ export default function KpisPage() {
             </p>
           </section>
         )}
+
+        {/* RESUMEN GRÁFICO · Tráfico y servicio (según el negocio elegido) */}
+        <section className="mt-6">
+          <h2 className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-sky-500">
+            Resumen · Tráfico y servicio {anyo} · {negocio === "online" ? "ETHOS FITNESS" : "ETHOS GYM"}
+          </h2>
+          <p className="mb-3 text-[11px] text-zinc-500">Evolución mensual de cada métrica (cada gráfica con su propia escala). Número = último mes con dato; ▲▼ = variación vs. el mes anterior.</p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {METRICAS_MANUALES[negocio]
+              .filter((m) => m.clave !== "inversion_anuncios")
+              .map((m) => (
+                <MiniChart key={m.clave} label={m.etiqueta} vals={MESES.map((_, i) => valorManual(m.clave, i))} />
+              ))}
+          </div>
+        </section>
       </div>
     </Shell>
   );
