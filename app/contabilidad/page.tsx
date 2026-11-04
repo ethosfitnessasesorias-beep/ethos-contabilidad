@@ -407,6 +407,75 @@ export default function LibroPage() {
   const hayFiltros =
     fTexto.trim() !== "" || fTipo !== "todos" || fCanal !== "todos" || fMetodo !== "todos" || fCats.size > 0 || fMin !== "" || fMax !== "";
 
+  // ---------- Exportar a CSV (formato Excel España: ";" y coma decimal) ----------
+  const [exportando, setExportando] = useState(false);
+  const [menuExport, setMenuExport] = useState(false);
+
+  function movimientosACSV(lista: Movimiento[]): string {
+    const cuentaNombre = (id: number | null) => cuentas.find((c) => c.id === id)?.nombre ?? "";
+    const catNombre = (id: number | null) => categorias.find((c) => c.id === id)?.nombre ?? "";
+    const celda = (v: string | number | null | undefined) => {
+      const s = v === null || v === undefined ? "" : String(v);
+      return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const fechaES = (iso: string) => { const [y, m, d] = iso.slice(0, 10).split("-"); return `${d}/${m}/${y}`; };
+    const num = (n: number) => n.toFixed(2).replace(".", ",");
+    const TIPO: Record<TipoMov, string> = { ingreso: "Ingreso", gasto: "Gasto", traspaso: "Traspaso" };
+    const cab = ["Fecha", "Tipo", "Concepto", "Detalle", "Cuenta", "Categoría", "Canal", "Método", "Importe", "Histórico"];
+    const filas = lista.map((m) => [
+      fechaES(m.fecha), TIPO[m.tipo], m.concepto, m.detalle, cuentaNombre(m.cuentaId), catNombre(m.categoriaId),
+      m.canal ?? "", METODO_ET(m.metodo) ?? "", num(m.importe), m.historico ? "Sí" : "",
+    ].map(celda).join(";"));
+    return "﻿" + [cab.join(";"), ...filas].join("\r\n");
+  }
+
+  function descargar(nombre: string, contenido: string) {
+    const blob = new Blob([contenido], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombre; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Año completo: consulta propia (misma lógica de mapeo que el Libro), sin filtros de pantalla
+  async function movimientosDelAnyo(y: number): Promise<Movimiento[]> {
+    const desde = `${y}-01-01`, hasta = `${y + 1}-01-01`;
+    const metodoPorCuenta = new Map(cuentas.map((c) => [c.id, c.codigo === "caja" ? "efectivo" : c.codigo === "banco" ? "transferencia" : c.codigo]));
+    const [co, ga, tr] = await Promise.all([
+      supabase.from("cobros").select("id, fecha, importe, cuenta_id, metodo, afecta_caja, facturas(concepto, canal, categoria_id, clientes(nombre, apellidos))").gte("fecha", desde).lt("fecha", hasta),
+      supabase.from("gastos").select("id, fecha, concepto, proveedor, total, irpf_soportado, cuenta_id, canal, categoria_id").gte("fecha", desde).lt("fecha", hasta),
+      supabase.from("traspasos").select("id, fecha, importe, motivo, cuenta_origen_id, cuenta_destino_id").gte("fecha", desde).lt("fecha", hasta),
+    ]);
+    const lista: Movimiento[] = [];
+    for (const c of (co.data as unknown as Array<{ id: number; fecha: string; importe: number; cuenta_id: number; metodo: string | null; afecta_caja: boolean | null; facturas: { concepto: string; canal: string | null; categoria_id: number | null; clientes: { nombre: string; apellidos: string | null } | null } | null }>) ?? []) {
+      const cli = c.facturas?.clientes;
+      lista.push({ key: `c${c.id}`, tipo: "ingreso", fecha: c.fecha, concepto: c.facturas?.concepto ?? "Cobro", detalle: cli ? `${cli.nombre} ${cli.apellidos ?? ""}`.trim() : "", cuentaId: c.cuenta_id, categoriaId: c.facturas?.categoria_id ?? null, importe: Number(c.importe), canal: c.facturas?.canal, metodo: c.metodo ?? metodoPorCuenta.get(c.cuenta_id) ?? null, historico: c.afecta_caja === false });
+    }
+    for (const g of (ga.data as Array<{ id: number; fecha: string; concepto: string; proveedor: string | null; total: number; irpf_soportado: number; cuenta_id: number; canal: string | null; categoria_id: number | null }>) ?? []) {
+      lista.push({ key: `g${g.id}`, tipo: "gasto", fecha: g.fecha, concepto: g.concepto, detalle: g.proveedor ?? "", cuentaId: g.cuenta_id, categoriaId: g.categoria_id, importe: -(Number(g.total) - Number(g.irpf_soportado)), canal: g.canal, metodo: metodoPorCuenta.get(g.cuenta_id) ?? null });
+    }
+    for (const t of (tr.data as Array<{ id: number; fecha: string; importe: number; motivo: string | null; cuenta_origen_id: number; cuenta_destino_id: number }>) ?? []) {
+      lista.push({ key: `t${t.id}o`, tipo: "traspaso", fecha: t.fecha, concepto: t.motivo ?? "Traspaso", detalle: "salida", cuentaId: t.cuenta_origen_id, categoriaId: null, importe: -Number(t.importe) });
+      lista.push({ key: `t${t.id}d`, tipo: "traspaso", fecha: t.fecha, concepto: t.motivo ?? "Traspaso", detalle: "entrada", cuentaId: t.cuenta_destino_id, categoriaId: null, importe: Number(t.importe) });
+    }
+    return lista.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.key.localeCompare(b.key));
+  }
+
+  async function exportar(alcance: "mes" | "anyo") {
+    setMenuExport(false);
+    setExportando(true);
+    try {
+      if (alcance === "mes") {
+        descargar(`libro-diario-${mes}${hayFiltros || cuentaSel !== "todas" ? "-filtrado" : ""}.csv`, movimientosACSV(filtrados));
+      } else {
+        const y = Number(mes.slice(0, 4));
+        descargar(`libro-diario-${y}.csv`, movimientosACSV(await movimientosDelAnyo(y)));
+      }
+    } finally {
+      setExportando(false);
+    }
+  }
+
   const saldoDe = (codigo: string) => Number(saldos.find((s) => s.codigo === codigo)?.saldo ?? 0);
 
   function irAApuntar(tab: "ingreso" | "gasto" | "traspaso") {
@@ -491,6 +560,28 @@ export default function LibroPage() {
           >
             + Traspaso
           </button>
+          <div className="relative">
+            <button
+              onClick={() => setMenuExport((v) => !v)}
+              disabled={exportando}
+              title="Descargar los movimientos en CSV (se abre en Excel)"
+              className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-bold text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+            >
+              {exportando ? "Exportando…" : "⬇ Exportar"}
+            </button>
+            {menuExport && (
+              <div className="absolute right-0 z-30 mt-1 w-60 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl">
+                <button onClick={() => exportar("mes")} className="block w-full px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800">
+                  <span className="font-bold">Este mes</span>
+                  <span className="block text-[10px] text-zinc-500">{filtrados.length} movimientos, tal como los ves (con filtros)</span>
+                </button>
+                <button onClick={() => exportar("anyo")} className="block w-full border-t border-zinc-800 px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-800">
+                  <span className="font-bold">Año {mes.slice(0, 4)} completo</span>
+                  <span className="block text-[10px] text-zinc-500">Todos los movimientos del año, sin filtros</span>
+                </button>
+              </div>
+            )}
+          </div>
           <input
             type="month"
             value={mes}
