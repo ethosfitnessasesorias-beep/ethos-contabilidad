@@ -113,7 +113,6 @@ export default function Dashboard() {
       for (const c of (cu.data as { id: number; codigo: string }[]) ?? []) codigoDe.set(c.id, c.codigo);
       const porCuenta = new Map<string, number>();
       for (const co of (cmes.data as unknown as { importe: number; cuenta_id: number; facturas: { computa_reparto: boolean | null } }[]) ?? []) {
-        if (co.facturas?.computa_reparto === false) continue;
         const cod = codigoDe.get(co.cuenta_id);
         if (cod) porCuenta.set(cod, (porCuenta.get(cod) ?? 0) + Number(co.importe));
       }
@@ -132,7 +131,6 @@ export default function Dashboard() {
         fm.set(m, (fm.get(m) ?? 0) + Number(f.total) - Math.min(Number(f.condonado ?? 0), Number(f.total))); // condonado no es facturación
       }
       for (const c of (cob.data as unknown as { fecha: string; importe: number; facturas: { computa_reparto: boolean | null } }[]) ?? []) {
-        if (c.facturas?.computa_reparto === false) continue;
         const m = c.fecha.slice(0, 7);
         cm.set(m, (cm.get(m) ?? 0) + Number(c.importe));
       }

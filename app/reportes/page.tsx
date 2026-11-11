@@ -53,8 +53,20 @@ export default function Reportes() {
     })();
   }, [sesionOk, anyo]);
 
-  // Cash collected por mes (cobros reales; la facturación es dinero futuro)
+  // Cash collected por mes = TODOS los cobros (igual que el Libro y los KPIs): incluye
+  // subvenciones y aportaciones porque es dinero que entró de verdad.
   const cash = useMemo(() => {
+    const total = Array(12).fill(0);
+    for (const c of cob) {
+      if (fNeg !== "todos" && negocioDe(c.facturas?.canal) !== fNeg) continue;
+      total[new Date(c.fecha + "T00:00:00").getMonth()] += Number(c.importe);
+    }
+    return total;
+  }, [cob, fNeg]);
+
+  // Solo cobros de ventas (sin subvenciones/aportaciones): para comparar con la
+  // facturación, que tampoco las incluye. Evita que la diferencia salga negativa.
+  const cashVentas = useMemo(() => {
     const total = Array(12).fill(0);
     for (const c of cob) {
       if (c.facturas?.computa_reparto === false) continue;
@@ -190,10 +202,10 @@ export default function Reportes() {
                 <tr className="border-t border-zinc-800/60 text-zinc-500">
                   <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1">diferencia (+ por cobrar / − cobros de meses previos)</td>
                   {pivotIng.total.map((v, i) => {
-                    const d = v - cash[i];
+                    const d = v - cashVentas[i];
                     return <Fragment key={i}>{celda(d, d > 0.5 ? "text-amber-500/90" : "text-zinc-500")}</Fragment>;
                   })}
-                  <td className="px-3 py-1 text-right tabular-nums text-amber-500/90">{n0(suma(pivotIng.total) - suma(cash))}</td>
+                  <td className="px-3 py-1 text-right tabular-nums text-amber-500/90">{n0(suma(pivotIng.total) - suma(cashVentas))}</td>
                 </tr>
               </tbody>
             </table>
