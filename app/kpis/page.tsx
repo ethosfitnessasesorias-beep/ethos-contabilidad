@@ -153,7 +153,7 @@ export default function KpisPage() {
     for (const f of (fac.data as { fecha_emision: string; total: number; condonado: number | null; canal: string | null; computa_reparto: boolean | null }[]) ?? []) {
       if (f.computa_reparto === false) continue;
       // Lo condonado (perdonado) no es facturación real: se resta, igual que en P&G.
-      fact[canalDe(f.canal)][mesDe(f.fecha_emision)] += Number(f.total) - Number(f.condonado ?? 0);
+      fact[canalDe(f.canal)][mesDe(f.fecha_emision)] += Number(f.total) - Math.min(Number(f.condonado ?? 0), Number(f.total));
     }
     // Cash collected = 100% fiel al Libro Diario (caja): TODOS los cobros del mes
     // por su fecha, sin filtrar por computa_reparto ni exigir factura. El Libro

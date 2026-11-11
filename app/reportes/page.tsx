@@ -73,7 +73,7 @@ export default function Reportes() {
       const m = new Date(f.fecha_emision + "T00:00:00").getMonth();
       const k = f.categorias?.nombre ?? "Sin categoría";
       const arr = filas.get(k) ?? Array(12).fill(0);
-      arr[m] += Number(f.total) - Number(f.condonado ?? 0); // condonado no es facturación
+      arr[m] += Number(f.total) - Math.min(Number(f.condonado ?? 0), Number(f.total)); // condonado no es facturación
       filas.set(k, arr);
     }
     const lista = [...filas.entries()].sort((a, b) => suma(b[1]) - suma(a[1]));

@@ -129,7 +129,7 @@ export default function Dashboard() {
       for (const f of (fact.data as { fecha_emision: string; total: number; condonado: number | null; computa_reparto: boolean | null }[]) ?? []) {
         if (f.computa_reparto === false) continue; // aportaciones de capital fuera
         const m = f.fecha_emision.slice(0, 7);
-        fm.set(m, (fm.get(m) ?? 0) + Number(f.total) - Number(f.condonado ?? 0)); // condonado no es facturación
+        fm.set(m, (fm.get(m) ?? 0) + Number(f.total) - Math.min(Number(f.condonado ?? 0), Number(f.total))); // condonado no es facturación
       }
       for (const c of (cob.data as unknown as { fecha: string; importe: number; facturas: { computa_reparto: boolean | null } }[]) ?? []) {
         if (c.facturas?.computa_reparto === false) continue;

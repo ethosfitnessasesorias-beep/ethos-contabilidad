@@ -75,7 +75,7 @@ export default function PyGPage() {
       const n: Negocio = f.canal === "online" ? "online" : "presencial";
       // Lo condonado (perdonado) NO es ingreso: se resta para que el P&G sea fiel.
       // No toca Libro ni Reparto, que trabajan sobre lo cobrado.
-      b[n].ingresos[m] += Number(f.total) - Number(f.condonado ?? 0);
+      b[n].ingresos[m] += Number(f.total) - Math.min(Number(f.condonado ?? 0), Number(f.total));
     }
     for (const g of gastos) {
       if (g.categorias?.es_inversion) continue; // la inversión entra amortizada, no de golpe
