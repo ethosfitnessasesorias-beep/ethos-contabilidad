@@ -4,8 +4,10 @@
 //  · Entra: MEDIANA de los últimos 6 meses de cobros (los meses con anuales o
 //    semestres no la inflan como hacía la media de 3 meses).
 //  · Fijos: media de 3 meses. Variables: mediana de 6. Inversión: fuera (puntual).
-//  · Hacienda (categoría Impuestos): pago trimestral en ene/abr/jul/oct = total
-//    del último año ÷ 4, en vez de diluir el pago de un mes en la media.
+//  · Hacienda: lo que TOCA pagar cada trimestre (IVA resultado + IRPF retenciones +
+//    20 % del beneficio del 130, según v_impuestos_declaracion) expresado como % de
+//    lo que entra en los 2 últimos trimestres completos. El próximo pago parte de lo
+//    ya acumulado este trimestre (v_impuestos_pendientes). Se carga en ene/abr/jul/oct.
 //  · Retiradas de socios: se pagan el mes SIGUIENTE al beneficio; se estiman como
 //    el % histórico de nómina teórica sobre lo que entra (o media real, o nada).
 // Se actualiza sola con los datos reales: no hay lista de recurrentes que mantener.
@@ -32,12 +34,14 @@ interface Modelo {
   meses: MesComp[];
   entraMediana: number; entraMedia: number;
   fijos: number; variables: number;
-  impuestosTrim: number;   // pago trimestral medio a Hacienda (último año ÷ 4)
+  impuestosTrim: number;   // reserva: media de lo pagado (último año ÷ 4), solo si no hay declaraciones
+  tasaHacienda: number;    // lo que toca pagar ÷ lo que entra, 2 últimos trimestres completos
+  haciendaPendiente: number; // ya acumulado este trimestre (IVA + IRPF retenido + 20 % beneficio)
   retiradasMedia: number;  // media real de retiradas pagadas (6 meses)
   pctNomina: number;       // nómina teórica (0,8 × beneficio) ÷ lo que entra, 6 meses
   nominaUltimo: number;    // nómina teórica del último mes completo: se paga el mes que viene
 }
-const modeloVacio: Modelo = { meses: [], entraMediana: 0, entraMedia: 0, fijos: 0, variables: 0, impuestosTrim: 0, retiradasMedia: 0, pctNomina: 0, nominaUltimo: 0 };
+const modeloVacio: Modelo = { meses: [], entraMediana: 0, entraMedia: 0, fijos: 0, variables: 0, impuestosTrim: 0, tasaHacienda: 0, haciendaPendiente: 0, retiradasMedia: 0, pctNomina: 0, nominaUltimo: 0 };
 
 const eur = (n: number) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(n);
@@ -97,13 +101,15 @@ export default function Tesoreria() {
     const ini6ISO = primerDiaISO(-6);
     const ini12ISO = primerDiaISO(-12);
 
-    const [s, cob, gas, rep] = await Promise.all([
+    const [s, cob, gas, rep, decl, impPend] = await Promise.all([
       supabase.from("v_saldo_cuentas").select("saldo"),
-      // Lo que entra de verdad (cobros que tocan caja) en los últimos 6 meses completos
-      supabase.from("cobros").select("fecha, importe").eq("afecta_caja", true).gte("fecha", ini6ISO).lt("fecha", iniMesActualISO),
+      // Lo que entra de verdad (cobros que tocan caja): 12 meses (los trimestres sirven para la tasa de Hacienda)
+      supabase.from("cobros").select("fecha, importe").eq("afecta_caja", true).gte("fecha", ini12ISO).lt("fecha", iniMesActualISO),
       // Gastos de 12 meses: los impuestos son trimestrales y hace falta un año para promediarlos
       supabase.from("gastos").select("fecha, total, irpf_soportado, es_fijo, categorias(nombre, es_fijo, es_inversion, es_retirada)").gte("fecha", ini12ISO).lt("fecha", iniMesActualISO),
       supabase.from("v_reparto_beneficios").select("mes, beneficio").gte("mes", ini6ISO).lt("mes", iniMesActualISO),
+      supabase.from("v_impuestos_declaracion").select("anyo, trim, iva_resultado, irpf_retenciones, beneficio"),
+      supabase.from("v_impuestos_pendientes").select("iva_pendiente, irpf_pendiente").single(),
     ]);
     if (s.error) return setError(s.error.message);
     setSaldoActual((s.data ?? []).reduce((t: number, x: { saldo: number }) => t + Number(x.saldo), 0));
@@ -116,7 +122,8 @@ export default function Tesoreria() {
       porMes.set(k, m);
       return m;
     };
-    for (const c of (cob.data as { fecha: string; importe: number }[]) ?? []) get(key(c.fecha)).entra += Number(c.importe);
+    const cobrosRows = (cob.data as { fecha: string; importe: number }[]) ?? [];
+    for (const c of cobrosRows) if (c.fecha >= ini6ISO) get(key(c.fecha)).entra += Number(c.importe);
     let impuestos12 = 0;
     type GRow = { fecha: string; total: number; irpf_soportado: number; es_fijo: boolean | null; categorias: { nombre: string; es_fijo: boolean; es_inversion: boolean; es_retirada: boolean | null } | null };
     for (const g of (gas.data as unknown as GRow[]) ?? []) {
@@ -141,7 +148,32 @@ export default function Tesoreria() {
     const entra = col("entra");
     const sumEntra = entra.reduce((x, y) => x + y, 0);
     const ultimo = meses[meses.length - 1];
+
+    // Hacienda como % de lo que entra: lo que TOCA pagar por trimestre (declaraciones) ÷ cobros
+    // del trimestre, en los 2 últimos trimestres completos. Promediar lo PAGADO engañaba:
+    // un trimestre solo llevó el IRPF del local y otro el IVA acumulado.
+    const yq = (f: string) => `${f.slice(0, 4)}-${Math.floor((Number(f.slice(5, 7)) - 1) / 3) + 1}`;
+    const cobTrim = new Map<string, number>();
+    for (const c of cobrosRows) cobTrim.set(yq(c.fecha), (cobTrim.get(yq(c.fecha)) ?? 0) + Number(c.importe));
+    const trimHoy = `${now.getFullYear()}-${Math.floor(now.getMonth() / 3) + 1}`;
+    const liab = new Map<string, number>();
+    let benefTrimHoy = 0;
+    for (const r of (decl.data as { anyo: number; trim: number; iva_resultado: number; irpf_retenciones: number; beneficio: number }[]) ?? []) {
+      const k = `${r.anyo}-${r.trim}`;
+      // IVA a ingresar (si sale a devolver, 0) + retenciones de alquiler (modelo 115) + pago fraccionado 130 (20 % del beneficio)
+      liab.set(k, (liab.get(k) ?? 0) + Math.max(0, Number(r.iva_resultado)) + Number(r.irpf_retenciones) + 0.2 * Math.max(0, Number(r.beneficio)));
+      if (k === trimHoy) benefTrimHoy += Math.max(0, Number(r.beneficio));
+    }
+    const trimsRef = [...liab.keys()].filter((k) => k !== trimHoy && (cobTrim.get(k) ?? 0) > 0).sort().slice(-2);
+    const sumLiab = trimsRef.reduce((t, k) => t + (liab.get(k) ?? 0), 0);
+    const sumCobTrim = trimsRef.reduce((t, k) => t + (cobTrim.get(k) ?? 0), 0);
+    const tasaHacienda = sumCobTrim > 0 ? sumLiab / sumCobTrim : 0;
+    const pendRow = (impPend.data as { iva_pendiente: number; irpf_pendiente: number } | null) ?? null;
+    const haciendaPendiente = Math.max(0, Number(pendRow?.iva_pendiente ?? 0)) + Number(pendRow?.irpf_pendiente ?? 0) + 0.2 * benefTrimHoy;
+
     setModelo({
+      tasaHacienda,
+      haciendaPendiente,
       meses,
       entraMediana: mediana(entra),
       entraMedia: media(entra),
@@ -198,7 +230,7 @@ export default function Tesoreria() {
   }
 
   // "Sale" normal de un mes (informativo): fijos + variables + Hacienda prorrateada + retiradas estimadas
-  const impuestosMes = modelo.impuestosTrim / 3;
+  const impuestosMes = modelo.tasaHacienda > 0 ? modelo.tasaHacienda * modelo.entraMediana : modelo.impuestosTrim / 3;
   const retiradaEstimada = modoRetiradas === "ninguna" ? 0 : modoRetiradas === "media" ? modelo.retiradasMedia : modelo.pctNomina * modelo.entraMediana;
   const saleMes = modelo.fijos + modelo.variables + impuestosMes + retiradaEstimada;
   const netoMes = modelo.entraMediana - saleMes;
@@ -210,22 +242,34 @@ export default function Tesoreria() {
     const filas: { mes: string; entra: number; gastos: number; impuestos: number; retiradas: number; saldos: number[] }[] = [];
     const saldos = escenarios.map(() => saldoActual);
     const entraPrev = escenarios.map(() => 0);
+    const acumTrim = escenarios.map(() => 0); // lo que entra en el trimestre en curso (proyectado), por escenario
+    const tasa = modelo.tasaHacienda > 0 ? modelo.tasaHacienda : null;
+    let primerPago = true;
     const now = new Date();
     for (let i = 1; i <= meses; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-      const impuestos = [0, 3, 6, 9].includes(d.getMonth()) ? modelo.impuestosTrim : 0; // ene/abr/jul/oct
-      let base = { entra: 0, gastos: 0, retiradas: 0 };
+      const esPago = [0, 3, 6, 9].includes(d.getMonth()); // ene/abr/jul/oct: se liquida el trimestre anterior
+      let base = { entra: 0, gastos: 0, retiradas: 0, impuestos: 0 };
       escenarios.forEach((e, k) => {
         const entra = modelo.entraMediana * (1 + e.ing / 100);
         const gastos = (modelo.fijos + modelo.variables) * (1 + e.gas / 100);
         const retiradas = modoRetiradas === "ninguna" ? 0
           : modoRetiradas === "media" ? modelo.retiradasMedia
           : i === 1 ? modelo.nominaUltimo : modelo.pctNomina * entraPrev[k];
+        // Hacienda: el primer pago parte de lo ya acumulado este trimestre + la tasa sobre lo que
+        // aún entra hasta cerrarlo; los siguientes, la tasa sobre lo que entró en ese trimestre.
+        let impuestos = 0;
+        if (esPago) {
+          impuestos = tasa === null ? modelo.impuestosTrim : (primerPago ? modelo.haciendaPendiente : 0) + tasa * acumTrim[k];
+          acumTrim[k] = 0;
+        }
+        acumTrim[k] += entra;
         saldos[k] += entra - gastos - impuestos - retiradas;
         entraPrev[k] = entra;
-        if (k === 0) base = { entra, gastos, retiradas };
+        if (k === 0) base = { entra, gastos, retiradas, impuestos };
       });
-      filas.push({ mes: mesNombre(d), ...base, impuestos, saldos: [...saldos] });
+      if (esPago) primerPago = false;
+      filas.push({ mes: mesNombre(d), ...base, saldos: [...saldos] });
     }
     return filas;
   }, [modelo, modoRetiradas, saldoActual, meses, escenarios]);
@@ -279,7 +323,7 @@ export default function Tesoreria() {
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
           <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Sale / mes · normal</p>
           <p className="text-base font-black text-red-400">{eur(saleMes)}</p>
-          <p className="text-[10px] text-zinc-500">fijos {eur(modelo.fijos)} · variables {eur(modelo.variables)} · Hacienda ≈{eur(impuestosMes)}/mes · retiradas ≈{eur(retiradaEstimada)}</p>
+          <p className="text-[10px] text-zinc-500">fijos {eur(modelo.fijos)} · variables {eur(modelo.variables)} · Hacienda ≈{eur(impuestosMes)}/mes{modelo.tasaHacienda > 0 ? ` (${(modelo.tasaHacienda * 100).toFixed(0)} % de lo que entra)` : ""} · retiradas ≈{eur(retiradaEstimada)}</p>
         </div>
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
           <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">Neto / mes</p>
@@ -323,7 +367,7 @@ export default function Tesoreria() {
               ))}
             </tbody>
           </table>
-          <p className="px-3 py-1.5 text-[10px] text-zinc-600">De aquí sale la previsión: entra = mediana · fijos = media de los 3 últimos · variables = mediana · Hacienda = último año ÷ 4 cada trimestre · inversión fuera (es puntual).</p>
+          <p className="px-3 py-1.5 text-[10px] text-zinc-600">De aquí sale la previsión: entra = mediana · fijos = media de los 3 últimos · variables = mediana · Hacienda = {modelo.tasaHacienda > 0 ? (modelo.tasaHacienda * 100).toFixed(0) + " % de lo que entra (lo que toca pagar en los 2 últimos trimestres declarados ÷ lo cobrado)" : "media de lo pagado ÷ 4"} · ya acumulado este trimestre {eur(modelo.haciendaPendiente)} · inversión fuera (es puntual).</p>
         </div>
       )}
 
@@ -408,7 +452,8 @@ export default function Tesoreria() {
         )}
         <p className="mt-3 text-[11px] leading-snug text-zinc-600">
           Entra = mediana de 6 meses (un mes de anuales no dispara la previsión). Gastos = fijos (media 3 meses) + variables (mediana 6).
-          Hacienda = pago trimestral en ene/abr/jul/oct (último año ÷ 4). Retiradas = se pagan el mes siguiente al beneficio.
+          Hacienda = en ene/abr/jul/oct se liquida el trimestre anterior: IVA a ingresar + retenciones del alquiler + 20 % del beneficio (modelo 130),
+          calculado como % de lo que entra según las declaraciones, no según lo que se pagó. Retiradas = se pagan el mes siguiente al beneficio.
           La inversión queda fuera (es puntual). Todo sale del Libro: se actualiza sola a medida que apuntáis.
         </p>
       </div>
