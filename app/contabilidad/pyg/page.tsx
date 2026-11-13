@@ -25,10 +25,10 @@ const suma = (a: number[]) => a.reduce((s, x) => s + x, 0);
 const n0 = (v: number) => new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 }).format(v);
 
 // Barras por mes: ingresos (verde) vs gastos operativos (rojo) y el signo del neto (▲▼).
-function MiniBarras({ ing, gas, neto, mesActual }: { ing: number[]; gas: number[]; neto: number[]; mesActual: number }) {
+function MiniBarras({ ing, gas, neto, mesActual, alto = 96 }: { ing: number[]; gas: number[]; neto: number[]; mesActual: number; alto?: number }) {
   const max = Math.max(1, ...ing, ...gas);
   return (
-    <div className="flex items-end gap-1 px-3 pt-3" style={{ height: 96 }}>
+    <div className="flex items-end gap-1 px-3 pt-3" style={{ height: alto }}>
       {MESES.map((m, i) => (
         <div key={m} className={`flex h-full flex-1 flex-col items-center justify-end gap-0.5 rounded ${i === mesActual ? "bg-zinc-800/40" : ""}`}
           title={`${m}: ingresos ${n2(ing[i])} · gastos ${n2(gas[i])} · neto ${n2(neto[i])}`}>
@@ -48,6 +48,29 @@ const inputCls =
   "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-white outline-none focus:border-red-500";
 
 type Negocio = "online" | "presencial";
+
+// Resultado neto por mes: barra hacia arriba (verde) o hacia abajo (rojo) desde una línea de cero.
+function BarrasNeto({ neto, mesActual, alto = 140 }: { neto: number[]; mesActual: number; alto?: number }) {
+  const max = Math.max(1, ...neto.map((v) => Math.abs(v)));
+  return (
+    <div className="px-3 pt-2">
+      <div className="flex gap-1" style={{ height: alto }}>
+        {MESES.map((m, i) => {
+          const v = neto[i];
+          const h = (Math.abs(v) / max) * 50; // % de la mitad disponible
+          return (
+            <div key={m} className={`flex flex-1 flex-col rounded ${i === mesActual ? "bg-zinc-800/40" : ""}`} title={`${m}: neto ${n2(v)}`}>
+              <div className="flex flex-1 items-end justify-center">{v > 0.005 && <div className="w-2/3 rounded-t bg-emerald-500/80" style={{ height: `${h * 2}%` }} />}</div>
+              <div className="border-t border-zinc-700" />
+              <div className="flex flex-1 items-start justify-center">{v < -0.005 && <div className="w-2/3 rounded-b bg-red-500/80" style={{ height: `${h * 2}%` }} />}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-1">{MESES.map((m, i) => <span key={m} className={`flex-1 text-center text-[9px] ${i === mesActual ? "font-bold text-red-400" : "text-zinc-600"}`}>{m}</span>)}</div>
+    </div>
+  );
+}
 
 interface Bloque {
   ingresos: number[];
@@ -74,6 +97,7 @@ export default function PyGPage() {
   const [reparto, setReparto] = useState<RepRow[]>([]);
   // Pro-forma de delegación: coste mensual (coste empresa) de pagar a alguien por lo que hoy hacen los socios
   const [imputado, setImputado] = useState<Record<Negocio, number>>({ online: 0, presencial: 0 });
+  const [graf, setGraf] = useState<Negocio | "total">("total"); // pestaña de las gráficas del final
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -242,13 +266,7 @@ export default function PyGPage() {
           <span className={`text-[12px] font-black uppercase tracking-wider ${colorTitulo}`}>{titulo}</span>
           {c.margen !== null && <span className="text-[11px] text-zinc-500">margen op. <b className={c.margen < 0 ? "text-red-400" : "text-zinc-300"}>{c.margen.toFixed(1)}%</b></span>}
           {c.cobertura !== null && <span className="text-[11px] text-zinc-500" title="Ingresos ÷ gastos fijos. Por debajo de ×1 no se cubren ni los fijos.">cobertura fijos <b className={colorCobertura(c.cobertura)}>×{c.cobertura.toFixed(2)}</b></span>}
-          <span className="ml-auto flex gap-3 text-[10px] text-zinc-500">
-            <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500/80" />ingresos</span>
-            <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-red-500/70" />gastos op.</span>
-            <span>▲▼ neto del mes</span>
-          </span>
         </div>
-        <MiniBarras ing={b.ingresos} gas={b.gastosOp} neto={c.resultadoNeto} mesActual={mesActual} />
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -414,43 +432,83 @@ export default function PyGPage() {
       {tabla("ONLINE · Coaching", "text-sky-400", datos.online, "online")}
       {tabla("PRESENCIAL · Gym", "text-amber-400", datos.presencial, "presencial")}
 
-      {/* RETIRADAS DE SOCIOS · de dónde sale el dinero (según el Reparto) */}
+      {/* ¿DE DÓNDE SALE EL BENEFICIO QUE OS REPARTÍS? (según las reglas del Reparto) */}
       {(() => {
         const o = datos.origen;
-        const ret = datos.alineadas; // mismo mes que el beneficio que las genera
-        const pctGym = o.gym.map((g, i) => { const t = g + o.online[i]; return t > 0 ? (g / t) * 100 : null; });
-        const gT = suma(o.gym), tT = gT + suma(o.online);
+        const gT = suma(o.gym), tT = suma(o.teorico);
         const filasR: { nombre: string; vals: number[]; cls: string; nota?: string }[] = [
-          { nombre: "Retiradas del mes", vals: ret, cls: "font-bold text-violet-300", nota: "se pagan al mes siguiente; prev. si aún no se han pagado" },
-          { nombre: "Beneficio teórico a repartir", vals: o.teorico, cls: "text-zinc-300", nota: "según las reglas del Reparto" },
-          { nombre: "viene del gym (ethos, a medias)", vals: o.gym, cls: "text-amber-400" },
-          { nombre: "viene del online (propio de cada socio)", vals: o.online, cls: "text-sky-400" },
+          { nombre: "Lo que pone el gym", vals: o.gym, cls: "text-amber-400", nota: "beneficio del centro: se reparte a medias" },
+          { nombre: "Lo que pone el online", vals: o.online, cls: "text-sky-400", nota: "beneficio del online de cada socio: cada uno el suyo" },
+          { nombre: "Beneficio a repartir", vals: o.teorico, cls: "font-bold text-violet-300", nota: "gym + online · de aquí salen las «Retiradas del mes» de arriba" },
         ];
         return (
           <div className="mb-5 overflow-x-auto rounded-xl border border-violet-900/60 bg-zinc-900/40">
+            <div className="border-b border-zinc-800 bg-zinc-900 px-3 py-2">
+              <p className="text-[12px] font-black uppercase tracking-wider text-violet-400">¿De dónde sale lo que os repartís?</p>
+              <p className="text-[10px] text-zinc-500">Cada mes el Reparto calcula un beneficio a repartir. Esta tabla lo separa por origen: la parte generada por el gym (a medias) y la generada por el online (cada socio la suya). Si el gym pone el 70 %, el 70 % de lo que os lleváis lo ha generado el gym.</p>
+            </div>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
-                  <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-2 text-left text-[11px] text-violet-400">RETIRADAS DE SOCIOS · de dónde sale</th>
-                  {MESES.map((m) => <th key={m} className="min-w-16 px-2 py-2 text-right">{m}</th>)}
+                  <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-2 text-left">Origen</th>
+                  {MESES.map((m, i) => <th key={m} className={`min-w-16 px-2 py-2 text-right ${i === mesActual ? "text-red-400" : ""}`}>{m}</th>)}
                   <th className="min-w-20 border-l border-zinc-800 px-3 py-2 text-right text-zinc-400">Total</th>
                 </tr>
               </thead>
               <tbody>
                 {filasR.map((f) => (
-                  <tr key={f.nombre} className="border-b border-zinc-800/50">
+                  <tr key={f.nombre} className={`border-b border-zinc-800/50 ${f.nombre.startsWith("Beneficio") ? "bg-violet-950/20" : ""}`}>
                     <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 font-semibold text-zinc-300">{f.nombre}{f.nota && <span className="block text-[9px] font-normal text-zinc-600">{f.nota}</span>}</td>
                     {f.vals.map((v, i) => <Fragment key={i}>{celda(v, f.cls)}</Fragment>)}
                     <td className="border-l border-zinc-800 px-3 py-1.5 text-right font-bold tabular-nums text-zinc-100">{n2(suma(f.vals))}</td>
                   </tr>
                 ))}
-                <tr className="text-zinc-500">
-                  <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1">% que pone el gym</td>
-                  {pctGym.map((p, i) => <td key={i} className="px-2 py-1 text-right tabular-nums">{p === null ? <span className="text-zinc-800">·</span> : p.toFixed(0) + "%"}</td>)}
-                  <td className="border-l border-zinc-800 px-3 py-1 text-right tabular-nums">{tT > 0 ? ((gT / tT) * 100).toFixed(0) + "%" : "·"}</td>
+                <tr className="text-zinc-400">
+                  <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 font-semibold">% que pone el gym</td>
+                  {o.gym.map((g, i) => { const t = o.teorico[i]; return <td key={i} className="px-2 py-1.5 text-right font-bold tabular-nums">{t > 0.005 ? Math.round((g / t) * 100) + "%" : <span className="text-zinc-800">·</span>}</td>; })}
+                  <td className="border-l border-zinc-800 px-3 py-1.5 text-right font-bold tabular-nums text-amber-300">{tT > 0.005 ? Math.round((gT / tT) * 100) + "%" : "·"}</td>
                 </tr>
               </tbody>
             </table>
+          </div>
+        );
+      })()}
+
+      {/* GRÁFICAS · con pestaña Total / Online / Gym */}
+      {(() => {
+        const sel = graf === "total" ? datos.total : graf === "online" ? datos.online : datos.presencial;
+        const c = calc(sel, graf);
+        const pest: { key: Negocio | "total"; et: string; cls: string }[] = [
+          { key: "total", et: "ETHOS · Total", cls: "text-white" },
+          { key: "online", et: "Online", cls: "text-sky-400" },
+          { key: "presencial", et: "Gym", cls: "text-amber-400" },
+        ];
+        return (
+          <div className="mb-5 rounded-xl border border-zinc-800 bg-zinc-900/40">
+            <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 bg-zinc-900 px-3 py-2">
+              <span className="text-[12px] font-black uppercase tracking-wider text-zinc-300">Gráficas {anyo}</span>
+              <div className="ml-2 flex gap-1">
+                {pest.map((p) => (
+                  <button key={p.key} onClick={() => setGraf(p.key)}
+                    className={`rounded-lg px-3 py-1 text-xs font-bold ${graf === p.key ? "bg-zinc-700 " + p.cls : "text-zinc-500 hover:bg-zinc-800"}`}>{p.et}</button>
+                ))}
+              </div>
+              <span className="ml-auto flex gap-3 text-[10px] text-zinc-500">
+                <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500/80" />ingresos</span>
+                <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-red-500/70" />gastos op.</span>
+                <span>▲▼ signo del neto</span>
+              </span>
+            </div>
+            <div className="grid gap-2 lg:grid-cols-2">
+              <div>
+                <p className="px-3 pt-2 text-[10px] font-bold uppercase text-zinc-500">Ingresos vs gastos operativos</p>
+                <MiniBarras ing={sel.ingresos} gas={sel.gastosOp} neto={c.resultadoNeto} mesActual={mesActual} alto={170} />
+              </div>
+              <div>
+                <p className="px-3 pt-2 text-[10px] font-bold uppercase text-zinc-500">Resultado neto por mes (tras amortización)</p>
+                <BarrasNeto neto={c.resultadoNeto} mesActual={mesActual} alto={150} />
+              </div>
+            </div>
           </div>
         );
       })()}
@@ -459,7 +517,7 @@ export default function PyGPage() {
         <b>Resultado operativo</b> = ingresos − gastos del día a día. <b>Resultado neto</b> = operativo − amortización
         (cada inversión reparte su coste en su vida útil, no resta de golpe). <b>Retiradas de socios</b> = lo que os lleváis
         del beneficio (gym a medias + el online de cada uno): no son gasto de ningún negocio, por eso solo aparecen en el total; van en el mes cuyo beneficio las genera (se cobran al siguiente) y «pagadas en caja» es lo que salió del banco ese mes,
-        y el bloque «de dónde sale» muestra qué parte pone cada negocio según el Reparto. <b>Sueldos de empleados</b> sí son gasto
+        y el bloque «¿De dónde sale lo que os repartís?» muestra qué parte del beneficio repartido ha generado cada negocio. <b>Sueldos de empleados</b> sí son gasto
         (categoría Personal → Sueldos y salarios). <b>Coste de gestión imputado</b> = pro-forma de delegación: si pagarais a alguien
         por lo que hoy hacéis vosotros, ese sería el resultado real de cada negocio. <b>Cobertura fijos</b> = ingresos ÷ gastos fijos;
         por debajo de ×1 el negocio no cubre ni los fijos.
