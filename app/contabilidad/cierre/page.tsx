@@ -78,23 +78,23 @@ export default function CierrePage() {
     const [rep, cob, gas, mor, sinFac, cue, cat, decl, gPasado] = await Promise.all([
       supabase.from("v_reparto_beneficios").select("socio, beneficio").eq("mes", desde),
       supabase.from("cobros").select("importe").gte("fecha", desde).lt("fecha", hasta),
-      supabase.from("gastos").select("total, categorias!inner(es_inversion, es_fijo, nombre)").gte("fecha", desde).lt("fecha", hasta),
+      supabase.from("gastos").select("total, categorias!inner(es_inversion, es_fijo, nombre, es_retirada)").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("v_morosos").select("pendiente"),
       supabase.from("gastos").select("id", { count: "exact", head: true }).eq("tiene_factura", false).eq("deducible", true).gt("base", 0),
       supabase.from("cuentas").select("id, codigo").eq("activa", true),
-      supabase.from("categorias").select("id, nombre").ilike("nombre", "%mina%").limit(1),
+      supabase.from("categorias").select("id, nombre").eq("es_retirada", true).limit(1),
       supabase.from("v_impuestos_declaracion").select("trim, iva_resultado").eq("anyo", anyo).eq("trim", trim),
-      supabase.from("gastos").select("concepto, categorias!inner(es_fijo, nombre)").gte("fecha", iniMesPasado).lt("fecha", desde),
+      supabase.from("gastos").select("concepto, categorias!inner(es_fijo, nombre, es_retirada)").gte("fecha", iniMesPasado).lt("fecha", desde),
     ]);
 
     setReparto((rep.data as Reparto[]) ?? []);
     setIngresos(((cob.data as { importe: number }[]) ?? []).reduce((s, x) => s + Number(x.importe), 0));
 
     let oper = 0, inv = 0;
-    const gastosRows = (gas.data as unknown as { total: number; categorias: { es_inversion: boolean; es_fijo: boolean; nombre: string } }[]) ?? [];
+    const gastosRows = (gas.data as unknown as { total: number; categorias: { es_inversion: boolean; es_fijo: boolean; nombre: string; es_retirada: boolean | null } }[]) ?? [];
     for (const g of gastosRows) {
       if (g.categorias.es_inversion) inv += Number(g.total);
-      else if (!/mina/i.test(g.categorias.nombre)) oper += Number(g.total);
+      else if (!g.categorias.es_retirada) oper += Number(g.total);
     }
     setGastosOper(oper);
     setInversion(inv);
@@ -117,8 +117,8 @@ export default function CierrePage() {
     const gEste = await supabase.from("gastos").select("concepto").gte("fecha", desde).lt("fecha", hasta);
     const yaEste = new Set(((gEste.data as { concepto: string }[]) ?? []).map((g) => g.concepto.trim().toLowerCase()));
     const conceptos = new Set<string>();
-    for (const g of (gPasado.data as unknown as { concepto: string; categorias: { es_fijo: boolean; nombre: string } }[]) ?? []) {
-      if (!g.categorias.es_fijo || /mina/i.test(g.categorias.nombre)) continue;
+    for (const g of (gPasado.data as unknown as { concepto: string; categorias: { es_fijo: boolean; nombre: string; es_retirada: boolean | null } }[]) ?? []) {
+      if (!g.categorias.es_fijo || g.categorias.es_retirada) continue;
       const k = g.concepto.trim().toLowerCase();
       if (!yaEste.has(k)) conceptos.add(k);
     }

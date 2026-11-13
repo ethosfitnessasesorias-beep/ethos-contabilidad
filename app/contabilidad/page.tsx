@@ -25,6 +25,7 @@ interface Categoria {
   grupo: string;
   nombre: string;
   es_inversion?: boolean | null;
+  es_retirada?: boolean | null;
 }
 type TipoMov = "ingreso" | "gasto" | "traspaso";
 interface Movimiento {
@@ -112,7 +113,7 @@ export default function LibroPage() {
     const [cu, sa, cat, cli] = await Promise.all([
       supabase.from("cuentas").select("id, codigo, nombre, es_transito, saldo_inicial").eq("activa", true).order("id"),
       supabase.from("v_saldo_cuentas").select("codigo, saldo"),
-      supabase.from("categorias").select("id, tipo, grupo, nombre, es_inversion").order("tipo").order("grupo").order("nombre"),
+      supabase.from("categorias").select("id, tipo, grupo, nombre, es_inversion, es_retirada").order("tipo").order("grupo").order("nombre"),
       supabase.from("clientes").select("id, nombre, apellidos").order("nombre"),
     ]);
     setCuentas((cu.data as Cuenta[]) ?? []);
@@ -121,7 +122,7 @@ export default function LibroPage() {
     const cats = (cat.data as Categoria[]) ?? [];
     setCategorias(cats);
     // Las nóminas son reparto de beneficio, no un gasto: se separan del total
-    setNominaIds(new Set(cats.filter((c) => /mina/i.test(c.nombre)).map((c) => c.id)));
+    setNominaIds(new Set(cats.filter((c) => c.es_retirada).map((c) => c.id)));
     // La inversión se separa del gasto corriente (respeta el filtro de canal/cuenta)
     setInversionIds(new Set(cats.filter((c) => c.es_inversion).map((c) => c.id)));
   }, []);
@@ -532,9 +533,9 @@ export default function LibroPage() {
           {totales.reparto > 0 && (
             <span
               className="rounded-lg bg-zinc-900 px-3 py-1.5 text-violet-400"
-              title="Nóminas realmente pagadas este mes (salida de caja). El reparto teórico del mes se calcula en Contabilidad → Reparto."
+              title="Retiradas de socios realmente pagadas este mes (salida de caja). El reparto teórico se calcula en Contabilidad → Reparto."
             >
-              Nóminas pagadas {eur(totales.reparto)}
+              Retiradas socios {eur(totales.reparto)}
             </span>
           )}
           {cuentaSel !== "todas" && (

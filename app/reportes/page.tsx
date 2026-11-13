@@ -9,7 +9,7 @@ import { Shell } from "../shell";
 // entero para comparar meses de un vistazo, y una gráfica compacta debajo.
 
 interface FactRow { fecha_emision: string; total: number; condonado: number | null; canal: string | null; computa_reparto: boolean | null; categorias: { grupo: string; nombre: string } | null }
-interface GastoRow { fecha: string; total: number; canal: string | null; categorias: { grupo: string; nombre: string; es_inversion: boolean } | null }
+interface GastoRow { fecha: string; total: number; canal: string | null; categorias: { grupo: string; nombre: string; es_inversion: boolean; es_retirada: boolean | null } | null }
 interface CobroRow { fecha: string; importe: number; facturas: { computa_reparto: boolean | null; canal: string | null } | null }
 
 type Negocio = "todos" | "online" | "presencial";
@@ -43,7 +43,7 @@ export default function Reportes() {
       const hasta = `${anyo + 1}-01-01`;
       const [f, g, c] = await Promise.all([
         supabase.from("facturas").select("fecha_emision, total, condonado, canal, computa_reparto, categorias(grupo, nombre)").gte("fecha_emision", desde).lt("fecha_emision", hasta),
-        supabase.from("gastos").select("fecha, total, canal, categorias(grupo, nombre, es_inversion)").gte("fecha", desde).lt("fecha", hasta),
+        supabase.from("gastos").select("fecha, total, canal, categorias(grupo, nombre, es_inversion, es_retirada)").gte("fecha", desde).lt("fecha", hasta),
         supabase.from("cobros").select("fecha, importe, facturas!inner(computa_reparto, canal)").gte("fecha", desde).lt("fecha", hasta),
       ]);
       if (f.error) return setError(f.error.message);
@@ -99,6 +99,7 @@ export default function Reportes() {
     interface Sub { nombre: string; vals: number[]; inv: boolean }
     const grupos = new Map<string, Map<string, Sub>>();
     for (const g of gas) {
+      if (g.categorias?.es_retirada) continue; // retiradas de socios: reparto, no gasto (bloque propio abajo)
       if (fNeg !== "todos" && negocioDe(g.canal) !== fNeg) continue;
       const m = new Date(g.fecha + "T00:00:00").getMonth();
       const grupo = g.categorias?.grupo ?? "Otros";
@@ -123,6 +124,14 @@ export default function Reportes() {
     const totalSinInv = total.map((v, i) => v - totalInv[i]);
     return { lista, total, totalInv, totalSinInv };
   }, [gas, fNeg]);
+
+  // Retiradas de socios por mes: reparto del beneficio, no gasto. No tienen negocio
+  // (salen del beneficio conjunto), así que no dependen del filtro de negocio.
+  const retiradas = useMemo(() => {
+    const t = Array(12).fill(0);
+    for (const g of gas) if (g.categorias?.es_retirada) t[new Date(g.fecha + "T00:00:00").getMonth()] += Number(g.total);
+    return t;
+  }, [gas]);
 
   if (sesionOk === null) {
     return <div className="grid min-h-dvh place-items-center bg-zinc-950 text-zinc-500">Cargando…</div>;
@@ -264,6 +273,34 @@ export default function Reportes() {
           </div>
         </section>
 
+        {/* REPARTO A SOCIOS (retiradas): no es gasto */}
+        <section className="mb-5">
+          <h2 className="mb-2 text-sm font-black uppercase tracking-wide text-violet-400">Reparto a socios (retiradas) · {anyo}</h2>
+          <div className="overflow-x-auto rounded-xl border border-violet-900/60 bg-zinc-900/40">
+            <table className="w-full text-xs">
+              <thead>{cabecera}</thead>
+              <tbody>
+                <tr className="font-bold">
+                  <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 text-violet-300">Retiradas de socios</td>
+                  {retiradas.map((v, i) => <Fragment key={i}>{celda(v, "text-violet-300 font-bold")}</Fragment>)}
+                  <td className="px-3 py-1.5 text-right tabular-nums text-violet-300">{n0(suma(retiradas))}</td>
+                </tr>
+                {fNeg === "todos" && (
+                  <tr className="border-t border-zinc-800/60 text-zinc-500">
+                    <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1">queda en la empresa (facturado − gastos − retiradas)</td>
+                    {retiradas.map((v, i) => { const d = pivotIng.total[i] - pivotGas.total[i] - v; return <Fragment key={i}>{celda(d, d < -0.5 ? "text-red-400" : "text-zinc-500")}</Fragment>; })}
+                    <td className="px-3 py-1 text-right tabular-nums text-zinc-400">{n0(suma(pivotIng.total) - suma(pivotGas.total) - suma(retiradas))}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1 text-[10px] text-zinc-600">
+            No es un gasto del negocio: es el beneficio que os lleváis. Sale del conjunto (gym + online), por eso no se asigna a ningún negocio ni cambia con el filtro.
+            Los sueldos de empleados sí están en Gastos (Personal → Sueldos y salarios). El detalle de qué parte pone cada negocio está en P&G.
+          </p>
+        </section>
+
         {/* GRÁFICA */}
         <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -292,7 +329,7 @@ export default function Reportes() {
 
         <p className="mt-3 text-[10px] text-zinc-600">
           Importes con IVA (lo que entra y sale de verdad). Las aportaciones de capital (p. ej. Garantía Juvenil) no cuentan como ingreso.
-          Las nóminas aparecen como categoría propia: recuerda que son reparto de beneficio, no gasto del negocio.
+          Las retiradas de socios ya no están en Gastos: tienen su bloque propio más abajo (son reparto de beneficio). Los sueldos de empleados sí son gasto.
         </p>
       </div>
     </Shell>

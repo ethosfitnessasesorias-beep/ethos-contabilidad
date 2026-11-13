@@ -129,16 +129,16 @@ export default function Tesoreria() {
     const [gPasado, gEste] = await Promise.all([
       supabase
         .from("gastos")
-        .select("concepto, proveedor, base, iva_pct, irpf_pct, categoria_id, cuenta_id, imputado_a, canal, deducible, tiene_factura, categorias!inner(es_fijo, nombre)")
+        .select("concepto, proveedor, base, iva_pct, irpf_pct, categoria_id, cuenta_id, imputado_a, canal, deducible, tiene_factura, categorias!inner(es_fijo, nombre, es_retirada)")
         .gte("fecha", iniMesPasado)
         .lt("fecha", iniMesActualISO),
       supabase.from("gastos").select("concepto").gte("fecha", iniMesActualISO),
     ]);
     const yaEste = new Set(((gEste.data as { concepto: string }[]) ?? []).map((g) => g.concepto.trim().toLowerCase()));
     const pend: GastoFijo[] = [];
-    for (const g of (gPasado.data as unknown as (GastoFijo & { categorias: { es_fijo: boolean; nombre: string } })[]) ?? []) {
+    for (const g of (gPasado.data as unknown as (GastoFijo & { categorias: { es_fijo: boolean; nombre: string; es_retirada: boolean | null } })[]) ?? []) {
       if (!g.categorias?.es_fijo) continue;
-      if (/mina/i.test(g.categorias.nombre)) continue;
+      if (g.categorias.es_retirada) continue;
       if (yaEste.has(g.concepto.trim().toLowerCase())) continue;
       if (pend.some((p) => p.concepto.trim().toLowerCase() === g.concepto.trim().toLowerCase())) continue;
       pend.push(g);

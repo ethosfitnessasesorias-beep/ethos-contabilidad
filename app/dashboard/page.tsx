@@ -72,12 +72,12 @@ export default function Dashboard() {
         supabase.from("v_facturas_saldo").select("pendiente"),
         supabase.from("facturas").select("fecha_emision, total, condonado, computa_reparto").gte("fecha_emision", desde6),
         supabase.from("cobros").select("fecha, importe, facturas!inner(computa_reparto)").gte("fecha", desde6),
-        supabase.from("gastos").select("canal, total, categorias!inner(nombre)").gte("fecha", `${mesActual}-01`),
+        supabase.from("gastos").select("canal, total, categorias!inner(nombre, es_retirada)").gte("fecha", `${mesActual}-01`),
         supabase.from("v_reparto_beneficios").select("mes, socio, beneficio").order("mes"),
         supabase.from("config").select("clave, valor").in("clave", ["inversion_local_total", "objetivo_online", "objetivo_presencial"]),
         supabase.from("cuentas").select("id, codigo"),
         supabase.from("cobros").select("importe, cuenta_id, facturas!inner(computa_reparto)").gte("fecha", `${mesActual}-01`),
-        supabase.from("gastos").select("fecha, total, categorias!inner(nombre)").gte("fecha", desde6),
+        supabase.from("gastos").select("fecha, total, categorias!inner(nombre, es_retirada)").gte("fecha", desde6),
       ]);
       if (n.error) { setError(n.error.message.includes("v_dashboard_negocio") ? "Falta ejecutar supabase/crm.sql en el SQL Editor." : n.error.message); }
       setNeg((n.data as NegocioFila[]) ?? []);
@@ -101,8 +101,8 @@ export default function Dashboard() {
 
       // Gastos del mes por canal (nóminas fuera: son reparto, no gasto)
       const gc = { online: 0, presencial: 0 };
-      for (const row of (gm.data as unknown as { canal: string | null; total: number; categorias: { nombre: string } | null }[]) ?? []) {
-        if (/mina/i.test(row.categorias?.nombre ?? "")) continue;
+      for (const row of (gm.data as unknown as { canal: string | null; total: number; categorias: { nombre: string; es_retirada: boolean | null } | null }[]) ?? []) {
+        if (row.categorias?.es_retirada) continue; // retiradas de socios = reparto, no gasto
         gc[row.canal === "online" ? "online" : "presencial"] += Number(row.total);
       }
       setGastosCanal(gc);
@@ -134,8 +134,8 @@ export default function Dashboard() {
         const m = c.fecha.slice(0, 7);
         cm.set(m, (cm.get(m) ?? 0) + Number(c.importe));
       }
-      for (const g of (g6.data as unknown as { fecha: string; total: number; categorias: { nombre: string } }[]) ?? []) {
-        if (/mina/i.test(g.categorias?.nombre ?? "")) continue; // nóminas = reparto, no gasto
+      for (const g of (g6.data as unknown as { fecha: string; total: number; categorias: { nombre: string; es_retirada: boolean | null } }[]) ?? []) {
+        if (g.categorias?.es_retirada) continue; // retiradas de socios = reparto, no gasto
         const m = g.fecha.slice(0, 7);
         gm6.set(m, (gm6.get(m) ?? 0) + Number(g.total));
       }

@@ -31,6 +31,7 @@ interface Categoria {
   es_fijo: boolean;
   es_inversion: boolean;
   es_online: boolean;
+  es_retirada: boolean;
   activa: boolean;
 }
 interface Metodo {
@@ -187,6 +188,7 @@ export default function Ajustes() {
   const [cTipo, setCTipo] = useState<"gasto" | "ingreso">("gasto");
   const [cFijo, setCFijo] = useState(false);
   const [cInversion, setCInversion] = useState(false);
+  const [cRetirada, setCRetirada] = useState(false); // retirada de socios: reparto, no gasto
   const [cOnline, setCOnline] = useState(false);
 
   async function crearCategoria() {
@@ -197,6 +199,7 @@ export default function Ajustes() {
       nombre: cNombre.trim(),
       es_fijo: cFijo,
       es_inversion: cInversion,
+      es_retirada: cRetirada,
       es_online: cOnline,
     });
     if (error) return setError(error.message);
@@ -545,17 +548,19 @@ export default function Ajustes() {
                 <label className="flex flex-col gap-1.5">
                   <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Naturaleza</span>
                   <select
-                    value={cInversion ? "inversion" : cFijo ? "fijo" : "corriente"}
+                    value={cRetirada ? "retirada" : cInversion ? "inversion" : cFijo ? "fijo" : "corriente"}
                     onChange={(e) => {
                       const v = e.target.value;
                       setCFijo(v === "fijo");
                       setCInversion(v === "inversion");
+                      setCRetirada(v === "retirada");
                     }}
                     className={inputCls}
                   >
                     <option value="corriente">Gasto corriente</option>
                     <option value="fijo">Gasto fijo (recurrente e ineludible)</option>
                     <option value="inversion">Inversión (activo &gt;1 año)</option>
+                    <option value="retirada">Retirada de socios (reparto, no gasto)</option>
                   </select>
                 </label>
               )}
@@ -588,7 +593,7 @@ export default function Ajustes() {
                     <span className="text-zinc-500">{c.grupo} · </span>{c.nombre}
                   </span>
                   <span className="ml-2 text-[10px] text-zinc-600">
-                    {c.tipo === "ingreso" ? "ingreso" : c.es_inversion ? "inversión" : c.es_fijo ? "fijo" : "corriente"}
+                    {c.tipo === "ingreso" ? "ingreso" : c.es_retirada ? "retirada socios" : c.es_inversion ? "inversión" : c.es_fijo ? "fijo" : "corriente"}
                     {c.es_online ? " · online" : ""}
                   </span>
                 </div>

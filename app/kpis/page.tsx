@@ -128,7 +128,7 @@ export default function KpisPage() {
       supabase.from("kpi_diario").select("*").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("facturas").select("fecha_emision, total, condonado, canal, computa_reparto").gte("fecha_emision", desde).lt("fecha_emision", hasta),
       supabase.from("cobros").select("fecha, importe, facturas(canal)").gte("fecha", desde).lt("fecha", hasta),
-      supabase.from("gastos").select("fecha, total, canal, categorias!inner(nombre)").gte("fecha", desde).lt("fecha", hasta),
+      supabase.from("gastos").select("fecha, total, canal, categorias!inner(nombre, es_retirada)").gte("fecha", desde).lt("fecha", hasta),
       supabase.from("clientes").select("id, canal, fecha_inicio, fecha_baja"),
       supabase.from("v_kpis").select("caja_libre").single(),
       supabase.from("kpi_objetivos").select("*").eq("anyo", anyo),
@@ -161,9 +161,9 @@ export default function KpisPage() {
     for (const c of (cob.data as unknown as { fecha: string; importe: number; facturas: { canal: string | null } | null }[]) ?? []) {
       cobrado[canalDe(c.facturas?.canal ?? null)][mesDe(c.fecha)] += Number(c.importe);
     }
-    for (const g of (gas.data as unknown as { fecha: string; total: number; canal: string | null; categorias: { nombre: string } }[]) ?? []) {
+    for (const g of (gas.data as unknown as { fecha: string; total: number; canal: string | null; categorias: { nombre: string; es_retirada: boolean | null } }[]) ?? []) {
       const nom = g.categorias?.nombre ?? "";
-      if (/mina/i.test(nom)) continue; // nóminas = reparto, no gasto
+      if (g.categorias?.es_retirada) continue; // retiradas de socios = reparto, no gasto
       gasto[canalDe(g.canal)][mesDe(g.fecha)] += Number(g.total);
       // Inversión en anuncios = gasto de Marketing/Publicidad, por negocio
       if (/market|public|anuncio|\bads\b/i.test(nom)) invAds[canalDe(g.canal)][mesDe(g.fecha)] += Number(g.total);

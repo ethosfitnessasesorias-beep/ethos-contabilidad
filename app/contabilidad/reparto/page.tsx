@@ -20,7 +20,7 @@ interface AudCobro {
 }
 interface AudGasto {
   fecha: string; concepto: string; total: number; iva_soportado: number; irpf_soportado: number;
-  deducible: boolean | null; imputado_a: string; categorias: { nombre: string; es_inversion: boolean } | null;
+  deducible: boolean | null; imputado_a: string; categorias: { es_retirada?: boolean | null; nombre: string; es_inversion: boolean } | null;
 }
 interface AudFactura {
   fecha_emision: string; concepto: string; iva_importe: number; atribucion: string;
@@ -167,7 +167,7 @@ export default function RepartoPage() {
         .eq("facturas.computa_reparto", true),
       supabase
         .from("gastos")
-        .select("fecha, concepto, total, iva_soportado, irpf_soportado, deducible, imputado_a, categorias(nombre, es_inversion)")
+        .select("fecha, concepto, total, iva_soportado, irpf_soportado, deducible, imputado_a, categorias(nombre, es_inversion, es_retirada)")
         .gte("fecha", desde).lt("fecha", hasta),
       supabase
         .from("facturas")
@@ -184,7 +184,7 @@ export default function RepartoPage() {
   // Réplica exacta de la fórmula de la vista, calculada aquí línea a línea
   const auditoria = useMemo(() => {
     if (!audMes) return null;
-    const esNomina = (g: AudGasto) => /mina/i.test(g.categorias?.nombre ?? "");
+    const esNomina = (g: AudGasto) => !!g.categorias?.es_retirada;
     // cobros: cuánto computa cada línea y a qué cubo va
     const lineasCobro = audCobros.map((c) => {
       const f = c.facturas!;
