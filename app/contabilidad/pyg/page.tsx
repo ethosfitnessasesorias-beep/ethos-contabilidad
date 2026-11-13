@@ -2,8 +2,9 @@
 
 // Pérdidas y ganancias por negocio (ONLINE / PRESENCIAL / total Ethos).
 // Criterios pactados con David:
-//  · Las NÓMINAS no son gasto: son retirada del beneficio (50/50 del centro +
-//    lo individual del online). Van en una línea informativa aparte.
+//  · Las RETIRADAS DE SOCIOS no son gasto: son reparto del beneficio (gym a medias +
+//    el online de cada uno). Solo en el total, alineadas al mes cuyo beneficio las genera.
+//  · Los SUELDOS DE EMPLEADOS sí son gasto (categoría Personal → Sueldos y salarios).
 //  · La INVERSIÓN no resta de golpe: se AMORTIZA mes a mes según la vida útil
 //    de su categoría (maquinaria 5 años, obra y mobiliario 10; editable en BD).
 //  · Devengo: facturas por fecha de emisión, gastos por fecha. Las correcciones
@@ -21,6 +22,27 @@ const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "O
 
 const n2 = (v: number) => new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 const suma = (a: number[]) => a.reduce((s, x) => s + x, 0);
+const n0 = (v: number) => new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 }).format(v);
+
+// Barras por mes: ingresos (verde) vs gastos operativos (rojo) y el signo del neto (▲▼).
+function MiniBarras({ ing, gas, neto, mesActual }: { ing: number[]; gas: number[]; neto: number[]; mesActual: number }) {
+  const max = Math.max(1, ...ing, ...gas);
+  return (
+    <div className="flex items-end gap-1 px-3 pt-3" style={{ height: 96 }}>
+      {MESES.map((m, i) => (
+        <div key={m} className={`flex h-full flex-1 flex-col items-center justify-end gap-0.5 rounded ${i === mesActual ? "bg-zinc-800/40" : ""}`}
+          title={`${m}: ingresos ${n2(ing[i])} · gastos ${n2(gas[i])} · neto ${n2(neto[i])}`}>
+          <span className={`text-[8px] font-bold leading-none ${neto[i] < -0.005 ? "text-red-400" : neto[i] > 0.005 ? "text-emerald-400" : "text-zinc-800"}`}>{Math.abs(neto[i]) > 0.005 ? (neto[i] > 0 ? "▲" : "▼") : ""}</span>
+          <div className="flex w-full flex-1 items-end justify-center gap-px">
+            <div className="w-1/2 rounded-t bg-emerald-500/80" style={{ height: `${(ing[i] / max) * 100}%` }} />
+            <div className="w-1/2 rounded-t bg-red-500/70" style={{ height: `${(gas[i] / max) * 100}%` }} />
+          </div>
+          <span className={`text-[9px] ${i === mesActual ? "font-bold text-red-400" : "text-zinc-600"}`}>{m}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const inputCls =
   "rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-sm text-white outline-none focus:border-red-500";
@@ -150,72 +172,112 @@ export default function PyGPage() {
     if (error) setError(error.message);
   }
 
-  const celda = (v: number, cls = "text-zinc-300") =>
-    Math.abs(v) < 0.005 ? <td className="px-2 py-1 text-right text-zinc-800">·</td> : <td className={`px-2 py-1 text-right tabular-nums ${cls}`}>{n2(v)}</td>;
+  const celda = (v: number, cls = "text-zinc-300", extra = "") =>
+    Math.abs(v) < 0.005 ? <td className={`px-2 py-1 text-right text-zinc-800 ${extra}`}>·</td> : <td className={`px-2 py-1 text-right tabular-nums ${cls} ${extra}`}>{n2(v)}</td>;
+  // Celdas de resultado: verde si positivo, rojo si negativo (con fondo suave para leerlo de un vistazo)
+  const celdaResultado = (v: number, fuerte = false) =>
+    Math.abs(v) < 0.005 ? <td className="px-2 py-1 text-right text-zinc-800">·</td>
+    : <td className={`px-2 py-1 text-right tabular-nums ${fuerte ? "font-black" : "font-bold"} ${v < 0 ? "bg-red-950/40 text-red-300" : "bg-emerald-950/30 text-emerald-300"}`}>{n2(v)}</td>;
+  const signo = (v: number) => (v < -0.005 ? "text-red-400" : v > 0.005 ? "text-emerald-400" : "text-zinc-500");
+  const colorCobertura = (c: number | null) => (c === null ? "text-zinc-500" : c < 1 ? "text-red-400" : c < 1.5 ? "text-amber-400" : "text-emerald-400");
 
-  const tabla = (titulo: string, colorTitulo: string, b: Bloque, neg: Negocio | "total") => {
+  const hoy = new Date();
+  const mesActual = hoy.getFullYear() === anyo ? hoy.getMonth() : -1;
+
+  // Cálculo común de un bloque: lo usan las tarjetas, la comparativa y las tablas mensuales,
+  // así no pueden discrepar entre sí.
+  const calc = (b: Bloque, neg: Negocio | "total") => {
     const resultadoOp = b.ingresos.map((v, i) => v - b.gastosOp[i]);
     const resultadoNeto = resultadoOp.map((v, i) => v - b.amort[i]);
     // En el total, "queda en la empresa" usa las retiradas del MES (alineadas), no las pagadas en caja
     const retMes = neg === "total" ? datos.alineadas : b.retiradas;
     const quedaEmpresa = resultadoNeto.map((v, i) => v - retMes[i]);
-    const ingresosTot = suma(b.ingresos);
-    const margen = ingresosTot > 0 ? (suma(resultadoOp) / ingresosTot) * 100 : null;
-    const fijosTot = suma(b.fijos);
-    const cobertura = fijosTot > 0 ? ingresosTot / fijosTot : null; // ingresos / gastos fijos
     // Pro-forma: el coste imputado solo en meses con actividad (no en meses futuros vacíos)
     const imp = neg === "total" ? imputado.online + imputado.presencial : imputado[neg];
-    const imputadoVals = b.ingresos.map((v, i) => (v !== 0 || b.gastosOp[i] !== 0 ? imp : 0));
+    const activo = b.ingresos.map((v, i) => v !== 0 || b.gastosOp[i] !== 0);
+    const imputadoVals = activo.map((a) => (a ? imp : 0));
     const conSueldos = resultadoNeto.map((v, i) => v - imputadoVals[i]);
-    const filas: { nombre: string; vals: number[]; cls: string; negRojo?: boolean; nota?: string }[] = [
-      { nombre: "Ingresos", vals: b.ingresos, cls: "text-emerald-400" },
-      { nombre: "Gastos operativos", vals: b.gastosOp, cls: "text-red-400", nota: "sin retiradas de socios ni inversión; sueldos de empleados sí" },
-      { nombre: "de los cuales fijos", vals: b.fijos, cls: "text-zinc-500", nota: "alquiler, préstamo, suministros, sueldos…" },
-      { nombre: "Resultado operativo", vals: resultadoOp, cls: "font-bold text-white", negRojo: true },
-      { nombre: "Amortización inversión", vals: b.amort, cls: "text-orange-400", nota: "coste repartido en su vida útil" },
-      { nombre: "Resultado neto", vals: resultadoNeto, cls: "font-black text-white", negRojo: true },
-      ...(imp > 0 ? [
-        { nombre: "Coste de gestión imputado", vals: imputadoVals, cls: "text-fuchsia-400", nota: "pro-forma: pagar a alguien por lo que hoy hacen los socios" },
-        { nombre: "Resultado con sueldos de mercado", vals: conSueldos, cls: "font-black text-fuchsia-200", negRojo: true, nota: "¿se sostiene delegado?" },
+    const ingresosTot = suma(b.ingresos), fijosTot = suma(b.fijos);
+    const margen = ingresosTot > 0 ? (suma(resultadoOp) / ingresosTot) * 100 : null;
+    const cobertura = fijosTot > 0 ? ingresosTot / fijosTot : null; // ingresos / gastos fijos
+    const ultimo = activo.lastIndexOf(true); // último mes con datos
+    return { resultadoOp, resultadoNeto, retMes, quedaEmpresa, imp, imputadoVals, conSueldos, margen, cobertura, ultimo };
+  };
+
+  type TipoFila = "ing" | "gas" | "sub" | "res" | "info" | "ret" | "queda";
+  const estiloFila: Record<TipoFila, { tr: string; nombre: string; barra: string }> = {
+    ing: { tr: "", nombre: "text-emerald-300", barra: "border-emerald-500" },
+    gas: { tr: "", nombre: "text-red-300", barra: "border-red-500" },
+    sub: { tr: "", nombre: "pl-5 text-[11px] text-zinc-500", barra: "border-transparent" },
+    res: { tr: "border-t border-zinc-700 bg-zinc-900/70", nombre: "text-white", barra: "border-zinc-300" },
+    info: { tr: "", nombre: "text-zinc-400", barra: "border-zinc-700" },
+    ret: { tr: "bg-violet-950/15", nombre: "text-violet-300", barra: "border-violet-500" },
+    queda: { tr: "border-t border-violet-900 bg-violet-950/25", nombre: "text-violet-100", barra: "border-violet-400" },
+  };
+
+  const tabla = (titulo: string, colorTitulo: string, b: Bloque, neg: Negocio | "total") => {
+    const c = calc(b, neg);
+    type Fila = { nombre: string; vals: number[]; tipo: TipoFila; resultado?: boolean; fuerte?: boolean; nota?: string; cls?: string };
+    const filas: Fila[] = [
+      { nombre: "Ingresos", vals: b.ingresos, tipo: "ing", cls: "text-emerald-400" },
+      { nombre: "Gastos operativos", vals: b.gastosOp, tipo: "gas", cls: "text-red-400", nota: "sin retiradas de socios ni inversión; sueldos de empleados sí" },
+      { nombre: "de los cuales fijos", vals: b.fijos, tipo: "sub", cls: "text-zinc-500", nota: "alquiler, préstamo, suministros, sueldos…" },
+      { nombre: "Resultado operativo", vals: c.resultadoOp, tipo: "res", resultado: true },
+      { nombre: "Amortización inversión", vals: b.amort, tipo: "info", cls: "text-orange-400", nota: "coste repartido en su vida útil" },
+      { nombre: "Resultado neto", vals: c.resultadoNeto, tipo: "res", resultado: true, fuerte: true },
+      ...(c.imp > 0 ? [
+        { nombre: "Coste de gestión imputado", vals: c.imputadoVals, tipo: "info" as TipoFila, cls: "text-fuchsia-400", nota: "pro-forma: pagar a alguien por lo que hoy hacen los socios" },
+        { nombre: "Resultado con sueldos de mercado", vals: c.conSueldos, tipo: "res" as TipoFila, resultado: true, fuerte: true, nota: "¿se sostiene delegado?" },
       ] : []),
       // Las retiradas no pertenecen a un negocio: salen del beneficio conjunto. Solo en el total.
       ...(neg === "total" ? [
-        { nombre: "Retiradas del mes", vals: datos.alineadas, cls: "text-violet-400", nota: "las que genera el beneficio de este mes (se pagan al mes siguiente)" + (datos.provisional.some((p, i) => p && datos.alineadas[i] > 0) ? " · prev. = 0,8 × beneficio teórico si aún no se han pagado" : "") },
-        { nombre: "pagadas en caja este mes", vals: b.retiradas, cls: "text-zinc-500", nota: "lo que salió del banco: cuadra con el Libro" },
-        { nombre: "Queda en la empresa", vals: quedaEmpresa, cls: "font-bold text-zinc-400", negRojo: true, nota: "neto − retiradas del mes" },
+        { nombre: "Retiradas del mes", vals: datos.alineadas, tipo: "ret" as TipoFila, cls: "text-violet-300", nota: "las que genera el beneficio de este mes (se pagan al mes siguiente)" + (datos.provisional.some((p, i) => p && datos.alineadas[i] > 0) ? " · prev. = 0,8 × beneficio teórico si aún no se han pagado" : "") },
+        { nombre: "pagadas en caja este mes", vals: b.retiradas, tipo: "sub" as TipoFila, cls: "text-zinc-500", nota: "lo que salió del banco: cuadra con el Libro" },
+        { nombre: "Queda en la empresa", vals: c.quedaEmpresa, tipo: "queda" as TipoFila, resultado: true, fuerte: true, nota: "neto − retiradas del mes" },
       ] : []),
     ];
     return (
-      <div className="mb-5 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
-              <th className={`sticky left-0 z-10 bg-zinc-900 px-3 py-2 text-left text-[11px] ${colorTitulo}`}>
-                {titulo}
-                {margen !== null && <span className="ml-2 font-bold normal-case text-zinc-500">margen op. {margen.toFixed(1)}%</span>}
-                {cobertura !== null && <span className="ml-2 font-bold normal-case text-zinc-500" title="Ingresos ÷ gastos fijos. Por debajo de 1, los fijos no se cubren.">cobertura fijos ×{cobertura.toFixed(2)}</span>}
-              </th>
-              {MESES.map((m) => <th key={m} className="min-w-16 px-2 py-2 text-right">{m}</th>)}
-              <th className="min-w-20 border-l border-zinc-800 px-3 py-2 text-right text-zinc-400">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filas.map((f) => (
-              <tr key={f.nombre} className={`border-b border-zinc-800/50 last:border-0 ${f.nombre.startsWith("Resultado") ? "bg-zinc-900/60" : ""}`}>
-                <td className="sticky left-0 z-10 bg-zinc-950/95 px-3 py-1.5 font-semibold text-zinc-300">
-                  {f.nombre}
-                  {f.nota && <span className="block text-[9px] font-normal text-zinc-600">{f.nota}</span>}
-                </td>
-                {f.vals.map((v, i) => (
-                  <Fragment key={i}>{celda(v, f.negRojo && v < -0.005 ? "font-bold text-red-400" : f.cls)}</Fragment>
-                ))}
-                <td className={`border-l border-zinc-800 px-3 py-1.5 text-right font-bold tabular-nums ${f.negRojo && suma(f.vals) < -0.005 ? "text-red-400" : "text-zinc-100"}`}>
-                  {n2(suma(f.vals))}
-                </td>
+      <div className="mb-5 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
+        <div className="flex flex-wrap items-baseline gap-3 border-b border-zinc-800 bg-zinc-900 px-3 py-2">
+          <span className={`text-[12px] font-black uppercase tracking-wider ${colorTitulo}`}>{titulo}</span>
+          {c.margen !== null && <span className="text-[11px] text-zinc-500">margen op. <b className={c.margen < 0 ? "text-red-400" : "text-zinc-300"}>{c.margen.toFixed(1)}%</b></span>}
+          {c.cobertura !== null && <span className="text-[11px] text-zinc-500" title="Ingresos ÷ gastos fijos. Por debajo de ×1 no se cubren ni los fijos.">cobertura fijos <b className={colorCobertura(c.cobertura)}>×{c.cobertura.toFixed(2)}</b></span>}
+          <span className="ml-auto flex gap-3 text-[10px] text-zinc-500">
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-emerald-500/80" />ingresos</span>
+            <span><span className="mr-1 inline-block h-2 w-2 rounded-sm bg-red-500/70" />gastos op.</span>
+            <span>▲▼ neto del mes</span>
+          </span>
+        </div>
+        <MiniBarras ing={b.ingresos} gas={b.gastosOp} neto={c.resultadoNeto} mesActual={mesActual} />
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-y border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
+                <th className="sticky left-0 z-10 bg-zinc-900 px-3 py-2 text-left">Concepto</th>
+                {MESES.map((m, i) => <th key={m} className={`min-w-16 px-2 py-2 text-right ${i === mesActual ? "text-red-400" : ""}`}>{m}</th>)}
+                <th className="min-w-20 border-l border-zinc-800 px-3 py-2 text-right text-zinc-400">Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filas.map((f) => {
+                const e = estiloFila[f.tipo];
+                const tot = suma(f.vals);
+                return (
+                  <tr key={f.nombre} className={`border-b border-zinc-800/50 last:border-0 ${e.tr}`}>
+                    <td className={`sticky left-0 z-10 border-l-2 bg-zinc-950/95 px-3 py-1.5 font-semibold ${e.barra} ${e.nombre}`}>
+                      {f.nombre}
+                      {f.nota && <span className="block text-[9px] font-normal text-zinc-600">{f.nota}</span>}
+                    </td>
+                    {f.vals.map((v, i) => (
+                      <Fragment key={i}>{f.resultado ? celdaResultado(v, f.fuerte) : celda(v, f.cls ?? "text-zinc-300", i === mesActual ? "bg-zinc-800/30" : "")}</Fragment>
+                    ))}
+                    <td className={`border-l border-zinc-800 px-3 py-1.5 text-right font-bold tabular-nums ${f.resultado ? signo(tot) : "text-zinc-100"}`}>{n2(tot)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   };
@@ -243,6 +305,111 @@ export default function PyGPage() {
 
       {error && <p className="mb-3 rounded-xl bg-red-950 px-4 py-2 text-sm text-red-300">{error}</p>}
 
+      {/* RESUMEN DEL AÑO · tarjetas (lo que importa, de un vistazo) */}
+      {(() => {
+        const bloques: { key: Negocio | "total"; titulo: string; color: string; b: Bloque }[] = [
+          { key: "total", titulo: "ETHOS · Total", color: "text-white", b: datos.total },
+          { key: "online", titulo: "ONLINE · Coaching", color: "text-sky-400", b: datos.online },
+          { key: "presencial", titulo: "PRESENCIAL · Gym", color: "text-amber-400", b: datos.presencial },
+        ];
+        return (
+          <div className="mb-5 grid gap-3 lg:grid-cols-3">
+            {bloques.map(({ key, titulo, color, b }) => {
+              const c = calc(b, key);
+              const u = c.ultimo;
+              const netoU = u >= 0 ? c.resultadoNeto[u] : 0;
+              const netoPrev = u > 0 ? c.resultadoNeto[u - 1] : null;
+              return (
+                <div key={key} className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+                  <p className={`text-[11px] font-black uppercase tracking-wider ${color}`}>{titulo} · {anyo}</p>
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2">
+                    <div><p className="text-[9px] font-bold uppercase text-zinc-500">Ingresos</p><p className="text-base font-black tabular-nums text-emerald-400">{n0(suma(b.ingresos))} €</p></div>
+                    <div><p className="text-[9px] font-bold uppercase text-zinc-500">Gastos operativos</p><p className="text-base font-black tabular-nums text-red-400">{n0(suma(b.gastosOp))} €</p></div>
+                    <div className="col-span-2 rounded-lg bg-zinc-950/60 px-3 py-2">
+                      <p className="text-[9px] font-bold uppercase text-zinc-500">Resultado neto (tras amortización)</p>
+                      <p className={`text-2xl font-black tabular-nums ${signo(suma(c.resultadoNeto))}`}>{n0(suma(c.resultadoNeto))} €</p>
+                      {u >= 0 && (
+                        <p className="text-[10px] text-zinc-500">
+                          {MESES[u]}: <b className={signo(netoU)}>{n0(netoU)} €</b>
+                          {netoPrev !== null && <> · {MESES[u - 1]}: <b className={signo(netoPrev)}>{n0(netoPrev)} €</b></>}
+                        </p>
+                      )}
+                    </div>
+                    <div><p className="text-[9px] font-bold uppercase text-zinc-500">Margen operativo</p><p className={`text-sm font-bold ${c.margen !== null && c.margen < 0 ? "text-red-400" : "text-zinc-200"}`}>{c.margen === null ? "—" : c.margen.toFixed(1) + "%"}</p></div>
+                    <div><p className="text-[9px] font-bold uppercase text-zinc-500">Cobertura de fijos</p><p className={`text-sm font-bold ${colorCobertura(c.cobertura)}`}>{c.cobertura === null ? "—" : "×" + c.cobertura.toFixed(2)}</p></div>
+                    {c.imp > 0 && <div className="col-span-2"><p className="text-[9px] font-bold uppercase text-fuchsia-400">Con sueldos de mercado (pro-forma)</p><p className={`text-sm font-black tabular-nums ${signo(suma(c.conSueldos))}`}>{n0(suma(c.conSueldos))} €</p></div>}
+                    {key === "total" && (
+                      <>
+                        <div><p className="text-[9px] font-bold uppercase text-violet-400">Retiradas del mes (año)</p><p className="text-sm font-bold tabular-nums text-violet-300">{n0(suma(datos.alineadas))} €</p></div>
+                        <div><p className="text-[9px] font-bold uppercase text-violet-400">Queda en la empresa</p><p className={`text-sm font-black tabular-nums ${signo(suma(c.quedaEmpresa))}`}>{n0(suma(c.quedaEmpresa))} €</p></div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
+      {/* COMPARATIVA ANUAL · online vs gym vs total */}
+      {(() => {
+        const cols: { key: Negocio | "total"; titulo: string; color: string; b: Bloque }[] = [
+          { key: "online", titulo: "Online", color: "text-sky-400", b: datos.online },
+          { key: "presencial", titulo: "Gym", color: "text-amber-400", b: datos.presencial },
+          { key: "total", titulo: "Total", color: "text-white", b: datos.total },
+        ];
+        const cs = cols.map((x) => ({ ...x, c: calc(x.b, x.key) }));
+        const num = (v: number, res: boolean) => <td className={`px-3 py-1.5 text-right tabular-nums ${res ? (v < -0.005 ? "bg-red-950/40 font-black text-red-300" : "bg-emerald-950/30 font-black text-emerald-300") : "text-zinc-300"}`}>{n2(v)}</td>;
+        const filasC: { nombre: string; f: (x: (typeof cs)[number]) => number; res?: boolean }[] = [
+          { nombre: "Ingresos", f: (x) => suma(x.b.ingresos) },
+          { nombre: "Gastos operativos", f: (x) => suma(x.b.gastosOp) },
+          { nombre: "de los cuales fijos", f: (x) => suma(x.b.fijos) },
+          { nombre: "Resultado operativo", f: (x) => suma(x.c.resultadoOp), res: true },
+          { nombre: "Amortización inversión", f: (x) => suma(x.b.amort) },
+          { nombre: "Resultado neto", f: (x) => suma(x.c.resultadoNeto), res: true },
+          { nombre: "Coste de gestión imputado", f: (x) => suma(x.c.imputadoVals) },
+          { nombre: "Resultado con sueldos de mercado", f: (x) => suma(x.c.conSueldos), res: true },
+        ];
+        return (
+          <div className="mb-5 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/40">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-900 text-[9px] font-black uppercase tracking-wider text-zinc-600">
+                  <th className="px-3 py-2 text-left text-[11px] text-zinc-300">Resumen anual {anyo} · online vs gym</th>
+                  {cs.map((x) => <th key={x.key} className={`min-w-24 px-3 py-2 text-right text-[11px] ${x.color}`}>{x.titulo}</th>)}
+                  <th className="min-w-28 px-3 py-2 text-right">reparto del total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filasC.map((r) => {
+                  const vals = cs.map((x) => r.f(x));
+                  const t = vals[2];
+                  return (
+                    <tr key={r.nombre} className={`border-b border-zinc-800/50 ${r.res ? "bg-zinc-900/60" : ""}`}>
+                      <td className={`px-3 py-1.5 font-semibold ${r.res ? "text-white" : r.nombre.startsWith("de los") ? "pl-6 text-zinc-500" : "text-zinc-300"}`}>{r.nombre}</td>
+                      {vals.map((v, i) => <Fragment key={i}>{num(v, !!r.res)}</Fragment>)}
+                      <td className="px-3 py-1.5 text-right text-[10px] tabular-nums text-zinc-500">{Math.abs(t) > 0.005 ? `online ${((vals[0] / t) * 100).toFixed(0)}% · gym ${((vals[1] / t) * 100).toFixed(0)}%` : "·"}</td>
+                    </tr>
+                  );
+                })}
+                <tr className="border-t border-zinc-700">
+                  <td className="px-3 py-1.5 font-semibold text-zinc-300">Margen operativo</td>
+                  {cs.map((x) => <td key={x.key} className={`px-3 py-1.5 text-right font-bold tabular-nums ${x.c.margen !== null && x.c.margen < 0 ? "text-red-400" : "text-zinc-200"}`}>{x.c.margen === null ? "—" : x.c.margen.toFixed(1) + "%"}</td>)}
+                  <td />
+                </tr>
+                <tr>
+                  <td className="px-3 py-1.5 font-semibold text-zinc-300">Cobertura de fijos <span className="text-[9px] font-normal text-zinc-600">(ingresos ÷ fijos · verde ≥ ×1,5 · ámbar ×1–1,5 · rojo &lt; ×1)</span></td>
+                  {cs.map((x) => <td key={x.key} className={`px-3 py-1.5 text-right font-bold tabular-nums ${colorCobertura(x.c.cobertura)}`}>{x.c.cobertura === null ? "—" : "×" + x.c.cobertura.toFixed(2)}</td>)}
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
+      {/* TABLAS MENSUALES */}
       {tabla("ETHOS · Total", "text-white", datos.total, "total")}
       {tabla("ONLINE · Coaching", "text-sky-400", datos.online, "online")}
       {tabla("PRESENCIAL · Gym", "text-amber-400", datos.presencial, "presencial")}
