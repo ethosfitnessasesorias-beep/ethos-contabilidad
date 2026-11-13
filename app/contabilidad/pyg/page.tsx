@@ -120,14 +120,27 @@ export default function PyGPage() {
     });
     // De dónde sale el beneficio que se reparte (misma fórmula que la vista del Reparto):
     // "propio" = el online de cada socio; "ethos" = el gym a medias.
-    const origen = { online: Array(12).fill(0), gym: Array(12).fill(0), teorico: Array(12).fill(0) };
+    const origen = { online: Array(12).fill(0), gym: Array(12).fill(0), teorico: Array(12).fill(0), nominaTeorica: Array(12).fill(0) };
     for (const r of reparto) {
       const m = new Date(r.mes + "T00:00:00").getMonth();
       origen.online[m] += Number(r.cobrado_propio) - Number(r.iva_propio) - Number(r.irpf_propio) - Number(r.gasto_propio);
       origen.gym[m] += Number(r.cobrado_ethos) - Number(r.iva_ethos) - Number(r.irpf_ethos) - Number(r.gasto_ethos);
       origen.teorico[m] += Number(r.beneficio);
+      origen.nominaTeorica[m] += 0.8 * Math.max(0, Number(r.beneficio)); // nómina teórica = 80% del beneficio positivo de cada socio
     }
-    return { ...b, total, origen };
+    // Las retiradas se pagan al mes SIGUIENTE al beneficio que las genera (la "nómina de
+    // agosto" se cobra en septiembre). Comparar el resultado de un mes con lo pagado ese
+    // mismo mes mezcla dos meses distintos y da negativos falsos. Se alinean: retiradas del
+    // mes i = las pagadas en i+1; si aún no se han pagado, estimación 0,8 × beneficio teórico.
+    const pagadas = total.retiradas;
+    const alineadas: number[] = Array(12).fill(0);
+    const provisional: boolean[] = Array(12).fill(false);
+    for (let i = 0; i < 12; i++) {
+      const activo = total.ingresos[i] !== 0 || total.gastosOp[i] !== 0;
+      if (i < 11 && pagadas[i + 1] > 0) alineadas[i] = pagadas[i + 1];
+      else if (activo) { alineadas[i] = origen.nominaTeorica[i]; provisional[i] = true; }
+    }
+    return { ...b, total, origen, alineadas, provisional };
   }, [facturas, gastos, inversiones, reparto, anyo]);
 
   async function guardarImputado(neg: Negocio, texto: string) {
@@ -143,7 +156,9 @@ export default function PyGPage() {
   const tabla = (titulo: string, colorTitulo: string, b: Bloque, neg: Negocio | "total") => {
     const resultadoOp = b.ingresos.map((v, i) => v - b.gastosOp[i]);
     const resultadoNeto = resultadoOp.map((v, i) => v - b.amort[i]);
-    const quedaEmpresa = resultadoNeto.map((v, i) => v - b.retiradas[i]);
+    // En el total, "queda en la empresa" usa las retiradas del MES (alineadas), no las pagadas en caja
+    const retMes = neg === "total" ? datos.alineadas : b.retiradas;
+    const quedaEmpresa = resultadoNeto.map((v, i) => v - retMes[i]);
     const ingresosTot = suma(b.ingresos);
     const margen = ingresosTot > 0 ? (suma(resultadoOp) / ingresosTot) * 100 : null;
     const fijosTot = suma(b.fijos);
@@ -165,8 +180,9 @@ export default function PyGPage() {
       ] : []),
       // Las retiradas no pertenecen a un negocio: salen del beneficio conjunto. Solo en el total.
       ...(neg === "total" ? [
-        { nombre: "Retiradas de socios", vals: b.retiradas, cls: "text-violet-400", nota: "no es gasto: reparto del beneficio (ver bloque de abajo)" },
-        { nombre: "Queda en la empresa", vals: quedaEmpresa, cls: "font-bold text-zinc-400", negRojo: true, nota: "neto − retiradas" },
+        { nombre: "Retiradas del mes", vals: datos.alineadas, cls: "text-violet-400", nota: "las que genera el beneficio de este mes (se pagan al mes siguiente)" + (datos.provisional.some((p, i) => p && datos.alineadas[i] > 0) ? " · prev. = 0,8 × beneficio teórico si aún no se han pagado" : "") },
+        { nombre: "pagadas en caja este mes", vals: b.retiradas, cls: "text-zinc-500", nota: "lo que salió del banco: cuadra con el Libro" },
+        { nombre: "Queda en la empresa", vals: quedaEmpresa, cls: "font-bold text-zinc-400", negRojo: true, nota: "neto − retiradas del mes" },
       ] : []),
     ];
     return (
@@ -234,11 +250,11 @@ export default function PyGPage() {
       {/* RETIRADAS DE SOCIOS · de dónde sale el dinero (según el Reparto) */}
       {(() => {
         const o = datos.origen;
-        const ret = datos.total.retiradas;
+        const ret = datos.alineadas; // mismo mes que el beneficio que las genera
         const pctGym = o.gym.map((g, i) => { const t = g + o.online[i]; return t > 0 ? (g / t) * 100 : null; });
         const gT = suma(o.gym), tT = gT + suma(o.online);
         const filasR: { nombre: string; vals: number[]; cls: string; nota?: string }[] = [
-          { nombre: "Retiradas pagadas", vals: ret, cls: "font-bold text-violet-300", nota: "lo que os habéis llevado (caja)" },
+          { nombre: "Retiradas del mes", vals: ret, cls: "font-bold text-violet-300", nota: "se pagan al mes siguiente; prev. si aún no se han pagado" },
           { nombre: "Beneficio teórico a repartir", vals: o.teorico, cls: "text-zinc-300", nota: "según las reglas del Reparto" },
           { nombre: "viene del gym (ethos, a medias)", vals: o.gym, cls: "text-amber-400" },
           { nombre: "viene del online (propio de cada socio)", vals: o.online, cls: "text-sky-400" },
@@ -275,7 +291,7 @@ export default function PyGPage() {
       <p className="mt-1 text-[10px] leading-snug text-zinc-600">
         <b>Resultado operativo</b> = ingresos − gastos del día a día. <b>Resultado neto</b> = operativo − amortización
         (cada inversión reparte su coste en su vida útil, no resta de golpe). <b>Retiradas de socios</b> = lo que os lleváis
-        del beneficio (gym a medias + el online de cada uno): no son gasto de ningún negocio, por eso solo aparecen en el total,
+        del beneficio (gym a medias + el online de cada uno): no son gasto de ningún negocio, por eso solo aparecen en el total; van en el mes cuyo beneficio las genera (se cobran al siguiente) y «pagadas en caja» es lo que salió del banco ese mes,
         y el bloque «de dónde sale» muestra qué parte pone cada negocio según el Reparto. <b>Sueldos de empleados</b> sí son gasto
         (categoría Personal → Sueldos y salarios). <b>Coste de gestión imputado</b> = pro-forma de delegación: si pagarais a alguien
         por lo que hoy hacéis vosotros, ese sería el resultado real de cada negocio. <b>Cobertura fijos</b> = ingresos ÷ gastos fijos;
