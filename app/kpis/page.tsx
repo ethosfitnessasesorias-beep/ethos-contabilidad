@@ -13,7 +13,7 @@ import { Shell } from "../shell";
 type Negocio = "online" | "gym";
 
 interface KpiValor { mes: string; negocio: string; metrica: string; valor: number }
-interface Diario { fecha: string; negocio: string; bienvenidas: number; inbounds: number; agendas_bienvenidas: number; agendas_inbounds: number; cierres: number }
+interface Diario { fecha: string; negocio: string; bienvenidas: number; inbounds: number; outbounds: number; agendas_bienvenidas: number; agendas_inbounds: number; agendas_outbounds: number; cierres: number }
 
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 
@@ -114,7 +114,7 @@ export default function KpisPage() {
   // Funnel de hoy (entrada rápida)
   const hoyISO = new Date().toISOString().slice(0, 10);
   const [fechaFunnel, setFechaFunnel] = useState(hoyISO);
-  const [funnelHoy, setFunnelHoy] = useState({ bienvenidas: "", inbounds: "", agendas_bienvenidas: "", agendas_inbounds: "", cierres: "" });
+  const [funnelHoy, setFunnelHoy] = useState({ bienvenidas: "", inbounds: "", outbounds: "", agendas_bienvenidas: "", agendas_inbounds: "", agendas_outbounds: "", cierres: "" });
 
   const cargar = useCallback(async () => {
     const desde = `${anyo}-01-01`;
@@ -191,6 +191,8 @@ export default function KpisPage() {
       inbounds: d ? String(d.inbounds) : "",
       agendas_bienvenidas: d ? String(d.agendas_bienvenidas) : "",
       agendas_inbounds: d ? String(d.agendas_inbounds) : "",
+      outbounds: d ? String(d.outbounds ?? 0) : "",
+      agendas_outbounds: d ? String(d.agendas_outbounds ?? 0) : "",
       cierres: d ? String(d.cierres) : "",
     });
   }, [fechaFunnel, negocio, diario]);
@@ -203,6 +205,8 @@ export default function KpisPage() {
       inbounds: Number(funnelHoy.inbounds) || 0,
       agendas_bienvenidas: Number(funnelHoy.agendas_bienvenidas) || 0,
       agendas_inbounds: Number(funnelHoy.agendas_inbounds) || 0,
+      outbounds: Number(funnelHoy.outbounds) || 0,
+      agendas_outbounds: Number(funnelHoy.agendas_outbounds) || 0,
       cierres: Number(funnelHoy.cierres) || 0,
     };
     const { error } = await supabase.from("kpi_diario").upsert(fila);
@@ -258,7 +262,7 @@ export default function KpisPage() {
 
   // Funnel mensual (suma del diario)
   const funnelMes = useMemo(() => {
-    const campos = ["bienvenidas", "inbounds", "agendas_bienvenidas", "agendas_inbounds", "cierres"] as const;
+    const campos = ["bienvenidas", "inbounds", "outbounds", "agendas_bienvenidas", "agendas_inbounds", "agendas_outbounds", "cierres"] as const;
     const out: Record<string, number[]> = {};
     for (const c of campos) out[c] = Array(12).fill(0);
     for (const d of diario) {
@@ -400,6 +404,8 @@ export default function KpisPage() {
   const fAgBE = conAjuste("fn_agb", funnelMes.agendas_bienvenidas);
   const fInbE = conAjuste("fn_inb", funnelMes.inbounds);
   const fAgIE = conAjuste("fn_agi", funnelMes.agendas_inbounds);
+  const fOutE = conAjuste("fn_out", funnelMes.outbounds);
+  const fAgOE = conAjuste("fn_ago", funnelMes.agendas_outbounds);
   const fCierE = conAjuste("fn_cier", funnelMes.cierres);
 
   // Contratación (GYM): beneficio medio de los últimos 3 meses con actividad
@@ -587,7 +593,7 @@ export default function KpisPage() {
             <label className="flex flex-col gap-1 text-[10px] font-bold uppercase text-zinc-500">Día
               <input type="date" value={fechaFunnel} onChange={(e) => setFechaFunnel(e.target.value)} className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-white outline-none" />
             </label>
-            {([["bienvenidas", "Bienvenidas"], ["inbounds", "Inbounds"], ["agendas_bienvenidas", "Agendas B."], ["agendas_inbounds", "Agendas I."], ["cierres", "Cierres"]] as const).map(([k, et]) => (
+            {([["bienvenidas", "Bienvenidas"], ["inbounds", "Inbounds"], ["outbounds", "Outbounds"], ["agendas_bienvenidas", "Agendas B."], ["agendas_inbounds", "Agendas I."], ["agendas_outbounds", "Agendas O."], ["cierres", "Cierres"]] as const).map(([k, et]) => (
               <label key={k} className="flex flex-col gap-1 text-[10px] font-bold uppercase text-zinc-500">{et}
                 <input
                   inputMode="numeric"
@@ -610,9 +616,12 @@ export default function KpisPage() {
                 {filaEditable("Inbounds", funnelMes.inbounds, "fn_inb", "text-zinc-300", "funnel_inbounds")}
                 {filaEditable("Agendas inbounds", funnelMes.agendas_inbounds, "fn_agi", "text-zinc-300")}
                 {filaAuto("% agendas inb.", fInbE.map((v, i) => (v > 0 ? fAgIE[i] / v : 0)), "text-zinc-500", pct, true)}
-                {filaAuto("Agendas totales", fAgBE.map((v, i) => v + fAgIE[i]), "text-white", n0, false, "funnel_agendas")}
+                {filaEditable("Outbounds", funnelMes.outbounds, "fn_out", "text-zinc-300", "funnel_outbounds")}
+                {filaEditable("Agendas outbounds", funnelMes.agendas_outbounds, "fn_ago", "text-zinc-300")}
+                {filaAuto("% agendas outb.", fOutE.map((v, i) => (v > 0 ? fAgOE[i] / v : 0)), "text-zinc-500", pct, true)}
+                {filaAuto("Agendas totales", fAgBE.map((v, i) => v + fAgIE[i] + fAgOE[i]), "text-white", n0, false, "funnel_agendas")}
                 {filaEditable("Cierres", funnelMes.cierres, "fn_cier", "text-emerald-400", "funnel_cierres")}
-                {filaAuto("% cierre", fAgBE.map((v, i) => { const ag = v + fAgIE[i]; return ag > 0 ? fCierE[i] / ag : 0; }), "text-emerald-500", pct, true)}
+                {filaAuto("% cierre", fAgBE.map((v, i) => { const ag = v + fAgIE[i] + fAgOE[i]; return ag > 0 ? fCierE[i] / ag : 0; }), "text-emerald-500", pct, true)}
               </tbody>
             </table>
           </div>
