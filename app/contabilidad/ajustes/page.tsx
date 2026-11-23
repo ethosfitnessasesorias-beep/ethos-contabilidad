@@ -32,6 +32,7 @@ interface Categoria {
   es_inversion: boolean;
   es_online: boolean;
   es_retirada: boolean;
+  excluir_reparto: boolean;
   activa: boolean;
 }
 interface Metodo {
@@ -189,6 +190,7 @@ export default function Ajustes() {
   const [cFijo, setCFijo] = useState(false);
   const [cInversion, setCInversion] = useState(false);
   const [cRetirada, setCRetirada] = useState(false); // retirada de socios: reparto, no gasto
+  const [cColab, setCColab] = useState(false); // pago a colaborador: gasto real, pero fuera del reparto (el 70/30 ya lo neta)
   const [cOnline, setCOnline] = useState(false);
 
   async function crearCategoria() {
@@ -200,6 +202,7 @@ export default function Ajustes() {
       es_fijo: cFijo,
       es_inversion: cInversion,
       es_retirada: cRetirada,
+      excluir_reparto: cColab,
       es_online: cOnline,
     });
     if (error) return setError(error.message);
@@ -548,12 +551,13 @@ export default function Ajustes() {
                 <label className="flex flex-col gap-1.5">
                   <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Naturaleza</span>
                   <select
-                    value={cRetirada ? "retirada" : cInversion ? "inversion" : cFijo ? "fijo" : "corriente"}
+                    value={cRetirada ? "retirada" : cColab ? "colaborador" : cInversion ? "inversion" : cFijo ? "fijo" : "corriente"}
                     onChange={(e) => {
                       const v = e.target.value;
                       setCFijo(v === "fijo");
                       setCInversion(v === "inversion");
                       setCRetirada(v === "retirada");
+                      setCColab(v === "colaborador");
                     }}
                     className={inputCls}
                   >
@@ -561,6 +565,7 @@ export default function Ajustes() {
                     <option value="fijo">Gasto fijo (recurrente e ineludible)</option>
                     <option value="inversion">Inversión (activo &gt;1 año)</option>
                     <option value="retirada">Retirada de socios (reparto, no gasto)</option>
+                    <option value="colaborador">Pago a colaborador (gasto, pero fuera del reparto: el 70/30 ya lo neta)</option>
                   </select>
                 </label>
               )}
@@ -593,7 +598,7 @@ export default function Ajustes() {
                     <span className="text-zinc-500">{c.grupo} · </span>{c.nombre}
                   </span>
                   <span className="ml-2 text-[10px] text-zinc-600">
-                    {c.tipo === "ingreso" ? "ingreso" : c.es_retirada ? "retirada socios" : c.es_inversion ? "inversión" : c.es_fijo ? "fijo" : "corriente"}
+                    {c.tipo === "ingreso" ? "ingreso" : c.es_retirada ? "retirada socios" : c.excluir_reparto ? "pago colaborador" : c.es_inversion ? "inversión" : c.es_fijo ? "fijo" : "corriente"}
                     {c.es_online ? " · online" : ""}
                   </span>
                 </div>
