@@ -121,3 +121,6 @@ CREATE OR REPLACE VIEW v_reparto_beneficios AS  WITH scob AS (
      LEFT JOIN eirpf erp ON erp.mes = b.mes
      LEFT JOIN egasto eg ON eg.mes = b.mes
   WHERE (COALESCE(sc.v, 0::numeric) + COALESCE(sg.v, 0::numeric) + COALESCE(ec.v, 0::numeric) + COALESCE(eg.v, 0::numeric)) <> 0::numeric;
+
+-- 24/11/2026: el fisio es Alex Esteban (colaborador 70/30), no personal por horas
+UPDATE gastos SET categoria_id=63, es_fijo=false WHERE id IN (1048,1102) AND concepto ~* 'fisio';
