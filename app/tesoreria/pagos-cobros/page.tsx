@@ -248,6 +248,18 @@ export default function GestionClientesPage() {
       const objTecleado = Math.round((Number(objBarra.replace(",", ".")) || 0) * 100) / 100;
       const objetivo = modo === "importe" && objTecleado > impTecleado ? objTecleado : null;
 
+      // Escribir dentro de un bloque unido lo acorta: el bloque termina justo antes de la casilla escrita,
+      // así una marca nunca queda oculta debajo de otro bloque.
+      for (const cel of barra.celdas) {
+        for (let s0 = cel.mesIdx - 1; s0 >= 0; s0--) {
+          const b = celdas.get(clave(cel.filaId, s0));
+          if (b && b.span > 1 && s0 + b.span > cel.mesIdx) {
+            await supabase.from("pagos_cobros_marcas").update({ span: cel.mesIdx - s0 }).eq("fila_id", cel.filaId).eq("mes", mesISO(s0));
+            break;
+          }
+        }
+      }
+
       if (unir) {
         // Unir meses: por cada fila, una sola marca que abarca el periodo (span).
         // El importe es el total del pago (cuenta 1 vez); los meses intermedios se limpian.
@@ -433,7 +445,9 @@ export default function GestionClientesPage() {
                   // sin esta copia, pinchar un bloque unido escribía en su ÚLTIMO mes (bug Júlia: nov → dic).
                   const idx = i;
                   const cel = celdas.get(clave(f.id, i));
-                  const span = cel?.span && cel.span > 1 ? Math.min(cel.span, 12 - i) : 1;
+                  let span = cel?.span && cel.span > 1 ? Math.min(cel.span, 12 - idx) : 1;
+                  // Un bloque nunca tapa un mes que tiene su propia marca: se acorta para que nada quede oculto.
+                  for (let j = 1; j < span; j++) if (celdas.has(clave(f.id, idx + j))) { span = j; break; }
                   const sel = enSeleccion(fi, i);
                   const pagado = cel?.estado === "pagado" && cel.importe > 0;
                   const debe = cel?.estado === "no_pagado";
