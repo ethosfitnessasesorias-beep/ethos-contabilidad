@@ -429,6 +429,9 @@ export default function GestionClientesPage() {
                 {(() => {
                   const tds: React.ReactNode[] = [];
                   for (let i = 0; i < 12; i++) {
+                  // idx: mes real de esta celda. El bucle avanza i por el colSpan DESPUÉS de crear los handlers;
+                  // sin esta copia, pinchar un bloque unido escribía en su ÚLTIMO mes (bug Júlia: nov → dic).
+                  const idx = i;
                   const cel = celdas.get(clave(f.id, i));
                   const span = cel?.span && cel.span > 1 ? Math.min(cel.span, 12 - i) : 1;
                   const sel = enSeleccion(fi, i);
@@ -453,8 +456,8 @@ export default function GestionClientesPage() {
                     : importeTxt;
                   tds.push(
                     <td key={i} colSpan={unido ? span : undefined}
-                      onMouseDown={(e) => { e.preventDefault(); inicioArrastre(fi, i); }}
-                      onMouseEnter={() => entraArrastre(fi, i)}
+                      onMouseDown={(e) => { e.preventDefault(); inicioArrastre(fi, idx); }}
+                      onMouseEnter={() => entraArrastre(fi, idx)}
                       title={debe ? `Debe${cel!.importe > 0 ? ` ${n2(cel!.importe)} €` : ""}${cel!.nota ? ` · ${cel!.nota}` : ""}` : falta > 0 ? `Cobrado ${n2(cel!.importe)} € de ${n2(cel!.objetivo!)} € · Falta ${n2(falta)} €${cel!.nota ? ` · ${cel!.nota}` : ""}` : unido ? `${cel!.nota ?? "Bloque"} · ${span} meses${cel!.importe > 0 ? ` · ${n2(cel!.importe)} €` : ""}` : (cel?.nota ?? "Pincha o arrastra para poner importe")}
                       className={`cursor-cell px-1 py-1.5 text-right ${bg} ${falta > 0 ? "border-b-2 border-amber-600/70" : ""} ${borde} ${unido ? "border-x border-emerald-700/40 text-center" : ""} ${i === mesActualIdx && !bg ? "bg-zinc-900/40" : ""}`}>
                       {contenido}
